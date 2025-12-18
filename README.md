@@ -8,13 +8,15 @@
 
 `cargo-coupling` analyzes coupling in Rust projects based on Vlad Khononov's "Balancing Coupling in Software Design" framework. It measures coupling across multiple dimensions: **Integration Strength**, **Distance**, **Volatility**, **Connascence**, and **Temporal Coupling**.
 
-## Installation
+## Quick Start
+
+### 1. Install
 
 ```bash
 cargo install cargo-coupling
 ```
 
-## Quick Start
+### 2. Analyze
 
 ```bash
 # Analyze current project
@@ -22,8 +24,50 @@ cargo coupling ./src
 
 # Show summary only
 cargo coupling --summary ./src
+```
 
-# Generate report to file
+### 3. Refactor with AI
+
+```bash
+# Generate AI-friendly output
+cargo coupling --ai ./src
+```
+
+Copy the output and use this prompt with Claude, Copilot, or any AI coding assistant:
+
+```
+Analyze the coupling issues above from `cargo coupling --ai`.
+For each issue, suggest specific code changes to reduce coupling.
+Focus on introducing traits, moving code closer, or breaking circular dependencies.
+```
+
+Example output:
+
+```
+Coupling Issues in my-project:
+────────────────────────────────────────────────────────────
+
+Grade: B (Good) | Score: 0.88 | Issues: 0 High, 5 Medium
+
+Issues:
+
+1. 🟡 api::handler → db::internal::Query
+   Type: Global Complexity
+   Problem: Intrusive coupling to db::internal::Query across module boundary
+   Fix: Introduce trait `QueryTrait` with methods: // Extract required methods
+
+2. 🟡 25 dependents → core::types
+   Type: High Afferent Coupling
+   Problem: Module core::types is depended on by 25 other components
+   Fix: Introduce trait `TypesInterface` with methods: // Define stable public API
+```
+
+The AI will analyze patterns and suggest specific refactoring strategies.
+
+### More Options
+
+```bash
+# Generate detailed report to file
 cargo coupling -o report.md ./src
 
 # Show timing information
@@ -31,12 +75,16 @@ cargo coupling --summary --timing ./src
 
 # Use 4 threads for parallel processing
 cargo coupling -j 4 ./src
+
+# Skip Git history analysis for faster results
+cargo coupling --no-git ./src
 ```
 
 ## Features
 
 - **5-Dimensional Analysis**: Measures Integration Strength, Distance, Volatility, Connascence, and Temporal Coupling
 - **Balance Score**: Calculates overall coupling balance (0.0 - 1.0)
+- **AI-Friendly Output**: `--ai` flag generates output optimized for coding agents (Claude, Copilot, etc.)
 - **Connascence Detection**: Identifies coupling types (Name, Type, Position, Algorithm)
 - **Temporal Coupling Detection**: Detects execution order dependencies and Rust-specific patterns
 - **Issue Detection**: Automatically identifies problematic coupling patterns
@@ -155,13 +203,14 @@ Arguments:
 Options:
   -o, --output <FILE>           Output report to file
   -s, --summary                 Show summary only
+      --ai                      AI-friendly output for coding agents
       --git-months <MONTHS>     Git history period [default: 6]
       --no-git                  Skip Git analysis
   -v, --verbose                 Verbose output
       --timing                  Show timing information
   -j, --jobs <N>                Number of threads (default: auto)
-      --max-deps <N>            Max outgoing dependencies [default: 15]
-      --max-dependents <N>      Max incoming dependencies [default: 20]
+      --max-deps <N>            Max outgoing dependencies [default: 20]
+      --max-dependents <N>      Max incoming dependencies [default: 30]
   -h, --help                    Print help
   -V, --version                 Print version
 ```
