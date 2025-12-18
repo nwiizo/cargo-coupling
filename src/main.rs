@@ -17,7 +17,8 @@ use clap::{Parser, Subcommand};
 
 use cargo_coupling::{
     CompiledConfig, IssueThresholds, VolatilityAnalyzer, analyze_workspace,
-    generate_report_with_thresholds, generate_summary_with_thresholds, load_compiled_config,
+    generate_ai_output_with_thresholds, generate_report_with_thresholds,
+    generate_summary_with_thresholds, load_compiled_config,
 };
 
 /// cargo-coupling - Measure the "right distance" in your Rust code
@@ -49,6 +50,10 @@ struct Args {
     /// Show summary only (no detailed report)
     #[arg(short, long)]
     summary: bool,
+
+    /// AI-friendly output format for use with coding agents (Claude, Copilot, etc.)
+    #[arg(long)]
+    ai: bool,
 
     /// Analyze git history for volatility (months to look back)
     #[arg(long, default_value = "6")]
@@ -235,7 +240,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut writer = output;
 
-    if args.summary {
+    if args.ai {
+        generate_ai_output_with_thresholds(&metrics, &thresholds, &mut writer)?;
+    } else if args.summary {
         generate_summary_with_thresholds(&metrics, &thresholds, &mut writer)?;
     } else {
         generate_report_with_thresholds(&metrics, &thresholds, &mut writer)?;

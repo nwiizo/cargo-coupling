@@ -808,6 +808,113 @@ fn truncate_path(path: &str, max_len: usize) -> String {
     }
 }
 
+/// Generate AI-friendly output format for coding agents
+///
+/// This format is designed to be:
+/// 1. Concise and structured for LLM consumption
+/// 2. Actionable with specific file/module references
+/// 3. Copy-paste ready for AI refactoring prompts
+pub fn generate_ai_output<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
+    generate_ai_output_with_thresholds(metrics, &IssueThresholds::default(), writer)
+}
+
+/// Generate AI-friendly output with custom thresholds
+pub fn generate_ai_output_with_thresholds<W: Write>(
+    metrics: &ProjectMetrics,
+    thresholds: &IssueThresholds,
+    writer: &mut W,
+) -> io::Result<()> {
+    let report = analyze_project_balance_with_thresholds(metrics, thresholds);
+
+    let project_name = metrics
+        .workspace_name
+        .as_deref()
+        .unwrap_or("project");
+    writeln!(writer, "Coupling Issues in {}:", project_name)?;
+    writeln!(writer, "────────────────────────────────────────────────────────────")?;
+    writeln!(writer)?;
+
+    // Summary line
+    writeln!(
+        writer,
+        "Grade: {} | Score: {:.2} | Issues: {} High, {} Medium",
+        report.health_grade,
+        report.average_score,
+        report.issues_by_severity.get(&Severity::High).unwrap_or(&0),
+        report.issues_by_severity.get(&Severity::Medium).unwrap_or(&0)
+    )?;
+    writeln!(writer)?;
+
+    // List issues in a structured format
+    if report.issues.is_empty() {
+        writeln!(writer, "✅ No coupling issues detected.")?;
+        writeln!(writer)?;
+    } else {
+        writeln!(writer, "Issues:")?;
+        writeln!(writer)?;
+
+        for (i, issue) in report.issues.iter().take(10).enumerate() {
+            let severity_marker = match issue.severity {
+                Severity::Critical => "🔴",
+                Severity::High => "🟠",
+                Severity::Medium => "🟡",
+                Severity::Low => "⚪",
+            };
+
+            writeln!(
+                writer,
+                "{}. {} {} → {}",
+                i + 1,
+                severity_marker,
+                issue.source,
+                issue.target
+            )?;
+            writeln!(writer, "   Type: {}", issue.issue_type)?;
+            writeln!(writer, "   Problem: {}", issue.description)?;
+            writeln!(writer, "   Fix: {}", issue.refactoring)?;
+            writeln!(writer)?;
+        }
+
+        if report.issues.len() > 10 {
+            writeln!(writer, "... and {} more issues", report.issues.len() - 10)?;
+            writeln!(writer)?;
+        }
+    }
+
+    // Circular dependencies (critical for AI to understand)
+    let circular = metrics.circular_dependency_summary();
+    if circular.total_cycles > 0 {
+        writeln!(writer, "Circular Dependencies ({} cycles):", circular.total_cycles)?;
+        for cycle in circular.cycles.iter().take(5) {
+            writeln!(writer, "  {} → {}", cycle.join(" → "), cycle.first().unwrap_or(&"?".to_string()))?;
+        }
+        writeln!(writer)?;
+    }
+
+    writeln!(writer, "────────────────────────────────────────────────────────────")?;
+    writeln!(writer)?;
+
+    // AI prompt suggestion
+    writeln!(writer, "💡 To refactor with AI, copy this output and use this prompt:")?;
+    writeln!(writer)?;
+    writeln!(writer, "```")?;
+    writeln!(
+        writer,
+        "Analyze the coupling issues above from `cargo coupling --ai`. "
+    )?;
+    writeln!(
+        writer,
+        "For each issue, suggest specific code changes to reduce coupling."
+    )?;
+    writeln!(
+        writer,
+        "Focus on introducing traits, moving code closer, or breaking circular dependencies."
+    )?;
+    writeln!(writer, "```")?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

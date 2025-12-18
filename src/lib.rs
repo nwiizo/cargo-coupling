@@ -68,8 +68,8 @@ pub use metrics::{
     ProjectMetrics, TypeDefinition, Visibility, Volatility,
 };
 pub use report::{
-    generate_report, generate_report_with_thresholds, generate_summary,
-    generate_summary_with_thresholds,
+    generate_ai_output, generate_ai_output_with_thresholds, generate_report,
+    generate_report_with_thresholds, generate_summary, generate_summary_with_thresholds,
 };
 pub use temporal::{
     LifecyclePhase, TemporalAnalyzer, TemporalCouplingInstance, TemporalCouplingStats,
