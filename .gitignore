@@ -1,6 +1,11 @@
 # Build artifacts
 /target/
 
+# Claude Code
+.claude/
+CLAUDE.md
+PROPOSAL.md
+
 # IDE
 .idea/
 .vscode/
