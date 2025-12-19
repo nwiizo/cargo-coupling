@@ -23,7 +23,7 @@ regex-lite = "0.1"
 
 [dev-dependencies]
 tempfile = "3.14"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
 name = "analysis_benchmark"
