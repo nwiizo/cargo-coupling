@@ -1,6 +1,6 @@
 [package]
 name = "cargo-coupling"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "A coupling analysis tool for Rust projects - measuring the 'right distance' in your code"
 license = "MIT"
