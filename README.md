@@ -8,6 +8,17 @@
 
 `cargo-coupling` analyzes coupling in Rust projects based on Vlad Khononov's "Balancing Coupling in Software Design" framework. It measures coupling across multiple dimensions: **Integration Strength**, **Distance**, **Volatility**, **Connascence**, and **Temporal Coupling**.
 
+> ⚠️ **Experimental Project**
+>
+> This tool is currently experimental. The scoring algorithms, thresholds, and detected patterns are subject to change based on real-world feedback.
+>
+> **We want your input!** If you try this tool on your project, please share your experience:
+> - Are the grades and scores meaningful for your codebase?
+> - Are there false positives or patterns that shouldn't be flagged?
+> - What additional metrics would be useful?
+>
+> Please open an issue at [GitHub Issues](https://github.com/nwiizo/cargo-coupling/issues) to discuss. Your feedback helps improve the tool for everyone.
+
 ## Quick Start
 
 ### 1. Install
