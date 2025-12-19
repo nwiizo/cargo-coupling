@@ -1,11 +1,5 @@
 # Build artifacts
-/target
-debug/
-release/
-
-# Cargo
-Cargo.lock
-!Cargo.lock
+/target/
 
 # IDE
 .idea/
