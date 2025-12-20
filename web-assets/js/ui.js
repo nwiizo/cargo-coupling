@@ -89,19 +89,28 @@ export function setupFilters() {
                 return;
             }
 
+            // Check if this is an internal edge
+            const sourceInternal = internalNodes.has(edge.data('source'));
+            const targetInternal = internalNodes.has(edge.data('target'));
+            const isInternalEdge = sourceInternal && targetInternal;
+
             let visible = true;
             if (!strengths.includes(strength)) visible = false;
-            if (!distances.includes(distance)) visible = false;
+
+            // Skip distance filter for internal edges when hideExternal is on
+            // (internal edges may have incorrect distance values due to path resolution)
+            if (!hideExternal || !isInternalEdge) {
+                if (!distances.includes(distance)) visible = false;
+            }
+
             if (!volatilities.includes(volatility)) visible = false;
             if (balance < balanceMin || balance > balanceMax) visible = false;
             if (issuesOnly && !hasIssue) visible = false;
             if (cyclesOnly && !inCycle) visible = false;
 
             // Hide edges to/from external nodes if hide-external is checked
-            if (hideExternal) {
-                const sourceInternal = internalNodes.has(edge.data('source'));
-                const targetInternal = internalNodes.has(edge.data('target'));
-                if (!sourceInternal || !targetInternal) visible = false;
+            if (hideExternal && !isInternalEdge) {
+                visible = false;
             }
 
             edge.style('display', visible ? 'element' : 'none');

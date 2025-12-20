@@ -901,9 +901,9 @@ fn capitalize_first(s: &str) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthGrade {
     S, // Exceptional - possibly over-engineered
-    A, // Good - target
-    B, // Acceptable
-    C, // Needs Attention
+    A, // Good - no change needed
+    B, // Good - minor issues
+    C, // Acceptable
     D, // Needs Improvement
     F, // Critical Issues
 }
@@ -913,8 +913,8 @@ impl std::fmt::Display for HealthGrade {
         match self {
             HealthGrade::S => write!(f, "S (Exceptional - possibly over-engineered)"),
             HealthGrade::A => write!(f, "A (Good - no change needed)"),
-            HealthGrade::B => write!(f, "B (Acceptable)"),
-            HealthGrade::C => write!(f, "C (Needs Attention)"),
+            HealthGrade::B => write!(f, "B (Good)"),
+            HealthGrade::C => write!(f, "C (Acceptable)"),
             HealthGrade::D => write!(f, "D (Needs Improvement)"),
             HealthGrade::F => write!(f, "F (Critical Issues)"),
         }

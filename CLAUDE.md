@@ -111,13 +111,13 @@ BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
 | Grade | Description | Action |
 |-------|-------------|--------|
 | **S** | Exceptional - possibly over-engineered | Consider simplifying |
-| **A** | Good - no change needed | Target! |
-| **B** | Acceptable | Standard baseline |
-| **C** | Needs Attention | Minor fixes |
+| **A** | Good - no change needed | Target |
+| **B** | Good | Minor issues OK |
+| **C** | Acceptable | Some fixes |
 | **D** | Needs Improvement | Take action |
 | **F** | Critical Issues | Urgent |
 
-**Philosophy**: Aim for A, not S. S may indicate over-engineering.
+**Philosophy**: A and B are both "Good". S may indicate over-engineering.
 
 ## Issue Types Detected
 

@@ -452,13 +452,13 @@ Health grades are calculated based on internal couplings only (external crate de
 | Grade | Criteria | Action |
 |-------|----------|--------|
 | **S (Exceptional)** | Zero issues with >= 20 couplings | Possibly over-engineered |
-| **A (Good)** | No high issues, medium density <= 5% | Target - no action needed |
-| **B (Acceptable)** | Medium density > 5%, no critical issues | Standard baseline |
-| **C (Needs Attention)** | Any high issues OR medium density > 25% | Minor improvements |
+| **A (Good)** | No high issues, medium density <= 5% | No change needed |
+| **B (Good)** | Medium density > 5%, no critical issues | Minor issues OK |
+| **C (Acceptable)** | Any high issues OR medium density > 25% | Some improvements |
 | **D (Needs Improvement)** | Any critical issues OR high density > 5% | Take action |
 | **F (Critical Issues)** | More than 3 critical issues | Urgent fix needed |
 
-**Philosophy**: A is the target. S may indicate over-engineering - don't aim for it.
+**Philosophy**: A and B are both "Good". S may indicate over-engineering.
 
 ### Severity Classification
 
