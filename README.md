@@ -173,67 +173,121 @@ cargo coupling --no-git ./src
 - **Markdown Reports**: Generates detailed analysis reports
 - **Cargo Integration**: Works as a cargo subcommand
 
-## Coupling Dimensions
+## The Three Dimensions of Coupling
 
-### Core Dimensions (Used in Balance Score & Issue Detection)
+Based on Vlad Khononov's framework, coupling is measured across three dimensions. The key insight is that **the goal is not to eliminate coupling, but to balance it appropriately**.
 
-The **Balance Score** and **Health Grade** are calculated from these three dimensions:
+### 1. Integration Strength
 
-#### 1. Integration Strength
-
-How much knowledge is shared between components. Detected through AST analysis:
+The **amount of knowledge shared** between components. Four levels from weakest to strongest:
 
 | Level | Description | Detection Method | Score |
 |-------|-------------|------------------|-------|
-| Contract | Trait bounds and implementations | `impl Trait for Type`, trait bounds | 0.25 |
-| Model | Type usage and imports | Type parameters, use statements | 0.50 |
-| Functional | Function/method calls | Method calls, function calls | 0.75 |
-| Intrusive | Direct field/internal access | Field access, struct construction | 1.00 |
+| **Contract** | Interface/trait abstraction | `impl Trait for Type`, trait bounds | 0.25 (weak) |
+| **Model** | Shared business domain models | Type parameters, use statements | 0.50 |
+| **Functional** | Shared responsibilities | Method calls, function calls | 0.75 |
+| **Intrusive** | Internal implementation details | Field access, struct construction | 1.00 (strong) |
 
-#### 2. Distance
+Lower scores (Contract, Model) are generally preferable as they provide looser coupling.
 
-How far apart components are in the module hierarchy:
+### 2. Distance
+
+**How far apart** the dependent components are:
 
 | Level | Description | Score |
 |-------|-------------|-------|
-| Same Function | Within the same function | 0.00 |
+| Same Function | Within the same function | 0.00 (close) |
 | Same Module | Within the same file/module | 0.25 |
 | Different Module | Across modules in same crate | 0.50 |
-| Different Crate | External crate dependency | 1.00 |
+| Different Crate | External crate dependency | 1.00 (far) |
 
-#### 3. Volatility
+Greater distance means higher cost of change - changes must propagate across more boundaries.
 
-How frequently a component changes (from Git history):
+### 3. Volatility
 
-| Level | Changes (6 months) | Score |
-|-------|-------------------|-------|
-| Low | 0-2 changes | 0.00 |
-| Medium | 3-10 changes | 0.50 |
-| High | 11+ changes | 1.00 |
+**How frequently** a component changes (from Git history):
+
+| Level | Description | Score |
+|-------|-------------|-------|
+| **Low** (Generic Subdomain) | Stable, rarely changes (0-2 changes/6mo) | 0.00 |
+| **Medium** (Supporting Subdomain) | Moderate changes (3-10 changes/6mo) | 0.50 |
+| **High** (Core Subdomain) | Frequently changing (11+ changes/6mo) | 1.00 |
+
+High volatility components require more careful coupling management.
 
 > **Note**: Volatility requires Git history. Use `cargo coupling ./src` (not `--no-git`) to enable volatility analysis.
 
-### Additional Insights (Informational Only)
+## Balance Equation
 
-> **Note**: The following dimensions are detected and reported for additional insight, but do **not** affect the Balance Score or Health Grade. They provide supplementary information for understanding coupling patterns.
+The balance score is conceptually expressed as:
 
-#### 4. Connascence Types
+```
+BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
+```
+
+### Understanding the Formula
+
+**MODULARITY = STRENGTH XOR DISTANCE**
+
+- **Strong coupling + Close distance = Good** (locality preserved)
+- **Weak coupling + Far distance = Good** (loose coupling)
+- Strong coupling + Far distance = Bad (global complexity)
+- Weak coupling + Close distance = Suboptimal (unnecessary indirection)
+
+**BALANCE = MODULARITY OR NOT VOLATILITY**
+
+- Either modular (good strength/distance combo), OR
+- Low volatility (stable, so coupling is less risky)
+- Meeting either condition achieves balance
+
+### Numeric Implementation
+
+In the actual implementation:
+
+- `XOR` → Calculated as alignment between extremes (strong×close, weak×far)
+- `OR` → Calculated as max value
+- `NOT` → Calculated as complement (1.0 - x)
+
+```rust
+let alignment = 1.0 - (strength - (1.0 - distance)).abs();
+let volatility_impact = 1.0 - (volatility * strength);
+let score = alignment * volatility_impact;
+```
+
+## Connascence (Additional Insight)
+
+> **Note**: Connascence is detected and reported for additional insight, but does **not** affect the Balance Score or Health Grade.
 
 Based on Meilir Page-Jones' taxonomy, connascence measures how changes in one component require changes in another.
 
+### Static Connascence (Compile-time detectable)
+
 | Type | Strength | Description | Refactoring Suggestion |
 |------|----------|-------------|------------------------|
-| Name | 0.2 (weak) | Components agree on names | Use IDE rename refactoring |
-| Type | 0.4 | Components agree on types | Use traits/generics |
-| Meaning | 0.6 | Agreement on semantic values | Replace magic values with constants |
-| Position | 0.7 | Agreement on ordering | Use builder pattern or named parameters |
-| Algorithm | 0.9 (strong) | Agreement on algorithms | Extract to shared module |
+| **Name (CoN)** | 0.2 (weakest) | Dependency on names | Use IDE rename refactoring |
+| **Type (CoT)** | 0.4 | Dependency on types | Use traits/generics |
+| **Meaning (CoM)** | 0.6 | Dependency on value semantics | Replace magic values with constants |
+| **Position (CoP)** | 0.7 | Dependency on parameter order | Use builder pattern or named parameters |
+| **Algorithm (CoA)** | 0.9 (strongest) | Dependency on algorithms | Extract to shared module |
 
-#### 5. Temporal Coupling
+### Dynamic Connascence (Runtime detectable)
 
-Components that must be used in a specific order. Detected through heuristic pattern analysis.
+| Type | Description |
+|------|-------------|
+| **Execution (CoE)** | Dependency on execution order |
+| **Timing (CoT)** | Dependency on timing |
+| **Value (CoV)** | Synchronous value changes required |
+| **Identity (CoI)** | Dependency on same instance |
 
-**Paired Operations:**
+> **Important**: Even the weakest dynamic connascence is stronger than the strongest static connascence. Dynamic coupling is harder to detect and manage.
+
+## Temporal Coupling (Additional Insight)
+
+> **Note**: Temporal Coupling is detected and reported for additional insight, but does **not** affect the Balance Score or Health Grade.
+
+Components that must be used in a specific order.
+
+### Paired Operations
 
 | Operation | Description | Severity |
 |-----------|-------------|----------|
@@ -243,7 +297,7 @@ Components that must be used in a specific order. Detected through heuristic pat
 | init/cleanup | Lifecycle management | Medium |
 | subscribe/unsubscribe | Event handlers | Medium |
 
-**Rust-Specific Patterns:**
+### Rust-Specific Patterns
 
 | Pattern | Detection | Status |
 |---------|-----------|--------|
@@ -252,7 +306,7 @@ Components that must be used in a specific order. Detected through heuristic pat
 | **Async spawn/join** | Orphaned tasks detection | Warning |
 | **Unsafe allocations** | Manual memory management | Critical |
 
-**Lifecycle Phases:**
+### Lifecycle Phases
 
 The analyzer tracks lifecycle methods to detect initialization order dependencies:
 
