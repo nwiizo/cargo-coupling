@@ -97,54 +97,6 @@ impl Default for ThresholdsConfig {
     }
 }
 
-/// APOSD (A Philosophy of Software Design) configuration section
-#[derive(Debug, Clone, Deserialize)]
-pub struct AposdConfig {
-    /// Minimum depth ratio for a module to be considered "deep" (default: 2.0)
-    #[serde(default = "default_min_depth_ratio")]
-    pub min_depth_ratio: f64,
-
-    /// Minimum cognitive load score to flag as "high" (default: 15.0)
-    #[serde(default = "default_max_cognitive_load")]
-    pub max_cognitive_load: f64,
-
-    /// Whether to exclude Rust idiomatic patterns from pass-through detection
-    #[serde(default = "default_exclude_rust_idioms")]
-    pub exclude_rust_idioms: bool,
-
-    /// Additional method prefixes to exclude from pass-through detection
-    #[serde(default)]
-    pub exclude_prefixes: Vec<String>,
-
-    /// Additional method names to exclude from pass-through detection
-    #[serde(default)]
-    pub exclude_methods: Vec<String>,
-}
-
-fn default_min_depth_ratio() -> f64 {
-    2.0
-}
-
-fn default_max_cognitive_load() -> f64 {
-    15.0
-}
-
-fn default_exclude_rust_idioms() -> bool {
-    true
-}
-
-impl Default for AposdConfig {
-    fn default() -> Self {
-        Self {
-            min_depth_ratio: default_min_depth_ratio(),
-            max_cognitive_load: default_max_cognitive_load(),
-            exclude_rust_idioms: default_exclude_rust_idioms(),
-            exclude_prefixes: Vec::new(),
-            exclude_methods: Vec::new(),
-        }
-    }
-}
-
 /// Root configuration structure
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct CouplingConfig {
@@ -155,10 +107,6 @@ pub struct CouplingConfig {
     /// Threshold configuration
     #[serde(default)]
     pub thresholds: ThresholdsConfig,
-
-    /// APOSD configuration
-    #[serde(default)]
-    pub aposd: AposdConfig,
 }
 
 /// Compiled configuration with glob patterns
@@ -174,8 +122,6 @@ pub struct CompiledConfig {
     ignore_patterns: Vec<Pattern>,
     /// Threshold configuration
     pub thresholds: ThresholdsConfig,
-    /// APOSD configuration
-    pub aposd: AposdConfig,
     /// Cache of path -> volatility mappings
     cache: HashMap<String, Option<Volatility>>,
 }
@@ -198,7 +144,6 @@ impl CompiledConfig {
             low_patterns: compile_patterns(&config.volatility.low)?,
             ignore_patterns: compile_patterns(&config.volatility.ignore)?,
             thresholds: config.thresholds,
-            aposd: config.aposd,
             cache: HashMap::new(),
         })
     }
@@ -211,7 +156,6 @@ impl CompiledConfig {
             low_patterns: Vec::new(),
             ignore_patterns: Vec::new(),
             thresholds: ThresholdsConfig::default(),
-            aposd: AposdConfig::default(),
             cache: HashMap::new(),
         }
     }

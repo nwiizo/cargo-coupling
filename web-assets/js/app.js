@@ -12,6 +12,7 @@
 // 8. Job-focused Features (Entry Points, Path Finder, etc.)
 // 9. Sidebar & Resize
 // 10. Utilities
+// 11. Internationalization (i18n)
 // =====================================================
 
 // =====================================================
@@ -29,6 +30,113 @@ let graphData = null;
 let currentLayout = 'cose';
 let selectedNode = null;
 let isSimpleView = false;
+let centerMode = false;  // true = re-layout on click, false = zoom only
+let currentLang = 'en';  // 'en' or 'ja'
+
+// =====================================================
+// Internationalization (i18n)
+// =====================================================
+
+const I18N = {
+    en: {
+        critical_issues: 'Critical Issues',
+        unbalanced_deps: 'Unbalanced coupling relationships',
+        analyzing: 'Analyzing...',
+        no_issues: 'No unbalanced coupling relationships',
+        fix_action: 'Fix',
+        high_cohesion: 'High Cohesion',
+        loose_coupling: 'Loose Coupling',
+        acceptable: 'Acceptable',
+        pain: 'Needs Refactoring',
+        local_complexity: 'Local Complexity',
+        // Recommendations
+        stable_external: 'Stable external dependency',
+        global_complexity_medium: 'Global Complexity (Medium)',
+        global_complexity_high: 'Global Complexity + Cascading Changes',
+        good_cohesion: 'Good cohesion',
+        good_loose: 'Good loose coupling',
+        over_abstraction: 'Possible over-abstraction',
+        // Fix suggestions
+        fix_intrusive: 'Convert field access to method calls and abstract with trait',
+        fix_functional: 'Introduce trait to invert dependency (DIP)',
+        fix_monitor: 'Monitor volatility; consider abstraction if changes are frequent',
+        fix_local: 'Direct access OK within same module (possible over-abstraction)',
+        // Labels
+        strength: 'Strength',
+        distance: 'Distance',
+        volatility: 'Volatility',
+        balance: 'Balance',
+    },
+    ja: {
+        critical_issues: '今すぐ対処',
+        unbalanced_deps: 'バランスが崩れた依存関係',
+        analyzing: '分析中...',
+        no_issues: 'バランスの崩れた依存関係はありません',
+        fix_action: '対処法',
+        high_cohesion: '高凝集',
+        loose_coupling: '疎結合',
+        acceptable: '許容可能',
+        pain: '要改善',
+        local_complexity: '局所複雑性',
+        // Recommendations
+        stable_external: '安定した外部依存',
+        global_complexity_medium: 'グローバル複雑性（中程度）',
+        global_complexity_high: 'グローバル複雑性 + 変更連鎖',
+        good_cohesion: '適切な凝集性',
+        good_loose: '適切な疎結合',
+        over_abstraction: '局所的複雑性（過度な抽象化の可能性）',
+        // Fix suggestions
+        fix_intrusive: 'フィールドアクセスをメソッド経由に変更し、traitで抽象化',
+        fix_functional: 'traitを導入して依存を反転（DIP）',
+        fix_monitor: '変動性を監視し、頻繁に変更されるなら抽象化を検討',
+        fix_local: '同じモジュール内なら直接アクセスでOK（過度な抽象化の可能性）',
+        // Labels
+        strength: '統合強度',
+        distance: '距離',
+        volatility: '変動性',
+        balance: 'バランス',
+    }
+};
+
+function t(key) {
+    return I18N[currentLang][key] || I18N.en[key] || key;
+}
+
+function setupLanguageToggle() {
+    const toggle = document.getElementById('lang-toggle');
+    const label = document.getElementById('lang-label');
+
+    if (toggle && label) {
+        // Load saved preference
+        const saved = localStorage.getItem('cargo-coupling-lang');
+        if (saved && (saved === 'en' || saved === 'ja')) {
+            currentLang = saved;
+            label.textContent = currentLang.toUpperCase();
+        }
+
+        toggle.addEventListener('click', () => {
+            currentLang = currentLang === 'en' ? 'ja' : 'en';
+            label.textContent = currentLang.toUpperCase();
+            localStorage.setItem('cargo-coupling-lang', currentLang);
+            updateUILanguage();
+        });
+    }
+}
+
+function updateUILanguage() {
+    // Update static i18n elements
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.dataset.i18n;
+        if (I18N[currentLang][key]) {
+            el.textContent = I18N[currentLang][key];
+        }
+    });
+
+    // Re-populate dynamic content
+    if (graphData) {
+        populateCriticalIssues();
+    }
+}
 
 // =====================================================
 // 2. Initialization
@@ -51,6 +159,7 @@ async function init() {
 }
 
 function initUI() {
+    setupLanguageToggle();
     updateHeaderStats(graphData.summary);
     updateFooterStats(graphData.summary);
     setupFilters();
@@ -63,9 +172,35 @@ function initUI() {
     setupResizableSidebar();
     setupKeyboardShortcuts();
     setupAutoHideTriggers();
+    setupViewToggle();
+    setupLegendToggle();
+    setupCenterModeToggle();
+}
+
+function setupCenterModeToggle() {
+    const toggle = document.getElementById('center-mode-toggle');
+    if (toggle) {
+        toggle.addEventListener('change', (e) => {
+            centerMode = e.target.checked;
+        });
+    }
+}
+
+function setupLegendToggle() {
+    const toggleBtn = document.getElementById('toggle-legend');
+    const legendContent = document.getElementById('legend-content');
+
+    if (toggleBtn && legendContent) {
+        toggleBtn.addEventListener('click', () => {
+            const isHidden = legendContent.style.display === 'none';
+            legendContent.style.display = isHidden ? 'block' : 'none';
+            toggleBtn.textContent = isHidden ? '[−]' : '[?]';
+        });
+    }
 }
 
 function initJobFeatures() {
+    populateCriticalIssues();
     populateHotspots();
     populateModuleRankings();
     setupModuleRankingSorting();
@@ -124,6 +259,16 @@ function initCytoscape(data) {
 function buildElements(data) {
     const nodes = data.nodes.map(node => {
         const crate = node.id.split('::')[0];
+        const items = node.items || [];
+
+        // Count items by kind
+        const fnCount = items.filter(i => i.kind === 'fn').length;
+        const typeCount = items.filter(i => i.kind === 'type' || i.kind === 'trait').length;
+        const implCount = (node.metrics?.trait_impl_count || 0) + (node.metrics?.inherent_impl_count || 0);
+
+        // Build stats string for display
+        const statsStr = `${fnCount}fn ${typeCount}ty ${implCount}impl`;
+
         return {
             data: {
                 id: node.id,
@@ -131,7 +276,12 @@ function buildElements(data) {
                 crate: crate,
                 ...node.metrics,
                 file_path: node.file_path,
-                in_cycle: node.in_cycle
+                in_cycle: node.in_cycle,
+                // Item counts
+                fn_count: fnCount,
+                type_count: typeCount,
+                impl_count: implCount,
+                stats_label: statsStr
             }
         };
     });
@@ -198,32 +348,68 @@ function getCytoscapeStyle() {
         {
             selector: 'node',
             style: {
-                'label': 'data(label)',
+                'label': node => {
+                    const label = node.data('label') || '';
+                    const fn = node.data('fn_count') || 0;
+                    const ty = node.data('type_count') || 0;
+                    const impl = node.data('impl_count') || 0;
+                    if (fn === 0 && ty === 0 && impl === 0) return label;
+                    return `${label}\n${fn}fn ${ty}ty ${impl}impl`;
+                },
                 'text-valign': 'center',
                 'text-halign': 'center',
+                'text-wrap': 'wrap',
+                'text-max-width': '120px',
                 'background-color': node => getHealthColor(node.data('health')),
                 'border-width': 2,
                 'border-color': '#475569',
                 'color': '#f8fafc',
-                'font-size': '10px',
+                'font-size': '9px',
                 'text-outline-color': '#0f172a',
                 'text-outline-width': 2,
-                'width': node => 30 + (node.data('couplings_out') || 0) * 2,
-                'height': node => 30 + (node.data('couplings_out') || 0) * 2
+                'width': node => 40 + (node.data('couplings_out') || 0) * 2,
+                'height': node => 40 + (node.data('couplings_out') || 0) * 2
             }
         },
-        // Edge styles
+        // Edge styles - base
         {
             selector: 'edge',
             style: {
                 'width': edge => 1 + edge.data('strength') * 4,
-                'line-color': edge => getBalanceColor(edge.data('balance')),
-                'target-arrow-color': edge => getBalanceColor(edge.data('balance')),
+                'line-color': edge => getEdgeColorByAnalysis(edge.data()),
+                'target-arrow-color': edge => getEdgeColorByAnalysis(edge.data()),
                 'target-arrow-shape': 'triangle',
                 'arrow-scale': 1.5,
                 'curve-style': 'bezier',
                 'opacity': 0.7,
                 'line-style': edge => getDistanceStyle(edge.data('distance'))
+            }
+        },
+        // Critical coupling edges (strong + far OR strong + high volatility)
+        {
+            selector: 'edge[strengthLabel="Intrusive"][distance="DifferentCrate"], edge[strengthLabel="Intrusive"][distance="DifferentModule"], edge[strengthLabel="Functional"][distance="DifferentCrate"]',
+            style: {
+                'line-color': '#ef4444',
+                'target-arrow-color': '#ef4444',
+                'width': edge => 2 + edge.data('strength') * 5,
+                'opacity': 0.9
+            }
+        },
+        // Good coupling edges (strong + close OR weak + far)
+        {
+            selector: 'edge[strengthLabel="Intrusive"][distance="SameModule"], edge[strengthLabel="Functional"][distance="SameModule"], edge[strengthLabel="Contract"][distance="DifferentModule"], edge[strengthLabel="Contract"][distance="DifferentCrate"]',
+            style: {
+                'line-color': '#22c55e',
+                'target-arrow-color': '#22c55e',
+                'opacity': 0.6
+            }
+        },
+        // Edges with issues
+        {
+            selector: 'edge[issue]',
+            style: {
+                'width': edge => 3 + edge.data('strength') * 4,
+                'opacity': 0.85
             }
         },
         // Cycle edges
@@ -302,6 +488,17 @@ function getLayoutConfig(name) {
             gravity: 0.25,
             numIter: 1000
         },
+        dagre: {
+            name: 'dagre',
+            rankDir: 'TB',           // Top to Bottom
+            nodeSep: 50,             // Horizontal spacing
+            rankSep: 80,             // Vertical spacing between ranks
+            edgeSep: 10,
+            animate: true,
+            animationDuration: 500,
+            fit: true,
+            padding: 50
+        },
         concentric: {
             name: 'concentric',
             animate: true,
@@ -309,9 +506,7 @@ function getLayoutConfig(name) {
             concentric: node => node.data('couplings_in') || 0,
             levelWidth: () => 2
         },
-        circle: { name: 'circle', animate: true, animationDuration: 500 },
-        grid: { name: 'grid', animate: true, animationDuration: 500 },
-        breadthfirst: { name: 'breadthfirst', animate: true, animationDuration: 500, directed: true }
+        grid: { name: 'grid', animate: true, animationDuration: 500, rows: 5 }
     };
     return configs[name] || configs.cose;
 }
@@ -330,9 +525,25 @@ function updateHeaderStats(summary) {
     const container = document.getElementById('header-stats');
     if (!container || !summary) return;
 
+    // Calculate total functions, types, and impls from all modules
+    let totalFunctions = 0;
+    let totalTypes = 0;
+    let totalImpls = 0;
+
+    if (graphData?.nodes) {
+        for (const node of graphData.nodes) {
+            const items = node.items || [];
+            totalFunctions += items.filter(i => i.kind === 'fn').length;
+            totalTypes += items.filter(i => i.kind === 'type' || i.kind === 'trait').length;
+            totalImpls += (node.metrics?.trait_impl_count || 0) + (node.metrics?.inherent_impl_count || 0);
+        }
+    }
+
     container.innerHTML = `
         <span class="stat">Modules: <span class="stat-value">${summary.total_modules}</span></span>
-        <span class="stat">Couplings: <span class="stat-value">${summary.total_couplings}</span></span>
+        <span class="stat">Functions: <span class="stat-value">${totalFunctions}</span></span>
+        <span class="stat">Types: <span class="stat-value">${totalTypes}</span></span>
+        <span class="stat">Impls: <span class="stat-value">${totalImpls}</span></span>
         <span class="stat">Health: <span class="health-grade ${summary.health_grade}">${summary.health_grade}</span></span>
     `;
 }
@@ -377,6 +588,15 @@ function setupFilters() {
             edge.style('display', visible ? 'element' : 'none');
         });
 
+        // Hide nodes with no visible edges (orphan external nodes)
+        cy.nodes().forEach(node => {
+            const visibleEdges = node.connectedEdges().filter(e => e.style('display') !== 'none');
+            const hasInternalPath = node.data('file_path') && node.data('file_path').includes('/src/');
+            // Show node if it has visible edges OR it's an internal module
+            const nodeVisible = visibleEdges.length > 0 || hasInternalPath;
+            node.style('display', nodeVisible ? 'element' : 'none');
+        });
+
         // Update balance label
         const balanceLabel = document.getElementById('balance-value');
         if (balanceLabel) {
@@ -397,8 +617,11 @@ function setupFilters() {
     document.getElementById('show-cycles-only')?.addEventListener('change', applyFilters);
 
     document.getElementById('reset-filters')?.addEventListener('click', () => {
-        // Reset all checkboxes
-        document.querySelectorAll('#strength-filters input, #distance-filters input, #volatility-filters input').forEach(cb => cb.checked = true);
+        // Reset checkboxes - keep DifferentCrate off by default
+        document.querySelectorAll('#strength-filters input, #volatility-filters input').forEach(cb => cb.checked = true);
+        document.querySelectorAll('#distance-filters input').forEach(cb => {
+            cb.checked = cb.value !== 'DifferentCrate';
+        });
         document.getElementById('balance-min').value = 0;
         document.getElementById('balance-max').value = 100;
         document.getElementById('show-issues-only').checked = false;
@@ -412,6 +635,12 @@ function setupFilters() {
     });
 
     document.getElementById('fit-graph')?.addEventListener('click', () => cy?.fit(undefined, 50));
+
+    // Apply filters on initial load (with a slight delay to ensure graph is ready)
+    setTimeout(() => {
+        applyFilters();
+        cy?.fit(undefined, 50);
+    }, 100);
 }
 
 function setupSearch() {
@@ -492,6 +721,20 @@ function setupKeyboardShortcuts() {
             case 's':
                 document.getElementById('sidebar-toggle')?.click();
                 break;
+            case 't':
+                // Toggle between Graph and Tree views
+                if (currentView === 'graph') {
+                    document.getElementById('view-tree')?.click();
+                } else {
+                    document.getElementById('view-graph')?.click();
+                }
+                break;
+            case 'c':
+                // Toggle center mode
+                centerMode = !centerMode;
+                const toggle = document.getElementById('center-mode-toggle');
+                if (toggle) toggle.checked = centerMode;
+                break;
             case 'Escape':
                 clearSelection();
                 break;
@@ -538,11 +781,21 @@ function setupGraphEventHandlers() {
 
 function selectNode(node) {
     selectedNode = node;
-    focusOnNode(node);
+
+    // Use center mode (re-layout) or zoom mode based on user preference
+    if (centerMode) {
+        centerOnNode(node);
+    } else {
+        focusOnNode(node);
+    }
+
     showNodeDetails(node.data());
     enableAnalysisButtons(true);
     showBlastRadius(node);
     updateWhatBreaksButton();
+
+    // Show item graph for this module
+    showItemGraph(node.id());
 }
 
 function clearSelection() {
@@ -556,6 +809,14 @@ function clearSelection() {
 
     clearDetails();
     enableAnalysisButtons(false);
+
+    // Hide item graph panel
+    const itemPanel = document.getElementById('item-graph-panel');
+    if (itemPanel) itemPanel.style.display = 'none';
+    if (itemCy) {
+        itemCy.destroy();
+        itemCy = null;
+    }
     clearBlastRadius();
     updateWhatBreaksButton();
     document.getElementById('job-result').innerHTML = '';
@@ -596,6 +857,36 @@ function focusOnNode(node) {
 
     // Fit to the focused elements
     cy.fit(focusElements, 80);
+}
+
+// Center mode: Re-layout with selected node at center (concentric layout)
+function centerOnNode(node) {
+    if (!cy || !node) return;
+
+    const neighborhood = node.neighborhood();
+    const focusElements = node.union(neighborhood);
+
+    // Dim all elements except the focused ones
+    cy.elements().addClass('dimmed');
+    focusElements.removeClass('dimmed');
+    node.addClass('highlighted');
+
+    // Apply concentric layout with selected node at center
+    const layout = cy.layout({
+        name: 'concentric',
+        concentric: function(n) {
+            if (n.id() === node.id()) return 100;  // Selected node at center
+            if (neighborhood.contains(n)) return 50;  // Direct neighbors in inner ring
+            return 1;  // Others in outer ring
+        },
+        levelWidth: function() { return 2; },
+        animate: true,
+        animationDuration: 500,
+        fit: true,
+        padding: 50
+    });
+
+    layout.run();
 }
 
 function clearHighlights() {
@@ -1028,6 +1319,183 @@ function showWhatBreaks() {
     attachNodeClickHandlers(resultContainer, '.breaks-item');
 }
 
+// =====================================================
+// Critical Issues - Actionable problems with concrete fixes
+// =====================================================
+
+function populateCriticalIssues() {
+    const container = document.getElementById('critical-issues-list');
+    const countBadge = document.getElementById('critical-count');
+    if (!container || !graphData) return;
+
+    // Use new BalanceClassification from API
+    const criticalEdges = graphData.edges
+        .map(edge => {
+            const dims = edge.dimensions || {};
+            const strength = dims.strength?.label || 'Unknown';
+            const distance = dims.distance?.label || 'Unknown';
+            const volatility = dims.volatility?.label || 'Unknown';
+            const classification = dims.balance?.classification || '';
+            const classificationJa = dims.balance?.classification_ja || '';
+
+            // Determine priority based on classification
+            let priority = 0;
+            let status = 'good';
+            let icon = '✅';
+            let reasonKey = '';
+
+            if (classification === 'Needs Refactoring') {
+                priority = 3;
+                status = 'critical';
+                icon = '❌';
+                reasonKey = 'global_complexity_high';
+            } else if (classification === 'Local Complexity') {
+                priority = 1;
+                status = 'possible-issue';
+                icon = '🤔';
+                reasonKey = 'over_abstraction';
+            } else if (classification === 'Acceptable') {
+                // Strong + Far + Low volatility - stable dependency, not a problem
+                priority = 0;
+                status = 'good';
+                icon = '🔒';
+                reasonKey = 'stable_external';
+            }
+
+            return {
+                ...edge,
+                strength,
+                distance,
+                volatility,
+                classification,
+                classificationJa,
+                priority,
+                status,
+                icon,
+                reasonKey
+            };
+        })
+        .filter(e => e.priority >= 1)  // Show issues needing attention
+        .sort((a, b) => b.priority - a.priority)
+        .slice(0, 5);
+
+    if (countBadge) {
+        countBadge.textContent = criticalEdges.length;
+        countBadge.style.display = criticalEdges.length > 0 ? 'inline-block' : 'none';
+    }
+
+    if (criticalEdges.length === 0) {
+        container.innerHTML = `
+            <div style="padding: 0.5rem; background: rgba(34, 197, 94, 0.1); border-radius: 0.375rem; color: var(--accent-green);">
+                ✅ ${t('no_issues')}
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = criticalEdges.map((edge, idx) => {
+        const sourceName = edge.source.split('::').pop();
+        const targetName = edge.target.split('::').pop();
+        const fix = getConcretefix(edge.strength, edge.distance, edge.volatility, sourceName, targetName);
+        const classificationDisplay = currentLang === 'ja' ? edge.classificationJa : edge.classification;
+
+        return `
+            <div class="critical-issue-item ${edge.status}" data-edge-id="${edge.id}">
+                <div class="critical-issue-header">
+                    <span class="critical-issue-icon">${edge.icon}</span>
+                    <span class="critical-issue-path">${sourceName} → ${targetName}</span>
+                </div>
+                <div class="critical-issue-dims">
+                    <span class="dim-tag strength">${edge.strength}</span>
+                    <span class="dim-tag distance">${edge.distance}</span>
+                    <span class="dim-tag volatility">${edge.volatility}</span>
+                </div>
+                <div class="critical-issue-classification">${classificationDisplay}</div>
+                ${fix ? `
+                <div class="critical-issue-fix">
+                    <strong>${t('fix_action')}:</strong> ${fix.action}
+                    ${fix.code ? `<pre class="fix-code"><code>${escapeHtml(fix.code)}</code></pre>` : ''}
+                </div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+
+    // Add click handlers to highlight the edge
+    container.querySelectorAll('.critical-issue-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const edgeId = item.dataset.edgeId;
+            const edge = cy.getElementById(edgeId);
+            if (edge.length) {
+                highlightDependencyPath(edge);
+                showEdgeDetails(edge.data());
+            }
+        });
+    });
+}
+
+/**
+ * Get concrete fix suggestion with Rust code example
+ */
+function getConcretefix(strength, distance, volatility, sourceName, targetName) {
+    const isStrongCoupling = ['Intrusive', 'Functional'].includes(strength);
+    const isFar = ['DifferentModule', 'DifferentCrate'].includes(distance);
+    const isHighVolatility = volatility === 'High';
+
+    // Case: Strong + Far + High volatility = Pain point
+    if (isStrongCoupling && isFar && isHighVolatility) {
+        if (strength === 'Intrusive') {
+            return {
+                action: t('fix_intrusive'),
+                code: `// Before: Direct field access
+let value = ${targetName.toLowerCase()}.field;
+
+// After: Abstract with trait
+trait ${targetName}Provider {
+    fn get_value(&self) -> Value;
+}
+
+impl ${targetName}Provider for ${targetName} {
+    fn get_value(&self) -> Value {
+        self.field.clone()
+    }
+}`
+            };
+        } else {
+            return {
+                action: t('fix_functional'),
+                code: `// Before: Concrete type dependency
+fn process(dep: &${targetName}) { ... }
+
+// After: Abstract via trait
+trait ${targetName}Trait {
+    fn do_something(&self);
+}
+
+fn process(dep: &impl ${targetName}Trait) { ... }`
+            };
+        }
+    }
+
+    // Case: Strong + Far + Medium volatility = Monitor
+    if (isStrongCoupling && isFar && volatility === 'Medium') {
+        return {
+            action: t('fix_monitor'),
+            code: null
+        };
+    }
+
+    // Case: Weak + Close = Possible over-abstraction
+    if (!isStrongCoupling && !isFar) {
+        return {
+            action: t('fix_local'),
+            code: null
+        };
+    }
+
+    return null;
+}
+
 // Hotspots & Module Rankings
 function populateHotspots() {
     const container = document.getElementById('hotspot-list');
@@ -1296,6 +1764,20 @@ function showNodeDetails(data) {
     const container = document.getElementById('details-content');
     if (!container) return;
 
+    // Get full node data from graphData for item counts
+    const fullNode = graphData?.nodes?.find(n => n.id === data.id);
+    const items = fullNode?.items || [];
+
+    // Count items by kind
+    const fnCount = items.filter(i => i.kind === 'fn').length;
+    const typeCount = items.filter(i => i.kind === 'type').length;
+    const traitCount = items.filter(i => i.kind === 'trait').length;
+
+    // Get impl counts from metrics
+    const traitImplCount = data.trait_impl_count || fullNode?.metrics?.trait_impl_count || 0;
+    const inherentImplCount = data.inherent_impl_count || fullNode?.metrics?.inherent_impl_count || 0;
+    const totalImplCount = traitImplCount + inherentImplCount;
+
     container.innerHTML = `
         <div class="detail-section">
             <h4>Module</h4>
@@ -1303,7 +1785,15 @@ function showNodeDetails(data) {
             ${data.file_path ? `<div class="detail-row"><span class="detail-label">File</span><span class="detail-value file-path">${data.file_path}</span></div>` : ''}
         </div>
         <div class="detail-section">
-            <h4>Metrics</h4>
+            <h4>Contents</h4>
+            <div class="module-stats">
+                <div class="stat-item"><span class="stat-count">${fnCount}</span><span class="stat-label">functions</span></div>
+                <div class="stat-item"><span class="stat-count">${typeCount + traitCount}</span><span class="stat-label">types</span></div>
+                <div class="stat-item"><span class="stat-count">${totalImplCount}</span><span class="stat-label">impls</span></div>
+            </div>
+        </div>
+        <div class="detail-section">
+            <h4>Coupling</h4>
             <div class="detail-row"><span class="detail-label">Outgoing</span><span class="detail-value">${data.couplings_out || 0}</span></div>
             <div class="detail-row"><span class="detail-label">Incoming</span><span class="detail-value">${data.couplings_in || 0}</span></div>
             <div class="detail-row"><span class="detail-label">Balance</span><span class="detail-value ${getHealthClass(data.balance_score)}">${((data.balance_score || 0) * 100).toFixed(0)}%</span></div>
@@ -1317,20 +1807,406 @@ function showEdgeDetails(data) {
     const container = document.getElementById('details-content');
     if (!container) return;
 
+    // Get dimension values with fallbacks
+    const dims = data.dimensions || {};
+    const strengthLabel = dims.strength?.label || getStrengthName(data.strength);
+    const distanceLabel = dims.distance?.label || data.distance || 'Unknown';
+    const volatilityLabel = dims.volatility?.label || data.volatility || 'Unknown';
+    const balance = dims.balance?.value ?? data.balance ?? 0.5;
+
+    // Analyze coupling and get recommendation (pass target for volatility estimation)
+    const analysis = analyzeCoupling(strengthLabel, distanceLabel, volatilityLabel, data.target || '');
+
     container.innerHTML = `
         <div class="detail-section">
-            <h4>Dependency</h4>
-            <div class="detail-row"><span class="detail-label">From</span><span class="detail-value">${data.source}</span></div>
-            <div class="detail-row"><span class="detail-label">To</span><span class="detail-value">${data.target}</span></div>
+            <h4>Coupling: ${data.source.split('::').pop()} → ${data.target.split('::').pop()}</h4>
         </div>
+
+        <div class="detail-section coupling-dimensions">
+            <h4>3つの次元 (Coupling Dimensions)</h4>
+
+            <div class="coupling-dimension">
+                <span class="dim-label">Strength (統合強度)</span>
+                <span class="dim-value strength-${strengthLabel.toLowerCase()}">${strengthLabel}</span>
+                <span class="dim-desc">${getStrengthDescription(strengthLabel)}</span>
+            </div>
+
+            <div class="coupling-dimension">
+                <span class="dim-label">Distance (距離)</span>
+                <span class="dim-value distance-${distanceLabel.toLowerCase()}">${distanceLabel}</span>
+                <span class="dim-desc">${getDistanceDescription(distanceLabel)}</span>
+            </div>
+
+            <div class="coupling-dimension">
+                <span class="dim-label">Volatility (変動性)</span>
+                <span class="dim-value volatility-${volatilityLabel.toLowerCase()}">${volatilityLabel}</span>
+                <span class="dim-desc">${getVolatilityDescription(volatilityLabel)}</span>
+                ${analysis.formula ? `<span class="dim-effective">実効値: ${estimateVolatility(data.target || '', volatilityLabel)}</span>` : ''}
+            </div>
+        </div>
+
+        <div class="detail-section recommendation-section">
+            <h4>分析と推奨 (Analysis & Recommendation)</h4>
+            <div class="recommendation-card ${analysis.status}">
+                <div class="recommendation-icon">${analysis.icon}</div>
+                <div class="recommendation-content">
+                    <div class="recommendation-status">${analysis.statusText}</div>
+                    <div class="recommendation-reason">${analysis.reason}</div>
+                    ${analysis.action ? `<div class="recommendation-action"><strong>推奨:</strong> ${analysis.action}</div>` : ''}
+                </div>
+            </div>
+        </div>
+
         <div class="detail-section">
-            <h4>Coupling</h4>
-            <div class="detail-row"><span class="detail-label">Strength</span><span class="detail-value">${getStrengthName(data.strength)}</span></div>
-            <div class="detail-row"><span class="detail-label">Distance</span><span class="detail-value">${data.distance}</span></div>
-            <div class="detail-row"><span class="detail-label">Balance</span><span class="detail-value ${getHealthClass(data.balance)}">${((data.balance || 0) * 100).toFixed(0)}%</span></div>
+            <h4>Balance Score</h4>
+            <div class="balance-display ${analysis.status}">
+                <span class="balance-value">${(balance * 100).toFixed(0)}%</span>
+                <span class="balance-interpretation">${analysis.balanceText}</span>
+            </div>
+            <div class="balance-equation">
+                <div class="equation-title">バランス方程式:</div>
+                <code class="equation-code">BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY</code>
+                <div class="equation-breakdown">
+                    <div class="eq-step">
+                        <span class="eq-label">MODULARITY:</span>
+                        <span class="eq-expr">(${strengthLabel} XOR ${distanceLabel})</span>
+                        <span class="eq-eval ${analysis.formula?.modularity ? 'true' : 'false'}">${analysis.formula?.modularity ? 'TRUE' : 'FALSE'}</span>
+                    </div>
+                    <div class="eq-step">
+                        <span class="eq-label">NOT VOLATILITY:</span>
+                        <span class="eq-expr">NOT ${estimateVolatility(data.target || '', volatilityLabel)}</span>
+                        <span class="eq-eval ${analysis.formula?.notVolatility ? 'true' : 'false'}">${analysis.formula?.notVolatility ? 'TRUE' : 'FALSE'}</span>
+                    </div>
+                    <div class="eq-step final">
+                        <span class="eq-label">BALANCE:</span>
+                        <span class="eq-expr">${analysis.formula?.modularity ? 'TRUE' : 'FALSE'} OR ${analysis.formula?.notVolatility ? 'TRUE' : 'FALSE'}</span>
+                        <span class="eq-eval ${analysis.formula?.result ? 'true' : 'false'}">${analysis.formula?.result ? 'TRUE' : 'FALSE'}</span>
+                    </div>
+                </div>
+            </div>
         </div>
+
         ${data.issue ? `<div class="issue-badge ${data.issue.severity?.toLowerCase()}">${formatIssueType(data.issue.issue_type)}</div>` : ''}
+
+        ${data.location?.file_path ? `
+            <div class="detail-section">
+                <button class="btn-view-code" onclick="loadSourceCode('${data.location.file_path}', ${data.location.line || 1}, 'details-content')">
+                    <span class="icon">📄</span> View Source (L${data.location.line || 1})
+                </button>
+            </div>
+        ` : ''}
     `;
+}
+
+/**
+ * Well-known stable crates (Generic subdomain = Low volatility)
+ * These are "枯れた" crates that rarely have breaking changes
+ */
+const STABLE_CRATES = new Set([
+    'serde', 'serde_json', 'serde_yaml', 'toml',
+    'tokio', 'async-std', 'futures',
+    'thiserror', 'anyhow', 'eyre',
+    'log', 'tracing', 'env_logger',
+    'clap', 'structopt',
+    'regex', 'lazy_static', 'once_cell',
+    'chrono', 'time',
+    'uuid', 'url',
+    'reqwest', 'hyper',
+    'syn', 'quote', 'proc-macro2',
+    'rand', 'itertools',
+    'rayon', 'crossbeam',
+    'parking_lot', 'dashmap',
+    'bytes', 'memmap2',
+    'walkdir', 'glob',
+    'tempfile',
+    'std', 'core', 'alloc'
+]);
+
+/**
+ * Estimate volatility based on target name and context
+ * Following DDD subdomain classification:
+ * - Generic subdomain (stable external crates) = Low
+ * - Supporting subdomain (utilities) = Low
+ * - Core subdomain (business logic) = High
+ */
+function estimateVolatility(target, explicitVolatility) {
+    // If explicitly provided, trust it
+    if (explicitVolatility && explicitVolatility !== 'Unknown') {
+        return explicitVolatility;
+    }
+
+    // Extract crate name from target (e.g., "serde::Serialize" -> "serde")
+    const parts = target.split('::');
+    const crateName = parts[0].replace('cargo-coupling::', '').toLowerCase();
+
+    // Check if it's a well-known stable crate
+    if (STABLE_CRATES.has(crateName)) {
+        return 'Low';
+    }
+
+    // External crates (contains ::) default to Medium
+    // Internal modules (no ::) could be High
+    if (parts.length > 1 && !target.startsWith('crate::')) {
+        return 'Medium';
+    }
+
+    return explicitVolatility || 'Medium';
+}
+
+/**
+ * Determine if target is an external crate (Generic subdomain)
+ */
+function isExternalCrate(target) {
+    const parts = target.split('::');
+    if (parts.length < 2) return false;
+
+    const crateName = parts[0].toLowerCase();
+    return STABLE_CRATES.has(crateName) ||
+           (!target.startsWith('crate::') && !target.startsWith('self::') && !target.startsWith('super::'));
+}
+
+/**
+ * Analyze coupling based on Khononov's Balancing Coupling framework
+ *
+ * Balance formula: BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
+ *
+ * Key principles:
+ * - 強結合 + 近距離 = ✅ 高凝集 (High cohesion)
+ * - 弱結合 + 遠距離 = ✅ 疎結合 (Loose coupling)
+ * - 強結合 + 遠距離 + 低変動性 = 🔒 許容可能 (Stable dependency)
+ * - 強結合 + 遠距離 + 高変動性 = ❌ 苦痛 (Global complexity + cascading changes)
+ * - 弱結合 + 近距離 = 🤔 局所的複雑性 (Over-abstraction?)
+ */
+function analyzeCoupling(strength, distance, volatility, targetName = '') {
+    const isStrongCoupling = ['Intrusive', 'Functional'].includes(strength);
+    const isWeakCoupling = ['Model', 'Contract'].includes(strength);
+    const isClose = ['SameFunction', 'SameModule'].includes(distance);
+    const isFar = ['DifferentModule', 'DifferentCrate'].includes(distance);
+
+    // Estimate actual volatility considering the target
+    const effectiveVolatility = estimateVolatility(targetName, volatility);
+    const isHighVolatility = effectiveVolatility === 'High';
+    const isLowVolatility = effectiveVolatility === 'Low';
+    const isMediumVolatility = effectiveVolatility === 'Medium';
+
+    // Check if target is a stable external crate
+    const isStableExternal = isExternalCrate(targetName) && isLowVolatility;
+
+    // Calculate modularity: STRENGTH XOR DISTANCE
+    // Good modularity = Strong+Close OR Weak+Far
+    const hasModularity = (isStrongCoupling && isClose) || (isWeakCoupling && isFar);
+
+    // Balance formula: MODULARITY OR NOT VOLATILITY
+    const isBalanced = hasModularity || isLowVolatility;
+
+    // ═══════════════════════════════════════════════════════════════
+    // Case 1: 強結合 + 遠距離 (potential Global Complexity)
+    // ═══════════════════════════════════════════════════════════════
+    if (isStrongCoupling && isFar) {
+        // But if low volatility, it's acceptable
+        if (isLowVolatility) {
+            return {
+                status: 'good',
+                icon: '🔒',
+                statusText: '安定した外部依存',
+                reason: `強結合 (${strength}) が遠距離 (${distance}) にありますが、対象は低変動性（Generic subdomain）のため問題ありません。`,
+                action: null,
+                balanceText: 'バランス良好',
+                balanceResult: 'TRUE (stable)',
+                strengthDistanceMatch: false,
+                formula: {
+                    modularity: false,
+                    notVolatility: true,
+                    result: true
+                }
+            };
+        }
+
+        // Medium volatility - needs attention but not critical
+        if (isMediumVolatility) {
+            return {
+                status: 'acceptable',
+                icon: '⚠️',
+                statusText: 'グローバル複雑性（中程度）',
+                reason: `強結合 (${strength}) が遠距離 (${distance}) にあり、中変動性です。変更時に注意が必要です。`,
+                action: 'リファクタリング候補: traitで抽象化するか、距離を縮める（同一モジュールに移動）',
+                balanceText: '要注意',
+                balanceResult: 'PARTIAL',
+                strengthDistanceMatch: false,
+                formula: {
+                    modularity: false,
+                    notVolatility: false,
+                    result: false
+                }
+            };
+        }
+
+        // High volatility - this is the real problem
+        return {
+            status: 'critical',
+            icon: '❌',
+            statusText: 'グローバル複雑性 + 変更連鎖',
+            reason: `強結合 (${strength}) が遠距離 (${distance}) の高変動性コンポーネントに向いています。これは最も苦痛な状態です。`,
+            action: `緊急対応: (1) trait/インターフェースで抽象化 (2) 同一モジュールに移動 (3) 変更頻度を下げる`,
+            balanceText: 'バランス不良',
+            balanceResult: 'FALSE (PAIN)',
+            strengthDistanceMatch: false,
+            formula: {
+                modularity: false,
+                notVolatility: false,
+                result: false
+            }
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Case 2: 強結合 + 近距離 (High Cohesion - good!)
+    // ═══════════════════════════════════════════════════════════════
+    if (isStrongCoupling && isClose) {
+        if (isHighVolatility) {
+            return {
+                status: 'acceptable',
+                icon: '⚡',
+                statusText: '高凝集（変動性に注意）',
+                reason: `強結合 (${strength}) が近距離 (${distance}) にあり凝集性は高いです。ただし高変動性なので、変更時は関連コードも確認してください。`,
+                action: '変更時は同一モジュール内の依存元を合わせて確認',
+                balanceText: 'ほぼバランス',
+                balanceResult: 'TRUE (cohesion)',
+                strengthDistanceMatch: true,
+                formula: {
+                    modularity: true,
+                    notVolatility: false,
+                    result: true
+                }
+            };
+        }
+        return {
+            status: 'good',
+            icon: '✅',
+            statusText: '適切な凝集性',
+            reason: `強結合 (${strength}) が近距離 (${distance}) にあり、自然なモジュールの凝集性を示しています。これは良い設計です。`,
+            action: null,
+            balanceText: 'バランス良好',
+            balanceResult: 'TRUE (cohesion)',
+            strengthDistanceMatch: true,
+            formula: {
+                modularity: true,
+                notVolatility: !isHighVolatility,
+                result: true
+            }
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Case 3: 弱結合 + 遠距離 (Loose Coupling - good!)
+    // ═══════════════════════════════════════════════════════════════
+    if (isWeakCoupling && isFar) {
+        return {
+            status: 'good',
+            icon: '✅',
+            statusText: '適切な疎結合',
+            reason: `弱結合 (${strength}) が遠距離 (${distance}) にあり、理想的なモジュール分離を示しています。`,
+            action: null,
+            balanceText: 'バランス良好',
+            balanceResult: 'TRUE (loose coupling)',
+            strengthDistanceMatch: true,
+            formula: {
+                modularity: true,
+                notVolatility: isLowVolatility,
+                result: true
+            }
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Case 4: 弱結合 + 近距離 (Local Complexity - over-abstraction?)
+    // ═══════════════════════════════════════════════════════════════
+    if (isWeakCoupling && isClose) {
+        return {
+            status: 'acceptable',
+            icon: '🤔',
+            statusText: '局所的複雑性',
+            reason: `弱結合 (${strength}) が近距離 (${distance}) にあります。同一モジュール内でトレイト抽象化が本当に必要ですか？`,
+            action: '検討: 直接的な依存に簡略化できないか確認。無関係な機能が同居していないか確認。',
+            balanceText: 'やや複雑',
+            balanceResult: 'TRUE (but complex)',
+            strengthDistanceMatch: false,
+            formula: {
+                modularity: false,
+                notVolatility: isLowVolatility,
+                result: isLowVolatility
+            }
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Case 5: Low volatility saves everything
+    // ═══════════════════════════════════════════════════════════════
+    if (isLowVolatility) {
+        return {
+            status: 'good',
+            icon: '🔒',
+            statusText: '安定した依存',
+            reason: `対象が低変動性（Generic subdomain）のため、結合の強さや距離に関わらず問題ありません。serde, tokio等の"枯れた"crateへの依存はこのパターンです。`,
+            action: null,
+            balanceText: 'バランス良好',
+            balanceResult: 'TRUE (stable)',
+            strengthDistanceMatch: hasModularity,
+            formula: {
+                modularity: hasModularity,
+                notVolatility: true,
+                result: true
+            }
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Default: Review needed
+    // ═══════════════════════════════════════════════════════════════
+    return {
+        status: 'acceptable',
+        icon: '🔍',
+        statusText: 'レビュー推奨',
+        reason: `Strength: ${strength}, Distance: ${distance}, Volatility: ${effectiveVolatility}。この組み合わせは自動判定が困難です。`,
+        action: 'コンテキストに応じて判断してください',
+        balanceText: 'レビュー推奨',
+        balanceResult: 'REVIEW',
+        strengthDistanceMatch: hasModularity,
+        formula: {
+            modularity: hasModularity,
+            notVolatility: isLowVolatility,
+            result: isBalanced
+        }
+    };
+}
+
+function getStrengthDescription(label) {
+    const desc = {
+        'Intrusive': '内部実装に直接依存 (最も強い)',
+        'Functional': '関数/メソッドに依存',
+        'Model': 'データモデルに依存',
+        'Contract': 'インターフェースに依存 (最も弱い)'
+    };
+    return desc[label] || '';
+}
+
+function getDistanceDescription(label) {
+    const desc = {
+        'SameFunction': '同じ関数内',
+        'SameModule': '同じモジュール内',
+        'DifferentModule': '異なるモジュール',
+        'DifferentCrate': '外部クレート'
+    };
+    return desc[label] || '';
+}
+
+function getVolatilityDescription(label) {
+    const desc = {
+        'Low': '変更頻度が低い (安定)',
+        'Medium': '中程度の変更頻度',
+        'High': '変更頻度が高い (不安定)'
+    };
+    return desc[label] || '';
 }
 
 function clearDetails() {
@@ -1400,6 +2276,31 @@ function getBalanceColor(balance) {
     return '#ef4444';
 }
 
+/**
+ * Get edge color based on Khononov's coupling balance analysis
+ */
+function getEdgeColorByAnalysis(data) {
+    const strength = data.strengthLabel || getStrengthName(data.strength);
+    const distance = data.distance || 'Unknown';
+    const volatility = data.volatility || 'Medium';
+    const target = data.target || '';
+
+    // Use the same analysis logic as showEdgeDetails
+    const analysis = analyzeCoupling(strength, distance, volatility, target);
+
+    // Map status to color
+    switch (analysis.status) {
+        case 'good':
+            return '#22c55e'; // Green
+        case 'acceptable':
+            return '#eab308'; // Yellow
+        case 'critical':
+            return '#ef4444'; // Red
+        default:
+            return '#64748b'; // Gray
+    }
+}
+
 function getDistanceStyle(distance) {
     if (distance === 'SameModule' || distance === 'SameFunction') return 'solid';
     if (distance === 'DifferentModule') return 'dashed';
@@ -1429,6 +2330,650 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// =====================================================
+// 11. Tree View
+// =====================================================
+
+let currentView = 'graph';
+
+function setupViewToggle() {
+    const graphBtn = document.getElementById('view-graph');
+    const treeBtn = document.getElementById('view-tree');
+    const graphContainer = document.getElementById('cy');
+    const treeContainer = document.getElementById('tree-view');
+    const layoutPanel = document.getElementById('layout-panel');
+
+    if (!graphBtn || !treeBtn) return;
+
+    graphBtn.addEventListener('click', () => {
+        if (currentView === 'graph') return;
+        currentView = 'graph';
+
+        graphBtn.classList.add('active');
+        treeBtn.classList.remove('active');
+
+        graphContainer.style.display = 'block';
+        treeContainer.style.display = 'none';
+        if (layoutPanel) layoutPanel.style.display = 'block';
+
+        // Resize graph after switching
+        if (cy) {
+            setTimeout(() => {
+                cy.resize();
+                cy.fit(undefined, 50);
+            }, 100);
+        }
+    });
+
+    treeBtn.addEventListener('click', () => {
+        if (currentView === 'tree') return;
+        currentView = 'tree';
+
+        treeBtn.classList.add('active');
+        graphBtn.classList.remove('active');
+
+        graphContainer.style.display = 'none';
+        treeContainer.style.display = 'block';
+        if (layoutPanel) layoutPanel.style.display = 'none';
+
+        renderTreeView();
+    });
+}
+
+function renderTreeView() {
+    const container = document.getElementById('tree-view');
+    if (!container || !graphData) return;
+
+    // Build directory tree from file paths
+    const tree = buildFileTree(graphData.nodes);
+
+    // Calculate stats
+    const totalFiles = graphData.nodes.length;
+    const totalDirs = countDirectories(tree);
+    const issueFiles = graphData.nodes.filter(n => n.metrics?.health === 'critical' || n.metrics?.health === 'needs_review').length;
+
+    // Calculate total functions, types, and impls
+    let totalFunctions = 0;
+    let totalTypes = 0;
+    let totalImpls = 0;
+    for (const node of graphData.nodes) {
+        const items = node.items || [];
+        totalFunctions += items.filter(i => i.kind === 'fn').length;
+        totalTypes += items.filter(i => i.kind === 'type' || i.kind === 'trait').length;
+        totalImpls += (node.metrics?.trait_impl_count || 0) + (node.metrics?.inherent_impl_count || 0);
+    }
+
+    // Build edge lookup for coupling info
+    window._edgesBySource = {};
+    window._edgesByTarget = {};
+    graphData.edges.forEach(e => {
+        if (!window._edgesBySource[e.source]) window._edgesBySource[e.source] = [];
+        if (!window._edgesByTarget[e.target]) window._edgesByTarget[e.target] = [];
+        window._edgesBySource[e.source].push(e);
+        window._edgesByTarget[e.target].push(e);
+    });
+
+    // Render tree
+    container.innerHTML = `
+        <div class="tree-header">
+            <h2>🔗 Coupling Analysis</h2>
+            <p class="tree-hint">Expand modules to see coupling details (Strength, Distance, Volatility)</p>
+            <div class="tree-stats">
+                <span class="tree-stat">${totalFiles} modules</span>
+                <span class="tree-stat">${totalFunctions} functions</span>
+                <span class="tree-stat">${totalTypes} types</span>
+                <span class="tree-stat">${totalImpls} impls</span>
+                ${issueFiles > 0 ? `<span class="tree-stat warning">${issueFiles} need review</span>` : ''}
+            </div>
+            <div class="tree-toolbar">
+                <input type="text" id="tree-search" class="tree-search" placeholder="Filter modules...">
+                <button id="tree-expand-all" class="btn btn-sm" title="Expand all">▼ Expand</button>
+                <button id="tree-collapse-all" class="btn btn-sm" title="Collapse all">▶ Collapse</button>
+            </div>
+        </div>
+        <div class="tree-content" id="tree-content">
+            ${renderTreeNode(tree, '')}
+        </div>
+    `;
+
+    // Tree search filter
+    const searchInput = document.getElementById('tree-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            container.querySelectorAll('.tree-file').forEach(file => {
+                const name = file.querySelector('.tree-name')?.textContent.toLowerCase() || '';
+                const label = file.querySelector('.tree-label')?.textContent.toLowerCase() || '';
+                const match = !query || name.includes(query) || label.includes(query);
+                file.style.display = match ? '' : 'none';
+            });
+
+            // Show/hide folders based on whether they have visible children
+            container.querySelectorAll('.tree-folder').forEach(folder => {
+                const hasVisibleFiles = folder.querySelectorAll('.tree-file[style=""], .tree-file:not([style])').length > 0;
+                folder.style.display = hasVisibleFiles ? '' : 'none';
+                if (query && hasVisibleFiles) {
+                    folder.classList.remove('collapsed');
+                }
+            });
+        });
+    }
+
+    // Expand/Collapse all
+    document.getElementById('tree-expand-all')?.addEventListener('click', () => {
+        container.querySelectorAll('.tree-folder').forEach(f => f.classList.remove('collapsed'));
+    });
+    document.getElementById('tree-collapse-all')?.addEventListener('click', () => {
+        container.querySelectorAll('.tree-folder').forEach(f => f.classList.add('collapsed'));
+    });
+
+    // Attach click handlers
+    container.querySelectorAll('.tree-file').forEach(item => {
+        item.addEventListener('click', () => {
+            const nodeId = item.dataset.nodeId;
+            if (nodeId) {
+                // Switch to graph view and select node
+                document.getElementById('view-graph')?.click();
+                setTimeout(() => {
+                    const node = cy.getElementById(nodeId);
+                    if (node.length > 0) selectNode(node);
+                }, 150);
+            }
+        });
+    });
+
+    // Toggle folder expansion
+    container.querySelectorAll('.tree-folder-header').forEach(header => {
+        header.addEventListener('click', () => {
+            const folder = header.parentElement;
+            folder.classList.toggle('collapsed');
+        });
+    });
+}
+
+function countDirectories(node) {
+    let count = Object.keys(node.children).length;
+    Object.values(node.children).forEach(child => {
+        count += countDirectories(child);
+    });
+    return count;
+}
+
+function buildFileTree(nodes) {
+    const tree = { name: 'root', children: {}, files: [] };
+
+    // Find common base path by looking at all file paths
+    const paths = nodes.map(n => n.file_path || n.id).filter(p => p);
+    const basePath = findCommonBasePath(paths);
+
+    nodes.forEach(node => {
+        const fullPath = node.file_path || node.id;
+        // Remove base path to get relative path
+        let relativePath = fullPath;
+        if (basePath && fullPath.startsWith(basePath)) {
+            relativePath = fullPath.substring(basePath.length);
+        }
+
+        const parts = relativePath.split('/').filter(p => p && p !== '.');
+
+        let current = tree;
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            const isFile = i === parts.length - 1;
+
+            if (isFile) {
+                current.files.push({
+                    name: part,
+                    label: node.label,
+                    id: node.id,
+                    metrics: node.metrics,
+                    inCycle: node.in_cycle,
+                    items: node.items || []
+                });
+            } else {
+                if (!current.children[part]) {
+                    current.children[part] = { name: part, children: {}, files: [] };
+                }
+                current = current.children[part];
+            }
+        }
+    });
+
+    return tree;
+}
+
+function findCommonBasePath(paths) {
+    if (paths.length === 0) return '';
+    if (paths.length === 1) {
+        // Return directory part of single path
+        const lastSlash = paths[0].lastIndexOf('/');
+        return lastSlash > 0 ? paths[0].substring(0, lastSlash + 1) : '';
+    }
+
+    // Find common prefix directory
+    const parts = paths[0].split('/');
+    let commonParts = [];
+
+    for (let i = 0; i < parts.length - 1; i++) { // -1 to exclude filename
+        const part = parts[i];
+        if (paths.every(p => {
+            const pParts = p.split('/');
+            return pParts[i] === part;
+        })) {
+            commonParts.push(part);
+        } else {
+            break;
+        }
+    }
+
+    return commonParts.length > 0 ? commonParts.join('/') + '/' : '';
+}
+
+function renderTreeNode(node, prefix) {
+    let html = '';
+
+    // Render child directories first (sorted)
+    const dirNames = Object.keys(node.children).sort();
+    dirNames.forEach(dirName => {
+        const child = node.children[dirName];
+        const fileCount = countFiles(child);
+        html += `
+            <div class="tree-folder">
+                <div class="tree-folder-header">
+                    <span class="tree-icon">📁</span>
+                    <span class="tree-name">${dirName}/</span>
+                    <span class="tree-count">${fileCount}</span>
+                </div>
+                <div class="tree-folder-content">
+                    ${renderTreeNode(child, prefix + '  ')}
+                </div>
+            </div>
+        `;
+    });
+
+    // Render files (sorted)
+    const sortedFiles = node.files.sort((a, b) => a.name.localeCompare(b.name));
+    sortedFiles.forEach(file => {
+        const healthClass = file.metrics?.health || 'unknown';
+        const issueIndicator = file.inCycle ? '<span class="tree-cycle">⟳</span>' : '';
+
+        // Get internal couplings only (not DifferentCrate)
+        const outEdges = (window._edgesBySource[file.id] || [])
+            .filter(e => e.dimensions?.distance?.label !== 'DifferentCrate');
+        const inEdges = (window._edgesByTarget[file.id] || [])
+            .filter(e => e.dimensions?.distance?.label !== 'DifferentCrate');
+
+        const hasItems = file.items && file.items.length > 0;
+        const hasCouplings = outEdges.length > 0 || inEdges.length > 0;
+
+        // Count items by kind
+        const fnCount = file.items.filter(i => i.kind === 'fn').length;
+        const typeCount = file.items.filter(i => i.kind === 'type' || i.kind === 'trait').length;
+        const implCount = (file.metrics?.trait_impl_count || 0) + (file.metrics?.inherent_impl_count || 0);
+
+        // Build item stats string
+        const itemStats = [];
+        if (fnCount > 0) itemStats.push(`${fnCount} fn`);
+        if (typeCount > 0) itemStats.push(`${typeCount} types`);
+        if (implCount > 0) itemStats.push(`${implCount} impl`);
+        const itemStatsStr = itemStats.join(', ');
+
+        html += `
+            <div class="tree-file-wrapper${hasItems || hasCouplings ? ' has-items' : ''}">
+                <div class="tree-file" data-node-id="${file.id}">
+                    <span class="tree-icon">📄</span>
+                    <span class="tree-name">${file.name}</span>
+                    <span class="tree-label">${file.label}</span>
+                    <span class="tree-health ${healthClass}"></span>
+                    ${issueIndicator}
+                    <span class="tree-connections" title="Internal couplings">
+                        ${outEdges.length > 0 ? `→${outEdges.length}` : ''}
+                        ${inEdges.length > 0 ? `←${inEdges.length}` : ''}
+                    </span>
+                    ${itemStatsStr ? `<span class="tree-item-count">${itemStatsStr}</span>` : ''}
+                </div>
+                ${renderModuleCouplings(file.id, outEdges, inEdges)}
+                ${hasItems ? renderFileItems(file.items) : ''}
+            </div>
+        `;
+    });
+
+    return html;
+}
+
+function renderModuleCouplings(moduleId, outEdges, inEdges) {
+    if (outEdges.length === 0 && inEdges.length === 0) return '';
+
+    let html = '<div class="tree-couplings">';
+
+    // Outgoing dependencies (what this module uses)
+    if (outEdges.length > 0) {
+        html += '<div class="coupling-section"><span class="coupling-label">Dependencies →</span>';
+        outEdges.forEach(edge => {
+            const dims = edge.dimensions || {};
+            const strengthLabel = dims.strength?.label || 'Unknown';
+            const distanceLabel = dims.distance?.label || 'Unknown';
+            const volatilityLabel = dims.volatility?.label || 'Unknown';
+            const balance = dims.balance?.value ?? 0.5;
+            const balanceClass = balance >= 0.8 ? 'good' : balance >= 0.4 ? 'needs_review' : 'critical';
+            const targetName = edge.target.split('::').pop();
+
+            html += `
+                <div class="coupling-item ${balanceClass}">
+                    <span class="coupling-target">${targetName}</span>
+                    <span class="coupling-dim strength-${strengthLabel.toLowerCase()}">${strengthLabel}</span>
+                    <span class="coupling-dim distance-${distanceLabel.toLowerCase()}">${distanceLabel}</span>
+                    <span class="coupling-dim volatility-${volatilityLabel.toLowerCase()}">${volatilityLabel}</span>
+                    <span class="coupling-balance">${(balance * 100).toFixed(0)}%</span>
+                </div>
+            `;
+        });
+        html += '</div>';
+    }
+
+    // Incoming dependencies (what depends on this module)
+    if (inEdges.length > 0) {
+        html += '<div class="coupling-section"><span class="coupling-label">Dependents ←</span>';
+        inEdges.forEach(edge => {
+            const dims = edge.dimensions || {};
+            const strengthLabel = dims.strength?.label || 'Unknown';
+            const distanceLabel = dims.distance?.label || 'Unknown';
+            const volatilityLabel = dims.volatility?.label || 'Unknown';
+            const balance = dims.balance?.value ?? 0.5;
+            const balanceClass = balance >= 0.8 ? 'good' : balance >= 0.4 ? 'needs_review' : 'critical';
+            const sourceName = edge.source.split('::').pop();
+
+            html += `
+                <div class="coupling-item ${balanceClass}">
+                    <span class="coupling-target">${sourceName}</span>
+                    <span class="coupling-dim strength-${strengthLabel.toLowerCase()}">${strengthLabel}</span>
+                    <span class="coupling-dim distance-${distanceLabel.toLowerCase()}">${distanceLabel}</span>
+                    <span class="coupling-dim volatility-${volatilityLabel.toLowerCase()}">${volatilityLabel}</span>
+                    <span class="coupling-balance">${(balance * 100).toFixed(0)}%</span>
+                </div>
+            `;
+        });
+        html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+}
+
+function renderFileItems(items) {
+    if (!items || items.length === 0) return '';
+
+    const sortedItems = [...items].sort((a, b) => {
+        // Sort by kind first, then by name
+        const kindOrder = { trait: 0, type: 1, fn: 2 };
+        const kindDiff = (kindOrder[a.kind] || 99) - (kindOrder[b.kind] || 99);
+        return kindDiff !== 0 ? kindDiff : a.name.localeCompare(b.name);
+    });
+
+    const html = sortedItems.map(item => {
+        const icon = item.kind === 'trait' ? '🔹' : item.kind === 'fn' ? '⚙️' : '📦';
+        const visClass = item.visibility === 'pub' ? 'public' : 'private';
+        const hasDeps = item.dependencies && item.dependencies.length > 0;
+
+        // Filter to show only internal dependencies (not DifferentCrate)
+        const internalDeps = (item.dependencies || [])
+            .filter(d => d.distance !== 'DifferentCrate');
+        const hasInternalDeps = internalDeps.length > 0;
+
+        let depsHtml = '';
+        if (hasInternalDeps) {
+            depsHtml = `<div class="item-deps">` +
+                internalDeps.slice(0, 5).map(dep => {
+                    const targetName = dep.target.split('::').pop();
+                    return `
+                        <div class="item-dep">
+                            <span class="dep-arrow">→</span>
+                            <span class="dep-target">${targetName}</span>
+                            <span class="dep-type ${dep.dep_type.toLowerCase()}">${dep.dep_type}</span>
+                            <span class="dep-strength ${dep.strength.toLowerCase()}">${dep.strength}</span>
+                            ${dep.expression ? `<span class="dep-expr">${dep.expression}</span>` : ''}
+                        </div>
+                    `;
+                }).join('') +
+                (internalDeps.length > 5 ? `<div class="item-dep more">+${internalDeps.length - 5} more</div>` : '') +
+                `</div>`;
+        }
+
+        return `
+            <div class="tree-item-wrapper ${hasInternalDeps ? 'has-deps' : ''}">
+                <div class="tree-item ${visClass}">
+                    <span class="tree-item-icon">${icon}</span>
+                    <span class="tree-item-name">${item.name}</span>
+                    <span class="tree-item-kind">${item.kind}</span>
+                    <span class="tree-item-vis">${item.visibility}</span>
+                    ${hasInternalDeps ? `<span class="tree-item-dep-count">${internalDeps.length} deps</span>` : ''}
+                </div>
+                ${depsHtml}
+            </div>
+        `;
+    }).join('');
+
+    return `<div class="tree-items">${html}</div>`;
+}
+
+function countFiles(node) {
+    let count = node.files.length;
+    Object.values(node.children).forEach(child => {
+        count += countFiles(child);
+    });
+    return count;
+}
+
+// =====================================================
+// 12. Item Graph (Module Internal Dependencies)
+// =====================================================
+
+let itemCy = null;
+let currentModuleForItemGraph = null;
+
+function showItemGraph(moduleId) {
+    console.log('showItemGraph called with:', moduleId);
+    const panel = document.getElementById('item-graph-panel');
+    const container = document.getElementById('item-graph-container');
+    if (!panel || !container || !graphData) {
+        console.log('Missing panel, container, or graphData');
+        return;
+    }
+
+    // Find the module node
+    const moduleNode = graphData.nodes.find(n => n.id === moduleId);
+    console.log('Module node found:', moduleNode ? moduleNode.label : 'not found', 'items:', moduleNode?.items?.length);
+    if (!moduleNode || !moduleNode.items || moduleNode.items.length === 0) {
+        panel.style.display = 'none';
+        console.log('No items, hiding panel');
+        return;
+    }
+
+    currentModuleForItemGraph = moduleId;
+    panel.style.display = 'block';
+
+    // Build and render item graph
+    renderItemGraph(moduleNode);
+
+    // Setup filter handlers
+    setupItemFilters(moduleNode);
+
+    // Setup close button
+    document.getElementById('close-item-graph')?.addEventListener('click', () => {
+        panel.style.display = 'none';
+        if (itemCy) {
+            itemCy.destroy();
+            itemCy = null;
+        }
+    });
+}
+
+function renderItemGraph(moduleNode) {
+    const container = document.getElementById('item-graph-container');
+    if (!container) return;
+
+    // Get filter settings
+    const showFn = document.getElementById('item-filter-fn')?.checked ?? true;
+    const showType = document.getElementById('item-filter-type')?.checked ?? true;
+    const showTrait = document.getElementById('item-filter-trait')?.checked ?? true;
+
+    // Filter items based on checkboxes
+    const items = moduleNode.items.filter(item => {
+        if (item.kind === 'fn' && !showFn) return false;
+        if (item.kind === 'type' && !showType) return false;
+        if (item.kind === 'trait' && !showTrait) return false;
+        return true;
+    });
+
+    // Build elements
+    const elements = buildItemElements(items, moduleNode.label);
+
+    // Update item count
+    const countEl = document.getElementById('item-count');
+    if (countEl) countEl.textContent = items.length;
+
+    // Destroy existing instance
+    if (itemCy) {
+        itemCy.destroy();
+    }
+
+    // Create new Cytoscape instance
+    itemCy = cytoscape({
+        container: container,
+        elements: elements,
+        style: getItemCytoscapeStyle(),
+        layout: {
+            name: 'cose',
+            animate: false,
+            nodeRepulsion: 8000,
+            idealEdgeLength: 80,
+            padding: 20
+        },
+        minZoom: 0.3,
+        maxZoom: 2,
+        wheelSensitivity: 0.3
+    });
+
+    // Click handler for item nodes
+    itemCy.on('tap', 'node', function(evt) {
+        const node = evt.target;
+        showItemDetails(node.data());
+    });
+}
+
+function buildItemElements(items, moduleName) {
+    const nodes = [];
+    const edges = [];
+    const itemNames = new Set(items.map(i => i.name));
+
+    items.forEach(item => {
+        // Add node
+        nodes.push({
+            data: {
+                id: item.name,
+                label: item.name,
+                kind: item.kind,
+                visibility: item.visibility,
+                depCount: (item.dependencies || []).filter(d => d.distance !== 'DifferentCrate').length
+            }
+        });
+
+        // Add edges for internal dependencies
+        (item.dependencies || []).forEach(dep => {
+            if (dep.distance === 'DifferentCrate') return;
+
+            const targetName = dep.target.split('::').pop();
+
+            // Only add edge if target is in the same module
+            if (itemNames.has(targetName)) {
+                edges.push({
+                    data: {
+                        id: `${item.name}->${targetName}`,
+                        source: item.name,
+                        target: targetName,
+                        depType: dep.dep_type,
+                        strength: dep.strength,
+                        expression: dep.expression
+                    }
+                });
+            }
+        });
+    });
+
+    return [...nodes, ...edges];
+}
+
+function getItemCytoscapeStyle() {
+    return [
+        {
+            selector: 'node',
+            style: {
+                'label': 'data(label)',
+                'text-valign': 'center',
+                'text-halign': 'center',
+                'font-size': '8px',
+                'color': '#f8fafc',
+                'text-outline-color': '#0f172a',
+                'text-outline-width': 1,
+                'width': node => 25 + (node.data('depCount') || 0) * 3,
+                'height': node => 25 + (node.data('depCount') || 0) * 3,
+                'background-color': node => {
+                    const kind = node.data('kind');
+                    if (kind === 'fn') return '#3b82f6';
+                    if (kind === 'trait') return '#22c55e';
+                    return '#8b5cf6';
+                },
+                'border-width': node => node.data('visibility') === 'pub' ? 2 : 1,
+                'border-color': node => node.data('visibility') === 'pub' ? '#fbbf24' : '#475569'
+            }
+        },
+        {
+            selector: 'edge',
+            style: {
+                'width': 1.5,
+                'line-color': edge => {
+                    const strength = edge.data('strength');
+                    if (strength === 'Intrusive') return '#ef4444';
+                    if (strength === 'Functional') return '#f97316';
+                    return '#6b7280';
+                },
+                'target-arrow-color': edge => {
+                    const strength = edge.data('strength');
+                    if (strength === 'Intrusive') return '#ef4444';
+                    if (strength === 'Functional') return '#f97316';
+                    return '#6b7280';
+                },
+                'target-arrow-shape': 'triangle',
+                'arrow-scale': 0.8,
+                'curve-style': 'bezier',
+                'opacity': 0.7
+            }
+        },
+        {
+            selector: 'node:selected',
+            style: {
+                'border-width': 3,
+                'border-color': '#3b82f6'
+            }
+        }
+    ];
+}
+
+function setupItemFilters(moduleNode) {
+    const filterIds = ['item-filter-fn', 'item-filter-type', 'item-filter-trait'];
+    filterIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.onchange = () => renderItemGraph(moduleNode);
+        }
+    });
+}
+
+function showItemDetails(data) {
+    console.log('Item clicked:', data);
+    // Could show more details in a tooltip or update the details panel
 }
 
 // =====================================================

@@ -7,6 +7,8 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/style.css">
     <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+    <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
 </head>
 <body>
     <!-- Trigger zones for auto-hide UI -->
@@ -27,11 +29,17 @@
             <div class="header-stats" id="header-stats">
                 <span class="stat">Loading...</span>
             </div>
+            <div class="header-right">
+                <button id="lang-toggle" class="btn btn-lang" title="Switch language">
+                    <span id="lang-label">EN</span>
+                </button>
+            </div>
         </header>
 
-        <!-- Main Graph Area - full viewport -->
+        <!-- Main Content Area - full viewport -->
         <main class="main">
             <div class="graph-container" id="cy"></div>
+            <div class="tree-container" id="tree-view" style="display: none;"></div>
         </main>
 
         <!-- Sidebar - auto-hide (fixed positioned, outside main) -->
@@ -80,15 +88,29 @@
                     <input type="text" id="search-input" class="search-input" placeholder="Search modules... (press /)">
                 </section>
 
-                <!-- Layout -->
+                <!-- View Mode -->
                 <section class="panel">
+                    <h2>View</h2>
+                    <div class="view-buttons">
+                        <button id="view-graph" class="btn btn-view active">Graph</button>
+                        <button id="view-tree" class="btn btn-view">Tree</button>
+                    </div>
+                    <div class="filter-group" style="margin-top: 0.5rem;">
+                        <label><input type="checkbox" id="center-mode-toggle"> Center on Click</label>
+                        <p style="font-size: 0.6875rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                            Re-layout graph with selected node at center
+                        </p>
+                    </div>
+                </section>
+
+                <!-- Layout (for Graph view) -->
+                <section class="panel" id="layout-panel">
                     <h2>Layout</h2>
                     <select id="layout-select" class="select">
-                        <option value="cose">Force-directed (cose)</option>
+                        <option value="cose">Force-directed</option>
+                        <option value="dagre">Hierarchy</option>
                         <option value="concentric">Concentric</option>
-                        <option value="circle">Circle</option>
                         <option value="grid">Grid</option>
-                        <option value="breadthfirst">Breadth-first</option>
                     </select>
                 </section>
 
@@ -112,7 +134,7 @@
                             <label><input type="checkbox" value="SameFunction" checked> Same Function</label>
                             <label><input type="checkbox" value="SameModule" checked> Same Module</label>
                             <label><input type="checkbox" value="DifferentModule" checked> Different Module</label>
-                            <label><input type="checkbox" value="DifferentCrate" checked> Different Crate</label>
+                            <label><input type="checkbox" value="DifferentCrate"> External Crate</label>
                         </div>
                     </div>
 
@@ -144,6 +166,61 @@
                     </div>
                 </section>
 
+                <!-- Legend -->
+                <section class="panel legend-panel">
+                    <h2>Legend <button id="toggle-legend" class="btn-toggle">[?]</button></h2>
+                    <div id="legend-content" style="display: none;">
+                        <div class="legend-section">
+                            <h4>Edge Colors (Coupling Balance)</h4>
+                            <div class="legend-items">
+                                <div class="legend-item">
+                                    <span class="legend-color" style="background: #22c55e;"></span>
+                                    <span class="legend-label">Good: 凝集性/疎結合</span>
+                                </div>
+                                <div class="legend-item">
+                                    <span class="legend-color" style="background: #3b82f6;"></span>
+                                    <span class="legend-label">Stable: 低変動性</span>
+                                </div>
+                                <div class="legend-item">
+                                    <span class="legend-color" style="background: #eab308;"></span>
+                                    <span class="legend-label">Review: 確認推奨</span>
+                                </div>
+                                <div class="legend-item">
+                                    <span class="legend-color" style="background: #ef4444;"></span>
+                                    <span class="legend-label">Critical: 問題あり</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="legend-section">
+                            <h4>Edge Style (Distance)</h4>
+                            <div class="legend-items">
+                                <div class="legend-item">
+                                    <span class="legend-line solid"></span>
+                                    <span class="legend-label">Same Module</span>
+                                </div>
+                                <div class="legend-item">
+                                    <span class="legend-line dashed"></span>
+                                    <span class="legend-label">Different Module</span>
+                                </div>
+                                <div class="legend-item">
+                                    <span class="legend-line dotted"></span>
+                                    <span class="legend-label">External Crate</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="legend-section balance-rules">
+                            <h4>バランス方程式</h4>
+                            <code>BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY</code>
+                            <table class="balance-table">
+                                <tr><td>強結合 + 近距離</td><td class="good">✅ OK</td></tr>
+                                <tr><td>弱結合 + 遠距離</td><td class="good">✅ OK</td></tr>
+                                <tr><td>強結合 + 遠距離</td><td class="bad">❌ 問題</td></tr>
+                                <tr><td>強結合 + 高変動性</td><td class="bad">❌ 問題</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
                 <!-- Analysis Mode -->
                 <section class="panel">
                     <h2>Analysis</h2>
@@ -161,6 +238,17 @@
                     </div>
                     <div id="blast-radius" style="display: none;"></div>
                     <p class="hint" id="analysis-hint">Select a node first</p>
+                </section>
+
+                <!-- Critical Issues (Actionable Problems) -->
+                <section class="panel" id="critical-issues-panel">
+                    <h2>🔥 <span data-i18n="critical_issues">Critical Issues</span> <span id="critical-count" class="badge critical">0</span></h2>
+                    <p style="font-size: 0.6875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                        <span data-i18n="unbalanced_deps">Unbalanced coupling relationships</span>
+                    </p>
+                    <div id="critical-issues-list" class="critical-issues-list">
+                        <p class="placeholder" data-i18n="analyzing">Analyzing...</p>
+                    </div>
                 </section>
 
                 <!-- Hotspots (Refactoring Targets) -->
@@ -222,6 +310,24 @@
                     </div>
                 </section>
 
+                <!-- Item Graph (shows when module is selected) -->
+                <section class="panel" id="item-graph-panel" style="display: none;">
+                    <h2>📦 Item Dependencies <button id="close-item-graph" class="btn-close">×</button></h2>
+                    <p class="item-graph-hint">Dependencies within this module</p>
+                    <div class="item-filter-group">
+                        <label><input type="checkbox" id="item-filter-fn" checked> Functions</label>
+                        <label><input type="checkbox" id="item-filter-type" checked> Types</label>
+                        <label><input type="checkbox" id="item-filter-trait" checked> Traits</label>
+                    </div>
+                    <div id="item-graph-container" class="item-graph-container"></div>
+                    <div id="item-graph-legend" class="item-graph-legend">
+                        <span class="legend-item"><span class="dot fn"></span> fn</span>
+                        <span class="legend-item"><span class="dot type"></span> type</span>
+                        <span class="legend-item"><span class="dot trait"></span> trait</span>
+                        <span class="legend-item" style="margin-left: auto;"><span id="item-count">0</span> items</span>
+                    </div>
+                </section>
+
                 <!-- Legend -->
                 <section class="panel" id="legend-panel">
                     <h2>Legend</h2>
@@ -251,9 +357,11 @@
                     <h2>Shortcuts <span style="opacity: 0.5;">(?)</span></h2>
                     <div class="shortcuts-list">
                         <div class="shortcut"><kbd>/</kbd> Search</div>
+                        <div class="shortcut"><kbd>t</kbd> Toggle Tree/Graph</div>
                         <div class="shortcut"><kbd>s</kbd> Toggle sidebar</div>
                         <div class="shortcut"><kbd>f</kbd> Fit to screen</div>
                         <div class="shortcut"><kbd>r</kbd> Reset layout</div>
+                        <div class="shortcut"><kbd>c</kbd> Toggle center mode</div>
                         <div class="shortcut"><kbd>e</kbd> Export PNG</div>
                         <div class="shortcut"><kbd>Esc</kbd> Clear selection</div>
                     </div>
@@ -274,6 +382,9 @@
                 <tr><td><kbd>/</kbd></td><td>Focus search</td></tr>
                 <tr><td><kbd>f</kbd></td><td>Fit graph to screen</td></tr>
                 <tr><td><kbd>r</kbd></td><td>Reset layout</td></tr>
+                <tr><td><kbd>c</kbd></td><td>Toggle center mode</td></tr>
+                <tr><td><kbd>t</kbd></td><td>Toggle Tree/Graph view</td></tr>
+                <tr><td><kbd>s</kbd></td><td>Toggle sidebar</td></tr>
                 <tr><td><kbd>e</kbd></td><td>Export as PNG</td></tr>
                 <tr><td><kbd>Esc</kbd></td><td>Clear selection</td></tr>
                 <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>

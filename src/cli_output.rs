@@ -1074,6 +1074,335 @@ pub fn parse_severity(s: &str) -> Option<Severity> {
     }
 }
 
+// ============================================================================
+// Trace: Function/Type-level Dependency Analysis
+// ============================================================================
+
+/// Trace result for a specific item (function/type)
+#[derive(Debug, Clone)]
+pub struct TraceResult {
+    /// Item name
+    pub item_name: String,
+    /// Module where the item is defined
+    pub module: String,
+    /// File path
+    pub file_path: String,
+    /// What this item depends on (outgoing)
+    pub depends_on: Vec<TraceDependency>,
+    /// What depends on this item (incoming)
+    pub depended_by: Vec<TraceDependency>,
+    /// Design recommendation based on coupling analysis
+    pub recommendation: Option<String>,
+}
+
+/// A traced dependency
+#[derive(Debug, Clone)]
+pub struct TraceDependency {
+    /// Source or target item name
+    pub item: String,
+    /// Module name
+    pub module: String,
+    /// Type of dependency (FunctionCall, FieldAccess, etc.)
+    pub dep_type: String,
+    /// Integration strength
+    pub strength: String,
+    /// File path
+    pub file_path: Option<String>,
+    /// Line number
+    pub line: usize,
+}
+
+/// Generate trace output for a specific function/type
+pub fn generate_trace_output<W: Write>(
+    metrics: &ProjectMetrics,
+    item_name: &str,
+    writer: &mut W,
+) -> io::Result<bool> {
+    use crate::analyzer::ItemDepType;
+
+    // Find all items matching the name
+    let mut found_in_modules: Vec<(&str, &crate::metrics::ModuleMetrics)> = Vec::new();
+    let mut outgoing: Vec<TraceDependency> = Vec::new();
+    let mut incoming: Vec<TraceDependency> = Vec::new();
+
+    // Search through all modules
+    for (module_name, module) in &metrics.modules {
+        // Check if this module defines the item (as function or type)
+        let defines_function = module.function_definitions.contains_key(item_name);
+        let defines_type = module.type_definitions.contains_key(item_name);
+
+        if defines_function || defines_type {
+            found_in_modules.push((module_name, module));
+        }
+
+        // Check item_dependencies for outgoing dependencies FROM this item
+        for dep in &module.item_dependencies {
+            if dep.source_item.contains(item_name) || dep.source_item.ends_with(item_name) {
+                let strength = match dep.dep_type {
+                    ItemDepType::FieldAccess | ItemDepType::StructConstruction => "Intrusive",
+                    ItemDepType::FunctionCall | ItemDepType::MethodCall => "Functional",
+                    ItemDepType::TypeUsage | ItemDepType::Import => "Model",
+                    ItemDepType::TraitImpl | ItemDepType::TraitBound => "Contract",
+                };
+                outgoing.push(TraceDependency {
+                    item: dep.target.clone(),
+                    module: dep
+                        .target_module
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    dep_type: format!("{:?}", dep.dep_type),
+                    strength: strength.to_string(),
+                    file_path: Some(module.path.display().to_string()),
+                    line: dep.line,
+                });
+            }
+
+            // Check for incoming dependencies TO this item
+            if dep.target.contains(item_name) || dep.target.ends_with(item_name) {
+                let strength = match dep.dep_type {
+                    ItemDepType::FieldAccess | ItemDepType::StructConstruction => "Intrusive",
+                    ItemDepType::FunctionCall | ItemDepType::MethodCall => "Functional",
+                    ItemDepType::TypeUsage | ItemDepType::Import => "Model",
+                    ItemDepType::TraitImpl | ItemDepType::TraitBound => "Contract",
+                };
+                incoming.push(TraceDependency {
+                    item: dep.source_item.clone(),
+                    module: module_name.clone(),
+                    dep_type: format!("{:?}", dep.dep_type),
+                    strength: strength.to_string(),
+                    file_path: Some(module.path.display().to_string()),
+                    line: dep.line,
+                });
+            }
+        }
+    }
+
+    // If not found, try partial match
+    if found_in_modules.is_empty() && outgoing.is_empty() && incoming.is_empty() {
+        writeln!(writer, "Item '{}' not found.", item_name)?;
+        writeln!(writer)?;
+        writeln!(
+            writer,
+            "Hint: Try searching with a partial name or check module names:"
+        )?;
+
+        // Show available items that might match
+        let mut suggestions: Vec<String> = Vec::new();
+        for (module_name, module) in &metrics.modules {
+            for func_name in module.function_definitions.keys() {
+                if func_name.to_lowercase().contains(&item_name.to_lowercase()) {
+                    suggestions.push(format!("  - {} (function in {})", func_name, module_name));
+                }
+            }
+            for type_name in module.type_definitions.keys() {
+                if type_name.to_lowercase().contains(&item_name.to_lowercase()) {
+                    suggestions.push(format!("  - {} (type in {})", type_name, module_name));
+                }
+            }
+        }
+
+        if suggestions.is_empty() {
+            writeln!(writer, "  No similar items found.")?;
+        } else {
+            for s in suggestions.iter().take(10) {
+                writeln!(writer, "{}", s)?;
+            }
+            if suggestions.len() > 10 {
+                writeln!(writer, "  ... and {} more", suggestions.len() - 10)?;
+            }
+        }
+
+        return Ok(false);
+    }
+
+    // Output header
+    writeln!(writer, "Dependency Trace: {}", item_name)?;
+    writeln!(writer, "{}", "═".repeat(50))?;
+    writeln!(writer)?;
+
+    // Show where the item is defined
+    if !found_in_modules.is_empty() {
+        writeln!(writer, "📍 Defined in:")?;
+        for (module_name, module) in &found_in_modules {
+            let item_type = if module.function_definitions.contains_key(item_name) {
+                "function"
+            } else {
+                "type"
+            };
+            writeln!(
+                writer,
+                "   {} ({}) - {}",
+                module_name,
+                item_type,
+                module.path.display()
+            )?;
+        }
+        writeln!(writer)?;
+    }
+
+    // Show outgoing dependencies (what this item depends on)
+    writeln!(writer, "📤 Depends on ({} items):", outgoing.len())?;
+    if outgoing.is_empty() {
+        writeln!(writer, "   (none)")?;
+    } else {
+        // Group by target
+        let mut by_target: HashMap<String, Vec<&TraceDependency>> = HashMap::new();
+        for dep in &outgoing {
+            by_target.entry(dep.item.clone()).or_default().push(dep);
+        }
+
+        for (target, deps) in by_target.iter().take(15) {
+            let first = deps[0];
+            let strength_icon = match first.strength.as_str() {
+                "Intrusive" => "🔴",
+                "Functional" => "🟠",
+                "Model" => "🟡",
+                "Contract" => "🟢",
+                _ => "⚪",
+            };
+            writeln!(
+                writer,
+                "   {} {} ({}) - line {}",
+                strength_icon, target, first.strength, first.line
+            )?;
+        }
+        if by_target.len() > 15 {
+            writeln!(writer, "   ... and {} more", by_target.len() - 15)?;
+        }
+    }
+    writeln!(writer)?;
+
+    // Show incoming dependencies (what depends on this item)
+    writeln!(writer, "📥 Depended by ({} items):", incoming.len())?;
+    if incoming.is_empty() {
+        writeln!(writer, "   (none)")?;
+    } else {
+        // Group by source
+        let mut by_source: HashMap<String, Vec<&TraceDependency>> = HashMap::new();
+        for dep in &incoming {
+            by_source.entry(dep.item.clone()).or_default().push(dep);
+        }
+
+        for (source, deps) in by_source.iter().take(15) {
+            let first = deps[0];
+            let strength_icon = match first.strength.as_str() {
+                "Intrusive" => "🔴",
+                "Functional" => "🟠",
+                "Model" => "🟡",
+                "Contract" => "🟢",
+                _ => "⚪",
+            };
+            writeln!(
+                writer,
+                "   {} {} ({}) - {}:{}",
+                strength_icon,
+                source,
+                first.strength,
+                first.file_path.as_deref().unwrap_or("?"),
+                first.line
+            )?;
+        }
+        if by_source.len() > 15 {
+            writeln!(writer, "   ... and {} more", by_source.len() - 15)?;
+        }
+    }
+    writeln!(writer)?;
+
+    // Design recommendation
+    writeln!(writer, "💡 Design Analysis:")?;
+
+    let intrusive_out = outgoing
+        .iter()
+        .filter(|d| d.strength == "Intrusive")
+        .count();
+    let intrusive_in = incoming
+        .iter()
+        .filter(|d| d.strength == "Intrusive")
+        .count();
+    let total_deps = outgoing.len() + incoming.len();
+
+    if total_deps == 0 {
+        writeln!(writer, "   ✅ This item has no tracked dependencies.")?;
+    } else if intrusive_out > 3 {
+        writeln!(
+            writer,
+            "   ⚠️  High intrusive outgoing coupling ({} items)",
+            intrusive_out
+        )?;
+        writeln!(
+            writer,
+            "   → Consider: Extract interface/trait to reduce direct access"
+        )?;
+        writeln!(
+            writer,
+            "   → Khononov: Strong coupling should be CLOSE (same module)"
+        )?;
+    } else if intrusive_in > 5 {
+        writeln!(
+            writer,
+            "   ⚠️  High intrusive incoming coupling ({} items depend on internals)",
+            intrusive_in
+        )?;
+        writeln!(
+            writer,
+            "   → Consider: This item is a hotspot - changes will cascade"
+        )?;
+        writeln!(
+            writer,
+            "   → Khononov: Add stable interface to protect dependents"
+        )?;
+    } else if outgoing.len() > 10 {
+        writeln!(
+            writer,
+            "   ⚠️  High efferent coupling ({} dependencies)",
+            outgoing.len()
+        )?;
+        writeln!(
+            writer,
+            "   → Consider: Split into smaller functions with focused responsibilities"
+        )?;
+    } else if incoming.len() > 10 {
+        writeln!(
+            writer,
+            "   ⚠️  High afferent coupling ({} dependents)",
+            incoming.len()
+        )?;
+        writeln!(
+            writer,
+            "   → Consider: This is a core component - keep it stable"
+        )?;
+    } else {
+        writeln!(writer, "   ✅ Coupling appears balanced.")?;
+    }
+
+    writeln!(writer)?;
+
+    // Change impact summary
+    writeln!(writer, "🔄 Change Impact:")?;
+    writeln!(
+        writer,
+        "   If you modify '{}', you may need to update:",
+        item_name
+    )?;
+    let affected_modules: HashSet<_> = incoming.iter().map(|d| d.module.clone()).collect();
+    if affected_modules.is_empty() {
+        writeln!(writer, "   (no other modules directly affected)")?;
+    } else {
+        for module in affected_modules.iter().take(10) {
+            writeln!(writer, "   • {}", module)?;
+        }
+        if affected_modules.len() > 10 {
+            writeln!(
+                writer,
+                "   ... and {} more modules",
+                affected_modules.len() - 10
+            )?;
+        }
+    }
+
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

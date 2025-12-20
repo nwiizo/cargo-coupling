@@ -6,8 +6,9 @@
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
+use crate::analyzer::ItemDepType;
 use crate::balance::{BalanceScore, IssueThresholds, analyze_project_balance};
-use crate::metrics::{CouplingMetrics, ProjectMetrics};
+use crate::metrics::{BalanceClassification, CouplingMetrics, ProjectMetrics};
 
 /// Complete graph data for visualization
 #[derive(Debug, Clone, Serialize)]
@@ -26,6 +27,33 @@ pub struct Node {
     pub metrics: NodeMetrics,
     pub in_cycle: bool,
     pub file_path: Option<String>,
+    /// Items defined in this module (structs, enums, traits, functions)
+    pub items: Vec<ModuleItem>,
+}
+
+/// An item defined in a module (struct, enum, trait, or function)
+#[derive(Debug, Clone, Serialize)]
+pub struct ModuleItem {
+    pub name: String,
+    pub kind: String,
+    pub visibility: String,
+    /// Dependencies of this item (what it calls/uses)
+    pub dependencies: Vec<ItemDepInfo>,
+}
+
+/// Information about an item-level dependency
+#[derive(Debug, Clone, Serialize)]
+pub struct ItemDepInfo {
+    /// Target (what is being called/used)
+    pub target: String,
+    /// Type of dependency (FunctionCall, MethodCall, FieldAccess, etc.)
+    pub dep_type: String,
+    /// Distance (SameModule, DifferentModule, DifferentCrate)
+    pub distance: String,
+    /// Integration strength
+    pub strength: String,
+    /// The actual expression (e.g., "config.thresholds")
+    pub expression: Option<String>,
 }
 
 /// Metrics for a single node
@@ -82,6 +110,10 @@ pub struct BalanceValue {
     pub value: f64,
     pub label: String,
     pub interpretation: String,
+    /// Khononov's balance classification
+    pub classification: String,
+    /// Japanese description
+    pub classification_ja: String,
 }
 
 /// Connascence information
@@ -196,6 +228,57 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
             "critical"
         };
 
+        // Build a map of item dependencies by source item
+        let mut item_deps_map: HashMap<String, Vec<ItemDepInfo>> = HashMap::new();
+        for dep in &module.item_dependencies {
+            let deps = item_deps_map.entry(dep.source_item.clone()).or_default();
+
+            // Determine distance based on target module
+            let distance = if dep.target_module.as_ref() == Some(&module.name) {
+                "SameModule"
+            } else if dep.target_module.is_some() {
+                "DifferentModule"
+            } else {
+                "DifferentCrate"
+            };
+
+            // Determine strength based on dep type
+            let strength = match dep.dep_type {
+                ItemDepType::FieldAccess | ItemDepType::StructConstruction => "Intrusive",
+                ItemDepType::FunctionCall | ItemDepType::MethodCall => "Functional",
+                ItemDepType::TypeUsage | ItemDepType::Import => "Model",
+                ItemDepType::TraitImpl | ItemDepType::TraitBound => "Contract",
+            };
+
+            deps.push(ItemDepInfo {
+                target: dep.target.clone(),
+                dep_type: format!("{:?}", dep.dep_type),
+                distance: distance.to_string(),
+                strength: strength.to_string(),
+                expression: dep.expression.clone(),
+            });
+        }
+
+        // Convert type_definitions and function_definitions to ModuleItem list
+        let mut items: Vec<ModuleItem> = module
+            .type_definitions
+            .values()
+            .map(|def| ModuleItem {
+                name: def.name.clone(),
+                kind: if def.is_trait { "trait" } else { "type" }.to_string(),
+                visibility: format!("{}", def.visibility),
+                dependencies: item_deps_map.get(&def.name).cloned().unwrap_or_default(),
+            })
+            .collect();
+
+        // Add functions to items
+        items.extend(module.function_definitions.values().map(|def| ModuleItem {
+            name: def.name.clone(),
+            kind: "fn".to_string(),
+            visibility: format!("{}", def.visibility),
+            dependencies: item_deps_map.get(&def.name).cloned().unwrap_or_default(),
+        }));
+
         nodes.push(Node {
             id: name.clone(),
             label: module.name.clone(),
@@ -210,6 +293,7 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
             },
             in_cycle: cycle_nodes.contains(name),
             file_path: Some(module.path.display().to_string()),
+            items,
         });
     }
 
@@ -246,6 +330,7 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
                     },
                     in_cycle: cycle_nodes.contains(name),
                     file_path: None,
+                    items: Vec::new(),
                 });
             }
         }
@@ -358,6 +443,10 @@ fn coupling_to_dimensions(coupling: &CouplingMetrics, score: &BalanceScore) -> D
         crate::balance::BalanceInterpretation::Critical => "Critical",
     };
 
+    // Calculate Khononov's BalanceClassification
+    let classification =
+        BalanceClassification::classify(coupling.strength, coupling.distance, coupling.volatility);
+
     Dimensions {
         strength: DimensionValue {
             value: coupling.strength.value(),
@@ -375,6 +464,8 @@ fn coupling_to_dimensions(coupling: &CouplingMetrics, score: &BalanceScore) -> D
             value: score.score,
             label: balance_label.to_string(),
             interpretation: format!("{:?}", score.interpretation),
+            classification: classification.description_en().to_string(),
+            classification_ja: classification.description_ja().to_string(),
         },
         connascence: None, // TODO: Add connascence tracking per coupling
     }
