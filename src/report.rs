@@ -50,6 +50,37 @@ pub fn generate_summary_with_thresholds<W: Write>(
             metrics.module_count()
         )?;
     }
+
+    // Check for possibly over-engineered code (zero issues with enough couplings)
+    let critical = *report
+        .issues_by_severity
+        .get(&Severity::Critical)
+        .unwrap_or(&0);
+    let high = *report.issues_by_severity.get(&Severity::High).unwrap_or(&0);
+    let medium = *report
+        .issues_by_severity
+        .get(&Severity::Medium)
+        .unwrap_or(&0);
+    let internal_couplings = metrics.internal_coupling_count();
+
+    if report
+        .health_grade
+        .is_possibly_over_engineered(critical, high, medium, internal_couplings)
+    {
+        writeln!(writer)?;
+        if jp {
+            writeln!(
+                writer,
+                "⚠️ 問題が検出されませんでした。過剰な抽象化になっていないか確認してください。"
+            )?;
+        } else {
+            writeln!(
+                writer,
+                "⚠️ Zero issues detected. Verify this isn't over-abstracted."
+            )?;
+        }
+    }
+
     writeln!(writer)?;
 
     // 3-Dimensional Analysis
@@ -459,7 +490,6 @@ fn write_executive_summary<W: Write>(
 
     // Health Grade with emoji
     let grade_emoji = match report.health_grade {
-        crate::balance::HealthGrade::S => "⭐",
         crate::balance::HealthGrade::A => "🟢",
         crate::balance::HealthGrade::B => "🟢",
         crate::balance::HealthGrade::C => "🟡",

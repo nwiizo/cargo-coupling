@@ -108,16 +108,15 @@ BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
 
 ## Grade System
 
-| Grade | Description | Action |
-|-------|-------------|--------|
-| **S** | Exceptional - possibly over-engineered | Consider simplifying |
-| **A** | Good - no change needed | Target |
-| **B** | Good | Minor issues OK |
-| **C** | Acceptable | Some fixes |
-| **D** | Needs Improvement | Take action |
-| **F** | Critical Issues | Urgent |
+| Grade | Description |
+|-------|-------------|
+| **A** | Well-balanced - coupling is appropriate |
+| **B** | Healthy - minor issues, manageable |
+| **C** | Room for improvement - some structural issues |
+| **D** | Attention needed - significant issues |
+| **F** | Immediate action required - critical issues |
 
-**Philosophy**: A and B are both "Good". S may indicate over-engineering.
+**Note**: Zero issues with sufficient couplings triggers an over-abstraction warning.
 
 ## Issue Types Detected
 

@@ -449,16 +449,15 @@ The tool uses the following default thresholds for detecting coupling issues:
 
 Health grades are calculated based on internal couplings only (external crate dependencies are excluded):
 
-| Grade | Criteria | Action |
-|-------|----------|--------|
-| **S (Exceptional)** | Zero issues with >= 20 couplings | Possibly over-engineered |
-| **A (Good)** | No high issues, medium density <= 5% | No change needed |
-| **B (Good)** | Medium density > 5%, no critical issues | Minor issues OK |
-| **C (Acceptable)** | Any high issues OR medium density > 25% | Some improvements |
-| **D (Needs Improvement)** | Any critical issues OR high density > 5% | Take action |
-| **F (Critical Issues)** | More than 3 critical issues | Urgent fix needed |
+| Grade | Description | Criteria |
+|-------|-------------|----------|
+| **A (Well-balanced)** | Coupling is appropriate | No high issues, medium density <= 5% |
+| **B (Healthy)** | Minor issues, manageable | Medium density > 5%, no critical issues |
+| **C (Room for improvement)** | Some structural issues | Any high issues OR medium density > 25% |
+| **D (Attention needed)** | Significant issues | Any critical issues OR high density > 5% |
+| **F (Immediate action required)** | Critical issues | More than 3 critical issues |
 
-**Philosophy**: A and B are both "Good". S may indicate over-engineering.
+**Note**: If zero issues are detected with sufficient couplings, a warning is shown to verify the code isn't over-abstracted.
 
 ### Severity Classification
 

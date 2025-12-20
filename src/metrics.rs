@@ -855,6 +855,14 @@ impl ProjectMetrics {
         self.couplings.len()
     }
 
+    /// Get internal coupling count (excludes external crate dependencies)
+    pub fn internal_coupling_count(&self) -> usize {
+        self.couplings
+            .iter()
+            .filter(|c| !crate::balance::is_external_crate(&c.target, &c.source))
+            .count()
+    }
+
     /// Calculate average strength across all couplings
     pub fn average_strength(&self) -> Option<f64> {
         if self.couplings.is_empty() {

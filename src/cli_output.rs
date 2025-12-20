@@ -792,7 +792,6 @@ pub fn run_check(
     // Check minimum grade
     if let Some(min_grade) = &config.min_grade {
         let grade_order = |g: &HealthGrade| match g {
-            HealthGrade::S => 6,
             HealthGrade::A => 5,
             HealthGrade::B => 4,
             HealthGrade::C => 3,
@@ -1055,7 +1054,6 @@ pub fn generate_json_output<W: Write>(
 /// Parse grade string to HealthGrade
 pub fn parse_grade(s: &str) -> Option<HealthGrade> {
     match s.to_uppercase().as_str() {
-        "S" => Some(HealthGrade::S),
         "A" => Some(HealthGrade::A),
         "B" => Some(HealthGrade::B),
         "C" => Some(HealthGrade::C),
@@ -1411,7 +1409,6 @@ mod tests {
 
     #[test]
     fn test_parse_grade() {
-        assert_eq!(parse_grade("S"), Some(HealthGrade::S));
         assert_eq!(parse_grade("A"), Some(HealthGrade::A));
         assert_eq!(parse_grade("b"), Some(HealthGrade::B));
         assert_eq!(parse_grade("C"), Some(HealthGrade::C));

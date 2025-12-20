@@ -900,23 +900,39 @@ fn capitalize_first(s: &str) -> String {
 /// Health grade for the overall project
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthGrade {
-    S, // Exceptional - possibly over-engineered
-    A, // Good - no change needed
-    B, // Good - minor issues
-    C, // Acceptable
-    D, // Needs Improvement
-    F, // Critical Issues
+    A, // Well-balanced - coupling is appropriate for the architecture
+    B, // Healthy - minor issues exist but manageable
+    C, // Room for improvement - some structural issues
+    D, // Attention needed - significant issues affecting maintainability
+    F, // Immediate action required - critical issues blocking development
+}
+
+impl HealthGrade {
+    /// Returns true if this grade indicates possibly over-engineered code
+    /// (zero issues with sufficient couplings to assess)
+    pub fn is_possibly_over_engineered(
+        &self,
+        critical: usize,
+        high: usize,
+        medium: usize,
+        internal_couplings: usize,
+    ) -> bool {
+        matches!(self, HealthGrade::A)
+            && critical == 0
+            && high == 0
+            && medium == 0
+            && internal_couplings >= 20
+    }
 }
 
 impl std::fmt::Display for HealthGrade {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HealthGrade::S => write!(f, "S (Exceptional - possibly over-engineered)"),
-            HealthGrade::A => write!(f, "A (Good - no change needed)"),
-            HealthGrade::B => write!(f, "B (Good)"),
-            HealthGrade::C => write!(f, "C (Acceptable)"),
-            HealthGrade::D => write!(f, "D (Needs Improvement)"),
-            HealthGrade::F => write!(f, "F (Critical Issues)"),
+            HealthGrade::A => write!(f, "A (Well-balanced)"),
+            HealthGrade::B => write!(f, "B (Healthy)"),
+            HealthGrade::C => write!(f, "C (Room for improvement)"),
+            HealthGrade::D => write!(f, "D (Attention needed)"),
+            HealthGrade::F => write!(f, "F (Immediate action required)"),
         }
     }
 }
@@ -967,14 +983,8 @@ fn calculate_health_grade(
         return HealthGrade::B;
     }
 
-    // S: Exceptional - zero issues at all, might indicate over-engineering
-    // Only for projects with enough couplings to assess (>= 20)
-    // This is RARE - most real projects have some issues
-    if critical == 0 && high == 0 && medium == 0 && internal_couplings >= 20 {
-        return HealthGrade::S;
-    }
-
-    // A: Very Good - no high issues AND very low medium issues (< 5%)
+    // A: Good - no high issues AND very low medium issues (< 5%)
+    // This is the top grade - no need to go higher
     if high == 0 && medium_density <= 0.05 && internal_couplings >= 10 {
         return HealthGrade::A;
     }
@@ -1241,10 +1251,8 @@ mod tests {
     fn test_health_grade_calculation() {
         let mut issues = HashMap::new();
 
-        // No issues with >= 20 couplings = S (exceptional, possibly over-engineered)
-        assert_eq!(calculate_health_grade(&issues, 100), HealthGrade::S);
-
-        // No issues with 10-19 couplings = A (good but not enough data for S)
+        // No issues with enough couplings = A (good, top grade)
+        assert_eq!(calculate_health_grade(&issues, 100), HealthGrade::A);
         assert_eq!(calculate_health_grade(&issues, 15), HealthGrade::A);
 
         // No internal couplings = B (can't assess without data)
