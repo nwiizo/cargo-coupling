@@ -19,6 +19,7 @@ use cargo_coupling::{
     CompiledConfig, IssueThresholds, VolatilityAnalyzer, analyze_workspace,
     generate_ai_output_with_thresholds, generate_report_with_thresholds,
     generate_summary_with_thresholds, load_compiled_config,
+    web::{ServerConfig, start_server},
 };
 
 /// cargo-coupling - Measure the "right distance" in your Rust code
@@ -87,6 +88,23 @@ struct Args {
     /// Max incoming dependencies before flagging as High Afferent Coupling
     #[arg(long)]
     max_dependents: Option<usize>,
+
+    // === Web visualization options ===
+    /// Start web server for interactive visualization
+    #[arg(long)]
+    web: bool,
+
+    /// Port for web server (default: 3000)
+    #[arg(long, default_value = "3000")]
+    port: u16,
+
+    /// Don't open browser automatically when starting web server
+    #[arg(long)]
+    no_open: bool,
+
+    /// API endpoint URL for frontend (useful for separate deployments)
+    #[arg(long)]
+    api_endpoint: Option<String>,
 }
 
 fn main() {
@@ -227,6 +245,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "Thresholds: max_deps={}, max_dependents={}",
             thresholds.max_dependencies, thresholds.max_dependents
         );
+    }
+
+    // Web visualization mode
+    if args.web {
+        let server_config = ServerConfig {
+            port: args.port,
+            open_browser: !args.no_open,
+            api_endpoint: args.api_endpoint.clone(),
+        };
+
+        // Run the web server using tokio runtime
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(start_server(metrics, thresholds, server_config))
+            .map_err(|e| -> Box<dyn std::error::Error> { e })?;
+
+        return Ok(());
     }
 
     // Generate output

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cargo-coupling Visualization</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-left">
+                <h1>🔗 cargo-coupling</h1>
+            </div>
+            <div class="header-stats" id="header-stats">
+                <span class="stat">Loading...</span>
+            </div>
+        </header>
+
+        <main class="main">
+            <div class="graph-container" id="cy"></div>
+
+            <aside class="sidebar">
+                <!-- Search -->
+                <section class="panel">
+                    <h2>Search</h2>
+                    <input type="text" id="search-input" class="search-input" placeholder="Search modules... (press /)">
+                </section>
+
+                <!-- Layout -->
+                <section class="panel">
+                    <h2>Layout</h2>
+                    <select id="layout-select" class="select">
+                        <option value="cose">Force-directed (cose)</option>
+                        <option value="concentric">Concentric</option>
+                        <option value="circle">Circle</option>
+                        <option value="grid">Grid</option>
+                        <option value="breadthfirst">Breadth-first</option>
+                    </select>
+                </section>
+
+                <!-- Filters -->
+                <section class="panel">
+                    <h2>Filters</h2>
+
+                    <div class="filter-group">
+                        <label>Strength</label>
+                        <div class="checkbox-group" id="strength-filters">
+                            <label><input type="checkbox" value="Intrusive" checked> Intrusive</label>
+                            <label><input type="checkbox" value="Functional" checked> Functional</label>
+                            <label><input type="checkbox" value="Model" checked> Model</label>
+                            <label><input type="checkbox" value="Contract" checked> Contract</label>
+                        </div>
+                    </div>
+
+                    <div class="filter-group">
+                        <label>Distance</label>
+                        <div class="checkbox-group" id="distance-filters">
+                            <label><input type="checkbox" value="SameFunction" checked> Same Function</label>
+                            <label><input type="checkbox" value="SameModule" checked> Same Module</label>
+                            <label><input type="checkbox" value="DifferentModule" checked> Different Module</label>
+                            <label><input type="checkbox" value="DifferentCrate" checked> Different Crate</label>
+                        </div>
+                    </div>
+
+                    <div class="filter-group">
+                        <label>Volatility</label>
+                        <div class="checkbox-group" id="volatility-filters">
+                            <label><input type="checkbox" value="Low" checked> Low</label>
+                            <label><input type="checkbox" value="Medium" checked> Medium</label>
+                            <label><input type="checkbox" value="High" checked> High</label>
+                        </div>
+                    </div>
+
+                    <div class="filter-group">
+                        <label>Balance Score: <span id="balance-value">0.0 - 1.0</span></label>
+                        <div class="range-slider">
+                            <input type="range" id="balance-min" min="0" max="100" value="0">
+                            <input type="range" id="balance-max" min="0" max="100" value="100">
+                        </div>
+                    </div>
+
+                    <div class="filter-group">
+                        <label><input type="checkbox" id="show-issues-only"> Show Issues Only</label>
+                        <label><input type="checkbox" id="show-cycles-only"> Show Cycles Only</label>
+                    </div>
+
+                    <div class="filter-actions">
+                        <button id="reset-filters" class="btn">Reset Filters</button>
+                        <button id="fit-graph" class="btn">Fit to Screen</button>
+                    </div>
+                </section>
+
+                <!-- Analysis Mode -->
+                <section class="panel">
+                    <h2>Analysis</h2>
+                    <div id="analysis-mode-indicator"></div>
+                    <div class="analysis-buttons">
+                        <button id="show-dependents" class="btn btn-analysis" disabled>
+                            Show Dependents (→)
+                        </button>
+                        <button id="show-dependencies" class="btn btn-analysis" disabled>
+                            Show Dependencies (←)
+                        </button>
+                        <button id="show-impact" class="btn btn-analysis" disabled>
+                            Full Impact Analysis
+                        </button>
+                    </div>
+                    <div id="blast-radius" style="display: none;"></div>
+                    <p class="hint" id="analysis-hint">Select a node first</p>
+                </section>
+
+                <!-- Hotspots (Refactoring Targets) -->
+                <section class="panel">
+                    <h2>Hotspots</h2>
+                    <p style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                        High-impact refactoring targets
+                    </p>
+                    <div id="hotspot-list" class="hotspot-list">
+                        <p class="placeholder">Analyzing...</p>
+                    </div>
+                </section>
+
+                <!-- Module Rankings (Architecture Overview) -->
+                <section class="panel">
+                    <h2>Key Modules</h2>
+                    <div class="quick-actions">
+                        <button class="quick-action active" data-sort="connections">Connections</button>
+                        <button class="quick-action" data-sort="issues">Issues</button>
+                        <button class="quick-action" data-sort="health">Health</button>
+                    </div>
+                    <div id="module-rankings" class="module-rank-list">
+                        <p class="placeholder">Loading...</p>
+                    </div>
+                </section>
+
+                <!-- Cluster View -->
+                <section class="panel">
+                    <h2>Cluster View</h2>
+                    <div class="filter-actions">
+                        <button id="detect-clusters" class="btn">Detect Clusters</button>
+                        <button id="clear-clusters" class="btn">Clear Colors</button>
+                    </div>
+                    <div id="cluster-info" class="cluster-info"></div>
+                </section>
+
+                <!-- Issue List -->
+                <section class="panel">
+                    <h2>Issues <span id="issue-count" class="badge">0</span></h2>
+                    <div id="issue-list" class="issue-list">
+                        <p class="placeholder">No issues detected</p>
+                    </div>
+                </section>
+
+                <!-- Export -->
+                <section class="panel">
+                    <h2>Export</h2>
+                    <div class="filter-actions">
+                        <button id="export-png" class="btn">PNG Image</button>
+                        <button id="export-json" class="btn">JSON Data</button>
+                    </div>
+                </section>
+
+                <!-- Details -->
+                <section class="panel" id="details-panel">
+                    <h2>Details</h2>
+                    <div id="details-content">
+                        <p class="placeholder">Click a node or edge to see details</p>
+                    </div>
+                </section>
+
+                <!-- Legend -->
+                <section class="panel" id="legend-panel">
+                    <h2>Legend</h2>
+                    <div class="legend">
+                        <div class="legend-section">
+                            <h4>Edge Color (Balance)</h4>
+                            <div class="legend-item"><span class="color-box" style="background: #22c55e;"></span> Balanced (&gt;0.8)</div>
+                            <div class="legend-item"><span class="color-box" style="background: #eab308;"></span> Needs Review (0.4-0.8)</div>
+                            <div class="legend-item"><span class="color-box" style="background: #ef4444;"></span> Critical (&lt;0.4)</div>
+                            <div class="legend-item"><span class="color-box" style="background: #dc2626; border: 2px solid #fff;"></span> Circular Dependency</div>
+                        </div>
+                        <div class="legend-section">
+                            <h4>Edge Style (Distance)</h4>
+                            <div class="legend-item"><span class="line-style solid"></span> Same Module</div>
+                            <div class="legend-item"><span class="line-style dashed"></span> Different Module</div>
+                            <div class="legend-item"><span class="line-style dotted"></span> Different Crate</div>
+                        </div>
+                        <div class="legend-section">
+                            <h4>Edge Width (Strength)</h4>
+                            <div class="legend-item">Thick = Intrusive, Thin = Contract</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Shortcuts -->
+                <section class="panel">
+                    <h2>Shortcuts <span style="opacity: 0.5;">(?)</span></h2>
+                    <div class="shortcuts-list">
+                        <div class="shortcut"><kbd>/</kbd> Search</div>
+                        <div class="shortcut"><kbd>f</kbd> Fit to screen</div>
+                        <div class="shortcut"><kbd>r</kbd> Reset layout</div>
+                        <div class="shortcut"><kbd>e</kbd> Export PNG</div>
+                        <div class="shortcut"><kbd>Esc</kbd> Clear selection</div>
+                    </div>
+                </section>
+            </aside>
+        </main>
+
+        <footer class="footer">
+            <div id="summary-stats"></div>
+        </footer>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-modal" class="modal">
+        <div class="modal-content">
+            <h2>Keyboard Shortcuts</h2>
+            <table class="shortcuts-table">
+                <tr><td><kbd>/</kbd></td><td>Focus search</td></tr>
+                <tr><td><kbd>f</kbd></td><td>Fit graph to screen</td></tr>
+                <tr><td><kbd>r</kbd></td><td>Reset layout</td></tr>
+                <tr><td><kbd>e</kbd></td><td>Export as PNG</td></tr>
+                <tr><td><kbd>Esc</kbd></td><td>Clear selection</td></tr>
+                <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
+            </table>
+            <button onclick="toggleHelpModal()" class="btn">Close</button>
+        </div>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>

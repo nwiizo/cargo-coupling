@@ -897,14 +897,16 @@ pub fn analyze_project_parallel(path: &Path) -> Result<ProjectMetrics, AnalyzerE
                 .get_type_visibility(target_type)
                 .unwrap_or(Visibility::Public); // Default to public if unknown
 
-            // Create coupling metric with visibility
-            let coupling = CouplingMetrics::with_visibility(
+            // Create coupling metric with location
+            let coupling = CouplingMetrics::with_location(
                 analyzed.module_name.clone(),
                 target_module.clone(),
                 strength,
                 distance,
                 volatility,
                 visibility,
+                analyzed.file_path.clone(),
+                dep.line,
             );
 
             project.add_coupling(coupling);
@@ -1064,8 +1066,8 @@ fn analyze_with_workspace(
             // Default volatility
             let volatility = Volatility::Low;
 
-            // Create coupling metric with more info
-            let mut coupling = CouplingMetrics::new(
+            // Create coupling metric with location info
+            let mut coupling = CouplingMetrics::with_location(
                 format!("{}::{}", analyzed.crate_name, analyzed.module_name),
                 if let Some(ref crate_name) = resolved_crate {
                     format!("{}::{}", crate_name, target_module)
@@ -1075,6 +1077,9 @@ fn analyze_with_workspace(
                 strength,
                 distance,
                 volatility,
+                Visibility::Public, // Default visibility for workspace analysis
+                analyzed.file_path.clone(),
+                dep.line,
             );
 
             // Add crate-level info

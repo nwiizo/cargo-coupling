@@ -45,6 +45,7 @@ pub mod metrics;
 pub mod report;
 pub mod temporal;
 pub mod volatility;
+pub mod web;
 pub mod workspace;
 
 pub use analyzer::{

@@ -159,6 +159,15 @@ impl Volatility {
     }
 }
 
+/// Location information for a coupling
+#[derive(Debug, Clone, Default)]
+pub struct CouplingLocation {
+    /// File path where the coupling originates
+    pub file_path: Option<PathBuf>,
+    /// Line number in the source file
+    pub line: usize,
+}
+
 /// Metrics for a single coupling relationship
 #[derive(Debug, Clone)]
 pub struct CouplingMetrics {
@@ -178,6 +187,8 @@ pub struct CouplingMetrics {
     pub target_crate: Option<String>,
     /// Visibility of the target item (for intrusive detection)
     pub target_visibility: Visibility,
+    /// Location where the coupling occurs
+    pub location: CouplingLocation,
 }
 
 impl CouplingMetrics {
@@ -198,6 +209,7 @@ impl CouplingMetrics {
             source_crate: None,
             target_crate: None,
             target_visibility: Visibility::default(),
+            location: CouplingLocation::default(),
         }
     }
 
@@ -219,6 +231,35 @@ impl CouplingMetrics {
             source_crate: None,
             target_crate: None,
             target_visibility: visibility,
+            location: CouplingLocation::default(),
+        }
+    }
+
+    /// Create new coupling metrics with location
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_location(
+        source: String,
+        target: String,
+        strength: IntegrationStrength,
+        distance: Distance,
+        volatility: Volatility,
+        visibility: Visibility,
+        file_path: PathBuf,
+        line: usize,
+    ) -> Self {
+        Self {
+            source,
+            target,
+            strength,
+            distance,
+            volatility,
+            source_crate: None,
+            target_crate: None,
+            target_visibility: visibility,
+            location: CouplingLocation {
+                file_path: Some(file_path),
+                line,
+            },
         }
     }
 
