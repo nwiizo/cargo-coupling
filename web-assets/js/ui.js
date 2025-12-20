@@ -6,6 +6,7 @@ import { state, setSelectedNode, setCenterMode } from './state.js';
 import { t } from './i18n.js';
 import { applyLayout, clearHighlights, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, analyzeCoupling, getHealthColor } from './graph.js';
 import { debounce, escapeHtml, estimateVolatility } from './utils.js';
+import { updateUrl } from './url-router.js';
 
 // =====================================================
 // Header & Footer Stats
@@ -51,102 +52,108 @@ export function updateFooterStats(summary) {
 // Filters
 // =====================================================
 
-export function setupFilters() {
-    const applyFilters = () => {
-        if (!state.cy) return;
+/**
+ * Apply current filter settings to the graph
+ */
+export function applyFilters() {
+    if (!state.cy) return;
 
-        const strengths = getCheckedValues('strength-filters');
-        const distances = getCheckedValues('distance-filters');
-        const volatilities = getCheckedValues('volatility-filters');
-        const balanceMin = parseInt(document.getElementById('balance-min')?.value || 0) / 100;
-        const balanceMax = parseInt(document.getElementById('balance-max')?.value || 100) / 100;
-        const issuesOnly = document.getElementById('show-issues-only')?.checked;
-        const cyclesOnly = document.getElementById('show-cycles-only')?.checked;
-        const hideExternal = document.getElementById('hide-external')?.checked;
+    const strengths = getCheckedValues('strength-filters');
+    const distances = getCheckedValues('distance-filters');
+    const volatilities = getCheckedValues('volatility-filters');
+    const balanceMin = parseInt(document.getElementById('balance-min')?.value || 0) / 100;
+    const balanceMax = parseInt(document.getElementById('balance-max')?.value || 100) / 100;
+    const issuesOnly = document.getElementById('show-issues-only')?.checked;
+    const cyclesOnly = document.getElementById('show-cycles-only')?.checked;
+    const hideExternal = document.getElementById('hide-external')?.checked;
 
-        // First, determine which nodes are internal (have source file path)
-        const internalNodes = new Set();
-        state.cy.nodes().forEach(node => {
-            const filePath = node.data('file_path');
-            const isInternal = filePath && !filePath.startsWith('[external]');
-            if (isInternal) {
-                internalNodes.add(node.id());
-            }
-        });
-
-        state.cy.edges().forEach(edge => {
-            const strength = edge.data('strengthLabel') || 'Model';
-            const distance = edge.data('distance') || 'DifferentModule';
-            const volatility = edge.data('volatility') || 'Low';
-            const balance = edge.data('balance') ?? 0.5;
-            const hasIssue = edge.data('issue');
-            const inCycle = edge.data('inCycle');
-            const edgeType = edge.data('edgeType');
-
-            // Skip filtering for parent/item edges
-            if (edgeType === 'parent' || edgeType === 'item-dep') {
-                edge.style('display', 'element');
-                return;
-            }
-
-            // Check if this is an internal edge
-            const sourceInternal = internalNodes.has(edge.data('source'));
-            const targetInternal = internalNodes.has(edge.data('target'));
-            const isInternalEdge = sourceInternal && targetInternal;
-
-            let visible = true;
-            if (!strengths.includes(strength)) visible = false;
-
-            // Skip distance filter for internal edges when hideExternal is on
-            // (internal edges may have incorrect distance values due to path resolution)
-            if (!hideExternal || !isInternalEdge) {
-                if (!distances.includes(distance)) visible = false;
-            }
-
-            if (!volatilities.includes(volatility)) visible = false;
-            if (balance < balanceMin || balance > balanceMax) visible = false;
-            if (issuesOnly && !hasIssue) visible = false;
-            if (cyclesOnly && !inCycle) visible = false;
-
-            // Hide edges to/from external nodes if hide-external is checked
-            if (hideExternal && !isInternalEdge) {
-                visible = false;
-            }
-
-            edge.style('display', visible ? 'element' : 'none');
-        });
-
-        // Hide nodes with no visible edges OR external nodes if hideExternal is checked
-        state.cy.nodes().forEach(node => {
-            const nodeType = node.data('nodeType');
-            const filePath = node.data('file_path');
-            const isExternal = filePath && filePath.startsWith('[external]');
-            const isInternal = filePath && !filePath.startsWith('[external]');
-
-            // Always show item nodes if their parent is visible
-            if (nodeType === 'item') {
-                const parentVisible = state.cy.getElementById(node.data('parentModule')).style('display') !== 'none';
-                node.style('display', parentVisible ? 'element' : 'none');
-                return;
-            }
-
-            // Hide external nodes if filter is on
-            if (hideExternal && isExternal) {
-                node.style('display', 'none');
-                return;
-            }
-
-            const visibleEdges = node.connectedEdges().filter(e => e.style('display') !== 'none');
-            const nodeVisible = visibleEdges.length > 0 || isInternal;
-            node.style('display', nodeVisible ? 'element' : 'none');
-        });
-
-        const balanceLabel = document.getElementById('balance-value');
-        if (balanceLabel) {
-            balanceLabel.textContent = `${balanceMin.toFixed(1)} - ${balanceMax.toFixed(1)}`;
+    // First, determine which nodes are internal (have source file path)
+    const internalNodes = new Set();
+    state.cy.nodes().forEach(node => {
+        const filePath = node.data('file_path');
+        const isInternal = filePath && !filePath.startsWith('[external]');
+        if (isInternal) {
+            internalNodes.add(node.id());
         }
-    };
+    });
 
+    state.cy.edges().forEach(edge => {
+        const strength = edge.data('strengthLabel') || 'Model';
+        const distance = edge.data('distance') || 'DifferentModule';
+        const volatility = edge.data('volatility') || 'Low';
+        const balance = edge.data('balance') ?? 0.5;
+        const hasIssue = edge.data('issue');
+        const inCycle = edge.data('inCycle');
+        const edgeType = edge.data('edgeType');
+
+        // Skip filtering for parent/item edges
+        if (edgeType === 'parent' || edgeType === 'item-dep') {
+            edge.style('display', 'element');
+            return;
+        }
+
+        // Check if this is an internal edge
+        const sourceInternal = internalNodes.has(edge.data('source'));
+        const targetInternal = internalNodes.has(edge.data('target'));
+        const isInternalEdge = sourceInternal && targetInternal;
+
+        let visible = true;
+        if (!strengths.includes(strength)) visible = false;
+
+        // Skip distance filter for internal edges when hideExternal is on
+        // (internal edges may have incorrect distance values due to path resolution)
+        if (!hideExternal || !isInternalEdge) {
+            if (!distances.includes(distance)) visible = false;
+        }
+
+        if (!volatilities.includes(volatility)) visible = false;
+        if (balance < balanceMin || balance > balanceMax) visible = false;
+        if (issuesOnly && !hasIssue) visible = false;
+        if (cyclesOnly && !inCycle) visible = false;
+
+        // Hide edges to/from external nodes if hide-external is checked
+        if (hideExternal && !isInternalEdge) {
+            visible = false;
+        }
+
+        edge.style('display', visible ? 'element' : 'none');
+    });
+
+    // Hide nodes with no visible edges OR external nodes if hideExternal is checked
+    state.cy.nodes().forEach(node => {
+        const nodeType = node.data('nodeType');
+        const filePath = node.data('file_path');
+        const isExternal = filePath && filePath.startsWith('[external]');
+        const isInternal = filePath && !filePath.startsWith('[external]');
+
+        // Always show item nodes if their parent is visible
+        if (nodeType === 'item') {
+            const parentVisible = state.cy.getElementById(node.data('parentModule')).style('display') !== 'none';
+            node.style('display', parentVisible ? 'element' : 'none');
+            return;
+        }
+
+        // Hide external nodes if filter is on
+        if (hideExternal && isExternal) {
+            node.style('display', 'none');
+            return;
+        }
+
+        const visibleEdges = node.connectedEdges().filter(e => e.style('display') !== 'none');
+        const nodeVisible = visibleEdges.length > 0 || isInternal;
+        node.style('display', nodeVisible ? 'element' : 'none');
+    });
+
+    const balanceLabel = document.getElementById('balance-value');
+    if (balanceLabel) {
+        balanceLabel.textContent = `${balanceMin.toFixed(1)} - ${balanceMax.toFixed(1)}`;
+    }
+}
+
+/**
+ * Setup filter event listeners
+ */
+export function setupFilters() {
     // Attach filter listeners
     document.querySelectorAll('#strength-filters input, #distance-filters input, #volatility-filters input').forEach(cb => {
         cb.addEventListener('change', applyFilters);
@@ -338,6 +345,39 @@ export function showNodeDetails(data) {
     const fnCount = data.fn_count || fullNode?.metrics?.fn_count || 0;
     const typeCount = data.type_count || fullNode?.metrics?.type_count || 0;
     const implCount = data.impl_count || fullNode?.metrics?.impl_count || 0;
+    const filePath = data.file_path || fullNode?.file_path;
+    const isExternal = filePath && filePath.startsWith('[external]');
+    const items = data.items || fullNode?.items || [];
+
+    // Group items by kind
+    const types = items.filter(i => i.kind === 'type' || i.kind === 'struct' || i.kind === 'enum');
+    const traits = items.filter(i => i.kind === 'trait');
+    const functions = items.filter(i => i.kind === 'fn');
+
+    const renderItemList = (itemList, kind, icon) => {
+        if (itemList.length === 0) return '';
+        const isPub = (vis) => vis === 'pub' || vis === 'Public';
+        return `
+            <div class="item-list-section" data-kind="${kind}">
+                <div class="item-list-header">
+                    <span class="item-list-icon">${icon}</span>
+                    <span class="item-list-title">${kind}</span>
+                    <span class="item-list-count">${itemList.length}</span>
+                </div>
+                <div class="item-list-items">
+                    ${itemList.slice(0, 10).map(item => `
+                        <div class="item-list-item ${isPub(item.visibility) ? 'public' : 'private'}"
+                             data-module="${data.id}"
+                             data-item="${item.name}">
+                            <span class="item-name">${escapeHtml(item.name)}</span>
+                            ${isPub(item.visibility) ? '<span class="pub-badge">pub</span>' : ''}
+                        </div>
+                    `).join('')}
+                    ${itemList.length > 10 ? `<div class="item-list-more">+${itemList.length - 10} more</div>` : ''}
+                </div>
+            </div>
+        `;
+    };
 
     container.innerHTML = `
         <div class="detail-header">${escapeHtml(data.label)}</div>
@@ -362,8 +402,104 @@ export function showNodeDetails(data) {
             <span class="detail-label">Incoming:</span>
             <span>${data.couplings_in || 0}</span>
         </div>
-        ${data.file_path ? `<div class="detail-row file-path">${escapeHtml(data.file_path)}</div>` : ''}
+        ${filePath && !isExternal ? `
+            <div class="file-path-display">
+                <span class="file-path-label">File:</span>
+                <span class="file-path-value" title="${escapeHtml(filePath)}">${escapeHtml(filePath)}</span>
+            </div>
+            <button class="btn-view-code" data-path="${escapeHtml(filePath)}">
+                <span class="icon">📄</span> View Source Code
+            </button>
+        ` : ''}
+        <div id="source-code-panel"></div>
+        ${items.length > 0 ? `
+            <div class="module-items-section">
+                <div class="module-items-header">
+                    <span>📦 Module Contents</span>
+                    <span class="hint">(click to focus in graph)</span>
+                </div>
+                ${renderItemList(types, 'Types', 'S')}
+                ${renderItemList(traits, 'Traits', 'T')}
+                ${renderItemList(functions, 'Functions', 'ƒ')}
+            </div>
+        ` : ''}
     `;
+
+    // Setup view code button
+    if (filePath && !isExternal) {
+        const btn = container.querySelector('.btn-view-code');
+        btn?.addEventListener('click', () => {
+            loadSourceCode(filePath);
+        });
+    }
+
+    // Setup item click handlers
+    container.querySelectorAll('.item-list-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const moduleId = item.dataset.module;
+            const itemName = item.dataset.item;
+            focusOnItem(moduleId, itemName);
+        });
+    });
+}
+
+/**
+ * Focus on a specific item in the graph
+ */
+function focusOnItem(moduleId, itemName) {
+    if (!state.cy) return;
+
+    const itemNodeId = `${moduleId}::${itemName}`;
+
+    // Check if item node exists
+    let itemNode = state.cy.getElementById(itemNodeId);
+
+    if (!itemNode || itemNode.length === 0) {
+        // Item node doesn't exist - need to enable Show Items
+        const showItemsToggle = document.getElementById('show-items-toggle');
+        if (showItemsToggle && !showItemsToggle.checked) {
+            // Dispatch event to trigger rebuild with items
+            showItemsToggle.checked = true;
+            showItemsToggle.dispatchEvent(new Event('change'));
+
+            // Wait for rebuild and then focus
+            setTimeout(() => {
+                itemNode = state.cy?.getElementById(itemNodeId);
+                if (itemNode?.length) {
+                    selectAndFocusItem(itemNode);
+                    // Update URL with module and item
+                    updateUrl(moduleId, itemName);
+                }
+            }, 800);
+        }
+    } else {
+        selectAndFocusItem(itemNode);
+        // Update URL with module and item
+        updateUrl(moduleId, itemName);
+    }
+}
+
+/**
+ * Select and focus on an item node
+ */
+function selectAndFocusItem(node) {
+    if (!state.cy || !node) return;
+
+    // Clear previous highlights
+    state.cy.elements().removeClass('highlighted dimmed search-match');
+
+    // Highlight the item and its connections
+    state.cy.elements().addClass('dimmed');
+    node.removeClass('dimmed').addClass('highlighted search-match');
+    node.neighborhood().removeClass('dimmed');
+
+    // Center on the item
+    state.cy.animate({
+        center: { eles: node },
+        zoom: 2,
+        duration: 500,
+        easing: 'ease-out-cubic'
+    });
 }
 
 export function showEdgeDetails(data) {
@@ -378,6 +514,8 @@ export function showEdgeDetails(data) {
     );
 
     const effectiveVol = estimateVolatility(data.target || '', data.volatility || 'Medium');
+    const location = data.location;
+    const hasLocation = location && location.file_path && !location.file_path.startsWith('[external]');
 
     container.innerHTML = `
         <div class="detail-header">Coupling Details</div>
@@ -413,7 +551,21 @@ export function showEdgeDetails(data) {
         </div>
         ${analysis.action ? `<div class="analysis-action">${analysis.action}</div>` : ''}
         ${data.classification ? `<div class="classification-badge">${state.currentLang === 'ja' ? data.classificationJa : data.classification}</div>` : ''}
+        ${hasLocation ? `
+            <button class="btn-view-code" data-path="${escapeHtml(location.file_path)}" data-line="${location.line || 0}">
+                <span class="icon">📄</span> View Coupling Location
+            </button>
+        ` : ''}
+        <div id="source-code-panel"></div>
     `;
+
+    // Setup view code button for edge
+    if (hasLocation) {
+        const btn = container.querySelector('.btn-view-code');
+        btn?.addEventListener('click', () => {
+            loadSourceCode(location.file_path, location.line || null, 10);
+        });
+    }
 }
 
 export function clearDetails() {
@@ -479,17 +631,20 @@ export function setupResizableSidebar() {
     let startX, startWidth;
 
     resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
         isResizing = true;
         startX = e.clientX;
         startWidth = sidebar.offsetWidth;
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
+        document.body.classList.add('resizing-sidebar');
+        sidebar.classList.add('resizing');
+        resizer.classList.add('active');
     });
 
     document.addEventListener('mousemove', (e) => {
         if (!isResizing) return;
+        e.preventDefault();
         const width = startWidth - (e.clientX - startX);
-        if (width >= 250 && width <= 600) {
+        if (width >= 280 && width <= 700) {
             sidebar.style.width = `${width}px`;
         }
     });
@@ -497,10 +652,121 @@ export function setupResizableSidebar() {
     document.addEventListener('mouseup', () => {
         if (isResizing) {
             isResizing = false;
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
+            document.body.classList.remove('resizing-sidebar');
+            sidebar.classList.remove('resizing');
+            resizer.classList.remove('active');
+            // Trigger graph resize after sidebar resize
+            if (state.cy) {
+                state.cy.resize();
+                state.cy.fit(undefined, 50);
+            }
         }
     });
+}
+
+// =====================================================
+// Source Code Viewer
+// =====================================================
+
+let currentSourcePath = null;
+let sourceExpanded = false;
+
+/**
+ * Load and display source code for a file
+ */
+async function loadSourceCode(filePath, line = null, context = 15) {
+    const panel = document.getElementById('source-code-panel');
+    if (!panel) return;
+
+    // Toggle if same file
+    if (currentSourcePath === filePath && panel.innerHTML !== '') {
+        panel.innerHTML = '';
+        currentSourcePath = null;
+        return;
+    }
+
+    currentSourcePath = filePath;
+
+    // Show loading state
+    panel.innerHTML = '<div class="source-loading">Loading source code...</div>';
+
+    try {
+        const params = new URLSearchParams({ path: filePath });
+        if (line) params.append('line', line.toString());
+        params.append('context', context.toString());
+
+        const response = await fetch(`/api/source?${params}`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        renderSourceCode(panel, data);
+    } catch (error) {
+        panel.innerHTML = `<div class="source-error">Failed to load source: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+/**
+ * Render source code in the panel
+ */
+function renderSourceCode(panel, data) {
+    const fileName = data.file_name || 'unknown';
+    const lines = data.lines || [];
+
+    panel.innerHTML = `
+        <div class="source-code-container">
+            <div class="source-code-header">
+                <div class="file-info">
+                    <span class="file-icon">🦀</span>
+                    <span class="file-name">${escapeHtml(fileName)}</span>
+                    <span class="line-info">Lines ${data.start_line}-${data.end_line} of ${data.total_lines}</span>
+                </div>
+                <div class="source-code-actions">
+                    <button class="btn-expand-source" title="Expand/Collapse">⤢</button>
+                    <button class="btn-close-source" title="Close">×</button>
+                </div>
+            </div>
+            <div class="source-code-content ${sourceExpanded ? 'expanded' : ''}">
+                ${lines.map(line => `
+                    <div class="source-line ${line.is_highlight ? 'highlight' : ''}">
+                        <span class="line-number">${line.number}</span>
+                        <span class="line-content">${escapeHtml(line.content)}</span>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="source-code-footer">
+                <span class="path">${escapeHtml(data.file_path)}</span>
+                <span class="total">${data.total_lines} lines total</span>
+            </div>
+        </div>
+    `;
+
+    // Setup button handlers
+    panel.querySelector('.btn-close-source')?.addEventListener('click', () => {
+        panel.innerHTML = '';
+        currentSourcePath = null;
+    });
+
+    panel.querySelector('.btn-expand-source')?.addEventListener('click', () => {
+        sourceExpanded = !sourceExpanded;
+        const content = panel.querySelector('.source-code-content');
+        if (content) {
+            content.classList.toggle('expanded', sourceExpanded);
+        }
+    });
+}
+
+/**
+ * Load source code for an edge (coupling location)
+ */
+export async function loadEdgeSourceCode(location) {
+    if (!location || !location.file_path) return;
+
+    const panel = document.getElementById('source-code-panel');
+    if (!panel) return;
+
+    await loadSourceCode(location.file_path, location.line || 1, 10);
 }
 
 // =====================================================

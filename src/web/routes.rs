@@ -59,6 +59,12 @@ struct SourceLine {
     is_highlight: bool,
 }
 
+/// Query parameters for module items request
+#[derive(Deserialize)]
+struct ModuleQuery {
+    name: String,
+}
+
 /// Create API routes
 pub fn api_routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -66,6 +72,7 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/api/config", get(get_config))
         .route("/api/health", get(health_check))
         .route("/api/source", get(get_source))
+        .route("/api/module", get(get_module))
 }
 
 /// Create static file routes
@@ -168,6 +175,33 @@ async fn get_source(Query(query): Query<SourceQuery>) -> impl IntoResponse {
         total_lines,
     })
     .into_response()
+}
+
+/// GET /api/module - Returns module details including items
+async fn get_module(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ModuleQuery>,
+) -> impl IntoResponse {
+    let graph = graph::project_to_graph(&state.metrics, &state.thresholds);
+
+    // Find the module by name
+    if let Some(node) = graph.nodes.iter().find(|n| n.id == query.name || n.label == query.name) {
+        Json(serde_json::json!({
+            "id": node.id,
+            "label": node.label,
+            "file_path": node.file_path,
+            "items": node.items,
+            "metrics": node.metrics,
+            "in_cycle": node.in_cycle,
+        }))
+        .into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": format!("Module '{}' not found", query.name)})),
+        )
+            .into_response()
+    }
 }
 
 /// GET / - Serve index.html

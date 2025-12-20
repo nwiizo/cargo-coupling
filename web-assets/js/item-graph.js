@@ -5,6 +5,7 @@
 import { state, setItemCy, setCurrentModuleForItemGraph } from './state.js';
 
 let currentModuleNode = null;
+let isFiltersSetup = false;
 
 /**
  * Show item graph for a module
@@ -30,19 +31,33 @@ export function showItemGraph(moduleId) {
     // Update panel title
     const titleEl = panel.querySelector('h2');
     if (titleEl) {
-        titleEl.innerHTML = `📦 ${moduleNode.label} Items <button id="close-item-graph" class="btn-close">×</button>`;
+        titleEl.innerHTML = `📦 ${escapeHtml(moduleNode.label)} Items <button id="close-item-graph" class="btn-close">×</button>`;
     }
 
     // Build and render item graph
     renderItemGraph(moduleNode);
 
-    // Setup filter handlers
-    setupItemFilters(moduleNode);
+    // Setup filter handlers only once
+    if (!isFiltersSetup) {
+        setupItemFilters();
+        isFiltersSetup = true;
+    }
 
-    // Setup close button
-    document.getElementById('close-item-graph')?.addEventListener('click', () => {
-        hideItemGraph();
-    });
+    // Setup close button (need to re-attach since we replaced innerHTML)
+    setupCloseButton();
+}
+
+/**
+ * Setup close button handler
+ */
+function setupCloseButton() {
+    const closeBtn = document.getElementById('close-item-graph');
+    if (closeBtn) {
+        // Remove any existing listener by cloning
+        const newBtn = closeBtn.cloneNode(true);
+        closeBtn.parentNode.replaceChild(newBtn, closeBtn);
+        newBtn.addEventListener('click', hideItemGraph);
+    }
 }
 
 /**
@@ -89,6 +104,7 @@ function renderItemGraph(moduleNode) {
     // Destroy existing instance
     if (state.itemCy) {
         state.itemCy.destroy();
+        setItemCy(null);
     }
 
     // Create new Cytoscape instance
@@ -123,9 +139,17 @@ function renderItemGraph(moduleNode) {
 function buildItemElements(items, moduleName) {
     const nodes = [];
     const edges = [];
+    const edgeSet = new Set(); // Prevent duplicate edges
     const itemNames = new Set(items.map(i => i.name));
 
+    // Create set of internal module targets
+    const internalTargets = new Set();
+
     items.forEach(item => {
+        // Count internal dependencies (not external crate)
+        const internalDeps = (item.dependencies || []).filter(d => d.distance !== 'DifferentCrate');
+        const externalDeps = (item.dependencies || []).filter(d => d.distance === 'DifferentCrate');
+
         // Add node
         nodes.push({
             data: {
@@ -133,29 +157,67 @@ function buildItemElements(items, moduleName) {
                 label: item.name,
                 kind: item.kind,
                 visibility: item.visibility,
-                depCount: (item.dependencies || []).filter(d => d.distance !== 'DifferentCrate').length,
+                depCount: internalDeps.length,
+                externalDepCount: externalDeps.length,
                 dependencies: item.dependencies || []
             }
         });
 
-        // Add edges for internal dependencies
-        (item.dependencies || []).forEach(dep => {
-            if (dep.distance === 'DifferentCrate') return;
+        // Add edges for internal dependencies (within same module or to other internal modules)
+        internalDeps.forEach(dep => {
+            const targetParts = dep.target.split('::');
+            const targetName = targetParts[targetParts.length - 1];
 
-            const targetName = dep.target.split('::').pop();
-
-            // Only add edge if target is in the same module
+            // Check if target is in the same module
             if (itemNames.has(targetName)) {
-                edges.push({
-                    data: {
-                        id: `${item.name}->${targetName}`,
-                        source: item.name,
-                        target: targetName,
-                        depType: dep.dep_type,
-                        strength: dep.strength,
-                        expression: dep.expression
-                    }
-                });
+                const edgeId = `${item.name}->${targetName}`;
+                if (!edgeSet.has(edgeId) && item.name !== targetName) {
+                    edgeSet.add(edgeId);
+                    edges.push({
+                        data: {
+                            id: edgeId,
+                            source: item.name,
+                            target: targetName,
+                            depType: dep.dep_type,
+                            strength: dep.strength,
+                            expression: dep.expression,
+                            internal: true
+                        }
+                    });
+                }
+            } else {
+                // Add virtual node for external module dependency
+                const externalModule = targetParts.length > 1 ? targetParts[0] : targetName;
+                if (!internalTargets.has(externalModule)) {
+                    internalTargets.add(externalModule);
+                    nodes.push({
+                        data: {
+                            id: `ext:${externalModule}`,
+                            label: externalModule,
+                            kind: 'module',
+                            visibility: 'external',
+                            depCount: 0,
+                            externalDepCount: 0,
+                            isExternal: true
+                        }
+                    });
+                }
+
+                const edgeId = `${item.name}->ext:${externalModule}`;
+                if (!edgeSet.has(edgeId)) {
+                    edgeSet.add(edgeId);
+                    edges.push({
+                        data: {
+                            id: edgeId,
+                            source: item.name,
+                            target: `ext:${externalModule}`,
+                            depType: dep.dep_type,
+                            strength: dep.strength,
+                            expression: dep.expression,
+                            internal: false
+                        }
+                    });
+                }
             }
         });
     });
@@ -174,42 +236,53 @@ function getItemCytoscapeStyle() {
                 'label': 'data(label)',
                 'text-valign': 'center',
                 'text-halign': 'center',
-                'font-size': '8px',
+                'font-size': '9px',
                 'color': '#f8fafc',
                 'text-outline-color': '#0f172a',
                 'text-outline-width': 1,
-                'width': node => 25 + (node.data('depCount') || 0) * 3,
-                'height': node => 25 + (node.data('depCount') || 0) * 3,
+                'width': node => 30 + (node.data('depCount') || 0) * 3,
+                'height': node => 30 + (node.data('depCount') || 0) * 3,
                 'background-color': node => {
+                    if (node.data('isExternal')) return '#475569';
                     const kind = node.data('kind');
                     if (kind === 'fn') return '#3b82f6';
                     if (kind === 'trait') return '#22c55e';
                     return '#8b5cf6';
                 },
-                'border-width': node => node.data('visibility') === 'pub' ? 2 : 1,
-                'border-color': node => node.data('visibility') === 'pub' ? '#fbbf24' : '#475569'
+                'border-width': node => {
+                    if (node.data('isExternal')) return 2;
+                    return node.data('visibility') === 'pub' ? 2 : 1;
+                },
+                'border-color': node => {
+                    if (node.data('isExternal')) return '#64748b';
+                    return node.data('visibility') === 'pub' ? '#fbbf24' : '#475569';
+                },
+                'shape': node => node.data('isExternal') ? 'rectangle' : 'ellipse'
             }
         },
         {
             selector: 'edge',
             style: {
-                'width': 1.5,
+                'width': 2,
                 'line-color': edge => {
+                    if (!edge.data('internal')) return '#64748b';
                     const strength = edge.data('strength');
                     if (strength === 'Intrusive') return '#ef4444';
                     if (strength === 'Functional') return '#f97316';
                     return '#6b7280';
                 },
                 'target-arrow-color': edge => {
+                    if (!edge.data('internal')) return '#64748b';
                     const strength = edge.data('strength');
                     if (strength === 'Intrusive') return '#ef4444';
                     if (strength === 'Functional') return '#f97316';
                     return '#6b7280';
                 },
                 'target-arrow-shape': 'triangle',
-                'arrow-scale': 0.8,
+                'arrow-scale': 1,
                 'curve-style': 'bezier',
-                'opacity': 0.7
+                'opacity': edge => edge.data('internal') ? 0.8 : 0.5,
+                'line-style': edge => edge.data('internal') ? 'solid' : 'dashed'
             }
         },
         {
@@ -236,14 +309,18 @@ function getItemCytoscapeStyle() {
 }
 
 /**
- * Setup item filter handlers
+ * Setup item filter handlers (only called once)
  */
-function setupItemFilters(moduleNode) {
+function setupItemFilters() {
     const filterIds = ['item-filter-fn', 'item-filter-type', 'item-filter-trait'];
     filterIds.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
-            el.onchange = () => renderItemGraph(moduleNode);
+            el.addEventListener('change', () => {
+                if (currentModuleNode) {
+                    renderItemGraph(currentModuleNode);
+                }
+            });
         }
     });
 }
@@ -270,7 +347,7 @@ function showItemDetails(data, moduleNode) {
                 <div class="item-deps-header">Internal Dependencies (${internalDeps.length})</div>
                 ${internalDeps.map(d => `
                     <div class="item-dep">
-                        <span class="strength-badge ${d.strength.toLowerCase()}">${d.strength}</span>
+                        <span class="strength-badge ${(d.strength || '').toLowerCase()}">${d.strength || 'Unknown'}</span>
                         ${escapeHtml(d.target.split('::').pop())}
                     </div>
                 `).join('')}

@@ -458,31 +458,55 @@ function highlightCluster(clusterLabels) {
 // =====================================================
 
 export function populatePathFinderSelects() {
-    const sourceSelect = document.getElementById('path-source');
-    const targetSelect = document.getElementById('path-target');
+    const sourceSelect = document.getElementById('path-from');
+    const targetSelect = document.getElementById('path-to');
     if (!sourceSelect || !targetSelect || !state.graphData) return;
 
-    const options = state.graphData.nodes
+    // Filter to internal nodes only
+    const internalNodes = state.graphData.nodes.filter(n => {
+        const filePath = n.file_path;
+        return filePath && !filePath.startsWith('[external]');
+    });
+
+    const options = internalNodes
+        .sort((a, b) => a.label.localeCompare(b.label))
         .map(n => `<option value="${n.id}">${escapeHtml(n.label)}</option>`)
         .join('');
 
-    sourceSelect.innerHTML = '<option value="">Select source...</option>' + options;
-    targetSelect.innerHTML = '<option value="">Select target...</option>' + options;
+    sourceSelect.innerHTML = '<option value="">From module...</option>' + options;
+    targetSelect.innerHTML = '<option value="">To module...</option>' + options;
 }
 
 export function setupJobButtons() {
+    // Job buttons in the Jobs panel
+    document.getElementById('job-entry-points')?.addEventListener('click', showEntryPoints);
+    document.getElementById('job-path-finder')?.addEventListener('click', togglePathFinder);
+    document.getElementById('job-simple-view')?.addEventListener('click', toggleSimpleView);
+    document.getElementById('job-what-breaks')?.addEventListener('click', showWhatBreaks);
+
+    // Find Path button in the Path Finder panel
     document.getElementById('find-path-btn')?.addEventListener('click', findPath);
-    document.getElementById('show-entry-points')?.addEventListener('click', showEntryPoints);
-    document.getElementById('toggle-simple-view')?.addEventListener('click', toggleSimpleView);
-    document.getElementById('what-breaks-btn')?.addEventListener('click', showWhatBreaks);
+}
+
+function togglePathFinder() {
+    const panel = document.getElementById('path-finder-panel');
+    if (panel) {
+        const isVisible = panel.style.display !== 'none';
+        panel.style.display = isVisible ? 'none' : 'block';
+    }
 }
 
 function findPath() {
-    const sourceId = document.getElementById('path-source')?.value;
-    const targetId = document.getElementById('path-target')?.value;
+    const sourceId = document.getElementById('path-from')?.value;
+    const targetId = document.getElementById('path-to')?.value;
     const resultDiv = document.getElementById('path-result');
 
-    if (!sourceId || !targetId || !state.cy || !resultDiv) return;
+    if (!sourceId || !targetId || !state.cy || !resultDiv) {
+        if (resultDiv && (!sourceId || !targetId)) {
+            resultDiv.innerHTML = '<div class="no-path">Please select both source and target modules</div>';
+        }
+        return;
+    }
 
     const source = state.cy.getElementById(sourceId);
     const target = state.cy.getElementById(targetId);
@@ -493,7 +517,7 @@ function findPath() {
     clearHighlights();
 
     if (path.length === 0) {
-        resultDiv.innerHTML = '<div class="no-path">No path found</div>';
+        resultDiv.innerHTML = '<div class="no-path">No path found between these modules</div>';
         return;
     }
 
@@ -511,8 +535,30 @@ function showEntryPoints() {
     clearHighlights();
     state.cy.elements().addClass('dimmed');
 
-    const entryPoints = state.cy.nodes().filter(n => n.incomers('edge').length === 0 && n.outgoers('edge').length > 0);
+    // Entry points are nodes that have outgoing edges but no incoming edges
+    const entryPoints = state.cy.nodes().filter(n => {
+        const inEdges = n.incomers('edge').filter(e => e.style('display') !== 'none');
+        const outEdges = n.outgoers('edge').filter(e => e.style('display') !== 'none');
+        return inEdges.length === 0 && outEdges.length > 0;
+    });
+
     entryPoints.removeClass('dimmed').addClass('highlighted');
+
+    const resultDiv = document.getElementById('job-result');
+    if (resultDiv) {
+        if (entryPoints.length === 0) {
+            resultDiv.innerHTML = '<div class="job-result-message">No entry points found</div>';
+        } else {
+            resultDiv.innerHTML = `
+                <div class="job-result-message">
+                    <strong>Entry Points (${entryPoints.length}):</strong>
+                    <ul>
+                        ${entryPoints.map(n => `<li>${escapeHtml(n.data('label'))}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+    }
 
     if (entryPoints.length > 0) {
         state.cy.fit(entryPoints, 50);
@@ -530,10 +576,14 @@ function toggleSimpleView() {
 function applySimpleView() {
     if (!state.cy) return;
 
+    let hiddenEdges = 0;
+    let hiddenNodes = 0;
+
     state.cy.edges().forEach(edge => {
         const balance = edge.data('balance') ?? 0.5;
         if (balance >= 0.6) {
             edge.style('display', 'none');
+            hiddenEdges++;
         }
     });
 
@@ -541,12 +591,18 @@ function applySimpleView() {
         const visibleEdges = node.connectedEdges().filter(e => e.style('display') !== 'none');
         if (visibleEdges.length === 0 && !node.data('file_path')?.includes('/src/')) {
             node.style('display', 'none');
+            hiddenNodes++;
         }
     });
 
     state.isSimpleView = true;
-    const btn = document.getElementById('toggle-simple-view');
-    if (btn) btn.textContent = 'Show All';
+    const btn = document.getElementById('job-simple-view');
+    if (btn) btn.innerHTML = '📊 Show All';
+
+    const resultDiv = document.getElementById('job-result');
+    if (resultDiv) {
+        resultDiv.innerHTML = `<div class="job-result-message">Simple View: Hidden ${hiddenEdges} edges, ${hiddenNodes} nodes (showing only problematic couplings)</div>`;
+    }
 }
 
 function removeSimpleView() {
@@ -555,8 +611,13 @@ function removeSimpleView() {
     state.cy.elements().style('display', 'element');
     state.isSimpleView = false;
 
-    const btn = document.getElementById('toggle-simple-view');
-    if (btn) btn.textContent = 'Simple View';
+    const btn = document.getElementById('job-simple-view');
+    if (btn) btn.innerHTML = '📊 Simple View';
+
+    const resultDiv = document.getElementById('job-result');
+    if (resultDiv) {
+        resultDiv.innerHTML = '';
+    }
 }
 
 function showWhatBreaks() {
@@ -591,7 +652,7 @@ function showWhatBreaks() {
 }
 
 export function updateWhatBreaksButton() {
-    const btn = document.getElementById('what-breaks-btn');
+    const btn = document.getElementById('job-what-breaks');
     if (btn) {
         btn.disabled = !state.selectedNode;
     }
