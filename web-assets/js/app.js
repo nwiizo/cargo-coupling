@@ -122,21 +122,29 @@ function initCytoscape(data) {
 }
 
 function buildElements(data) {
-    const nodes = data.nodes.map(node => ({
-        data: {
-            id: node.id,
-            label: node.label,
-            ...node.metrics,
-            file_path: node.file_path,
-            in_cycle: node.in_cycle
-        }
-    }));
-
-    const edges = data.edges.map((edge, idx) => {
-        const dims = edge.dimensions || {};
+    const nodes = data.nodes.map(node => {
+        const crate = node.id.split('::')[0];
         return {
             data: {
-                id: edge.id || `e${idx}`,
+                id: node.id,
+                label: node.label,
+                crate: crate,
+                ...node.metrics,
+                file_path: node.file_path,
+                in_cycle: node.in_cycle
+            }
+        };
+    });
+
+    // Aggregate edges between same source-target pairs
+    const edgeMap = new Map();
+
+    data.edges.forEach(edge => {
+        const key = `${edge.source}->${edge.target}`;
+        const dims = edge.dimensions || {};
+
+        if (!edgeMap.has(key)) {
+            edgeMap.set(key, {
                 source: edge.source,
                 target: edge.target,
                 strength: dims.strength?.value ?? 0.5,
@@ -146,10 +154,40 @@ function buildElements(data) {
                 balance: dims.balance?.value ?? 0.5,
                 issue: edge.issue,
                 inCycle: edge.in_cycle,
-                location: edge.location
+                location: edge.location,
+                count: 1
+            });
+        } else {
+            const existing = edgeMap.get(key);
+            // Take the maximum strength and minimum balance (worst case)
+            existing.strength = Math.max(existing.strength, dims.strength?.value ?? 0.5);
+            existing.balance = Math.min(existing.balance, dims.balance?.value ?? 0.5);
+            existing.inCycle = existing.inCycle || edge.in_cycle;
+            existing.issue = existing.issue || edge.issue;
+            existing.count++;
+            // Use the strongest coupling label
+            if ((dims.strength?.value ?? 0) > existing.strength) {
+                existing.strengthLabel = dims.strength?.label ?? existing.strengthLabel;
             }
-        };
+        }
     });
+
+    const edges = Array.from(edgeMap.entries()).map(([key, data], idx) => ({
+        data: {
+            id: `e${idx}`,
+            source: data.source,
+            target: data.target,
+            strength: data.strength,
+            strengthLabel: data.strengthLabel,
+            distance: data.distance,
+            volatility: data.volatility,
+            balance: data.balance,
+            issue: data.issue,
+            inCycle: data.inCycle,
+            location: data.location,
+            count: data.count
+        }
+    }));
 
     return [...nodes, ...edges];
 }
