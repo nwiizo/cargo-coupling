@@ -18,7 +18,6 @@ use syn::{
 use thiserror::Error;
 use walkdir::WalkDir;
 
-use crate::connascence::{ConnascenceAnalyzer, ConnascenceType, detect_algorithm_patterns};
 use crate::metrics::{
     CouplingMetrics, Distance, IntegrationStrength, ModuleMetrics, ProjectMetrics, Visibility,
     Volatility,
@@ -171,6 +170,8 @@ pub struct CouplingAnalyzer {
     pub defined_types: HashSet<String>,
     /// Defined traits in this module
     pub defined_traits: HashSet<String>,
+    /// Defined functions in this module (name -> visibility)
+    pub defined_functions: HashMap<String, Visibility>,
     /// Imported types (name -> full path)
     imported_types: HashMap<String, String>,
     /// Track unique dependencies to avoid duplicates
@@ -179,8 +180,10 @@ pub struct CouplingAnalyzer {
     pub usage_counts: UsageCounts,
     /// Type visibility map: type name -> visibility
     pub type_visibility: HashMap<String, Visibility>,
-    /// Connascence analyzer for detailed coupling type detection
-    pub connascence: ConnascenceAnalyzer,
+    /// Current item being analyzed (function name, struct name, etc.)
+    current_item: Option<(String, ItemKind)>,
+    /// Item-level dependencies (detailed tracking)
+    pub item_dependencies: Vec<ItemDependency>,
 }
 
 /// Statistics about usage patterns
@@ -194,12 +197,61 @@ pub struct UsageCounts {
     pub type_parameters: usize,
 }
 
+/// Detailed dependency at the item level (function, struct, etc.)
+#[derive(Debug, Clone)]
+pub struct ItemDependency {
+    /// Source item (e.g., "fn analyze_project")
+    pub source_item: String,
+    /// Source item kind
+    pub source_kind: ItemKind,
+    /// Target (e.g., "ProjectMetrics" or "analyze_file")
+    pub target: String,
+    /// Target module (if known)
+    pub target_module: Option<String>,
+    /// Type of dependency
+    pub dep_type: ItemDepType,
+    /// Line number in source
+    pub line: usize,
+    /// The actual expression/code (e.g., "config.thresholds" or "self.couplings")
+    pub expression: Option<String>,
+}
+
+/// Kind of source item
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemKind {
+    Function,
+    Method,
+    Struct,
+    Enum,
+    Trait,
+    Impl,
+    Module,
+}
+
+/// Type of item-level dependency
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemDepType {
+    /// Calls a function: foo()
+    FunctionCall,
+    /// Calls a method: x.foo()
+    MethodCall,
+    /// Uses a type: Vec<Foo>
+    TypeUsage,
+    /// Accesses a field: x.field
+    FieldAccess,
+    /// Constructs a struct: Foo { ... }
+    StructConstruction,
+    /// Implements a trait: impl Trait for Type
+    TraitImpl,
+    /// Uses a trait bound: T: Trait
+    TraitBound,
+    /// Imports: use foo::Bar
+    Import,
+}
+
 impl CouplingAnalyzer {
     /// Create a new analyzer for a module
     pub fn new(module_name: String, path: std::path::PathBuf) -> Self {
-        let mut connascence = ConnascenceAnalyzer::new();
-        connascence.set_module(module_name.clone());
-
         Self {
             current_module: module_name.clone(),
             file_path: path.clone(),
@@ -207,11 +259,13 @@ impl CouplingAnalyzer {
             dependencies: Vec::new(),
             defined_types: HashSet::new(),
             defined_traits: HashSet::new(),
+            defined_functions: HashMap::new(),
             imported_types: HashMap::new(),
             seen_dependencies: HashSet::new(),
             usage_counts: UsageCounts::default(),
             type_visibility: HashMap::new(),
-            connascence,
+            current_item: None,
+            item_dependencies: Vec::new(),
         }
     }
 
@@ -221,12 +275,6 @@ impl CouplingAnalyzer {
             syn::parse_file(content).map_err(|e| AnalyzerError::ParseError(e.to_string()))?;
 
         self.visit_file(&syntax);
-
-        // Detect algorithm patterns (encode/decode, serialize/deserialize, etc.)
-        for (pattern, context) in detect_algorithm_patterns(content) {
-            self.connascence
-                .record_algorithm_dependency(pattern, &context);
-        }
 
         Ok(())
     }
@@ -239,43 +287,44 @@ impl CouplingAnalyzer {
         }
         self.seen_dependencies.insert(key);
 
-        // Record connascence based on usage context
-        let connascence_type = match usage {
-            UsageContext::Import => ConnascenceType::Name,
-            UsageContext::TraitBound => ConnascenceType::Type,
-            UsageContext::TypeParameter => ConnascenceType::Type,
-            UsageContext::FunctionParameter => ConnascenceType::Type,
-            UsageContext::ReturnType => ConnascenceType::Type,
-            UsageContext::MethodCall | UsageContext::FunctionCall => ConnascenceType::Name,
-            UsageContext::FieldAccess => ConnascenceType::Name,
-            UsageContext::StructConstruction => ConnascenceType::Position, // Positional fields
-            UsageContext::InherentImplBlock => ConnascenceType::Type,
-        };
-
-        // Record the connascence instance
-        match connascence_type {
-            ConnascenceType::Name => {
-                self.connascence
-                    .record_name_dependency(&path, &format!("{:?}", usage));
-            }
-            ConnascenceType::Type => {
-                self.connascence
-                    .record_type_dependency(&path, &format!("{:?}", usage));
-            }
-            ConnascenceType::Position => {
-                // Will be handled separately for function args
-                self.connascence
-                    .record_name_dependency(&path, &format!("{:?}", usage));
-            }
-            _ => {}
-        }
-
         self.dependencies.push(Dependency {
             path,
             kind,
             line: 0,
             usage,
         });
+    }
+
+    /// Record an item-level dependency with detailed tracking
+    fn add_item_dependency(
+        &mut self,
+        target: String,
+        dep_type: ItemDepType,
+        line: usize,
+        expression: Option<String>,
+    ) {
+        if let Some((ref source_item, source_kind)) = self.current_item {
+            // Determine target module
+            let target_module = self.imported_types.get(&target).cloned().or_else(|| {
+                if self.defined_types.contains(&target)
+                    || self.defined_functions.contains_key(&target)
+                {
+                    Some(self.current_module.clone())
+                } else {
+                    None
+                }
+            });
+
+            self.item_dependencies.push(ItemDependency {
+                source_item: source_item.clone(),
+                source_kind,
+                target,
+                target_module,
+                dep_type,
+                line,
+                expression,
+            });
+        }
     }
 
     /// Extract full path from UseTree recursively
@@ -360,19 +409,6 @@ impl CouplingAnalyzer {
 
     /// Analyze function signature for dependencies
     fn analyze_signature(&mut self, sig: &Signature) {
-        let fn_name = sig.ident.to_string();
-
-        // Count non-self arguments for position connascence detection
-        let arg_count = sig
-            .inputs
-            .iter()
-            .filter(|arg| !matches!(arg, FnArg::Receiver(_)))
-            .count();
-
-        // Record position connascence for functions with many arguments (4+)
-        self.connascence
-            .record_position_dependency(&fn_name, arg_count);
-
         // Analyze parameters
         for arg in &sig.inputs {
             if let FnArg::Typed(pat_type) = arg
@@ -523,9 +559,47 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
     }
 
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
+        // Record function definition
+        let fn_name = node.sig.ident.to_string();
+        let visibility = convert_visibility(&node.vis);
+        self.defined_functions.insert(fn_name.clone(), visibility);
+
+        // Analyze parameters for primitive obsession detection
+        let mut param_count = 0;
+        let mut primitive_param_count = 0;
+        let mut param_types = Vec::new();
+
+        for arg in &node.sig.inputs {
+            if let FnArg::Typed(pat_type) = arg {
+                param_count += 1;
+                if let Some(type_name) = self.extract_type_name(&pat_type.ty) {
+                    param_types.push(type_name.clone());
+                    if self.is_primitive_type(&type_name) {
+                        primitive_param_count += 1;
+                    }
+                }
+            }
+        }
+
+        // Register in module metrics with full details
+        self.metrics.add_function_definition_full(
+            fn_name.clone(),
+            visibility,
+            param_count,
+            primitive_param_count,
+            param_types,
+        );
+
+        // Set current item context for dependency tracking
+        let previous_item = self.current_item.take();
+        self.current_item = Some((fn_name, ItemKind::Function));
+
         // Analyze function signature
         self.analyze_signature(&node.sig);
         syn::visit::visit_item_fn(self, node);
+
+        // Restore previous context
+        self.current_item = previous_item;
     }
 
     fn visit_item_struct(&mut self, node: &'ast ItemStruct) {
@@ -535,8 +609,72 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
         self.defined_types.insert(name.clone());
         self.type_visibility.insert(name.clone(), visibility);
 
-        // Register in module metrics with visibility
-        self.metrics.add_type_definition(name, visibility, false);
+        // Detect newtype pattern: single-field tuple struct
+        let (is_newtype, inner_type) = match &node.fields {
+            syn::Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+                let inner = fields.unnamed.first().and_then(|f| self.extract_type_name(&f.ty));
+                (true, inner)
+            }
+            _ => (false, None),
+        };
+
+        // Check for serde derives
+        let has_serde_derive = node.attrs.iter().any(|attr| {
+            if attr.path().is_ident("derive")
+                && let Ok(nested) = attr.parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+                )
+            {
+                return nested.iter().any(|path| {
+                    let path_str = path
+                        .segments
+                        .iter()
+                        .map(|s| s.ident.to_string())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    path_str == "Serialize"
+                        || path_str == "Deserialize"
+                        || path_str == "serde::Serialize"
+                        || path_str == "serde::Deserialize"
+                });
+            }
+            false
+        });
+
+        // Count fields and public fields
+        let (total_field_count, public_field_count) = match &node.fields {
+            syn::Fields::Named(fields) => {
+                let total = fields.named.len();
+                let public = fields
+                    .named
+                    .iter()
+                    .filter(|f| matches!(f.vis, syn::Visibility::Public(_)))
+                    .count();
+                (total, public)
+            }
+            syn::Fields::Unnamed(fields) => {
+                let total = fields.unnamed.len();
+                let public = fields
+                    .unnamed
+                    .iter()
+                    .filter(|f| matches!(f.vis, syn::Visibility::Public(_)))
+                    .count();
+                (total, public)
+            }
+            syn::Fields::Unit => (0, 0),
+        };
+
+        // Register in module metrics with full details
+        self.metrics.add_type_definition_full(
+            name,
+            visibility,
+            false, // is_trait
+            is_newtype,
+            inner_type,
+            has_serde_derive,
+            public_field_count,
+            total_field_count,
+        );
 
         // Analyze struct fields for type dependencies
         match &node.fields {
@@ -641,6 +779,11 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
 
     // Detect field access: `foo.bar`
     fn visit_expr_field(&mut self, node: &'ast ExprField) {
+        let field_name = match &node.member {
+            syn::Member::Named(ident) => ident.to_string(),
+            syn::Member::Unnamed(idx) => format!("{}", idx.index),
+        };
+
         // This is a field access - Intrusive coupling
         if let Expr::Path(path_expr) = &*node.base {
             let base_name = path_expr
@@ -656,22 +799,33 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
                 .imported_types
                 .get(&base_name)
                 .cloned()
-                .unwrap_or(base_name);
+                .unwrap_or(base_name.clone());
 
             if !self.is_primitive_type(&full_path) && !self.defined_types.contains(&full_path) {
                 self.add_dependency(
-                    full_path,
+                    full_path.clone(),
                     DependencyKind::TypeRef,
                     UsageContext::FieldAccess,
                 );
                 self.usage_counts.field_accesses += 1;
             }
+
+            // Record item-level dependency with field name
+            let expr = format!("{}.{}", base_name, field_name);
+            self.add_item_dependency(
+                format!("{}.{}", full_path, field_name),
+                ItemDepType::FieldAccess,
+                0,
+                Some(expr),
+            );
         }
         syn::visit::visit_expr_field(self, node);
     }
 
     // Detect method calls: `foo.method()`
     fn visit_expr_method_call(&mut self, node: &'ast ExprMethodCall) {
+        let method_name = node.method.to_string();
+
         // This is a method call - Functional coupling
         if let Expr::Path(path_expr) = &*node.receiver {
             let receiver_name = path_expr
@@ -686,12 +840,25 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
                 .imported_types
                 .get(&receiver_name)
                 .cloned()
-                .unwrap_or(receiver_name);
+                .unwrap_or(receiver_name.clone());
 
             if !self.is_primitive_type(&full_path) && !self.defined_types.contains(&full_path) {
-                self.add_dependency(full_path, DependencyKind::TypeRef, UsageContext::MethodCall);
+                self.add_dependency(
+                    full_path.clone(),
+                    DependencyKind::TypeRef,
+                    UsageContext::MethodCall,
+                );
                 self.usage_counts.method_calls += 1;
             }
+
+            // Record item-level dependency
+            let expr = format!("{}.{}()", receiver_name, method_name);
+            self.add_item_dependency(
+                format!("{}::{}", full_path, method_name),
+                ItemDepType::MethodCall,
+                0, // TODO: get line number from span
+                Some(expr),
+            );
         }
         syn::visit::visit_expr_method_call(self, node);
     }
@@ -718,12 +885,28 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
 
                 if !self.is_primitive_type(&full_path) && !self.defined_types.contains(&full_path) {
                     self.add_dependency(
-                        full_path,
+                        full_path.clone(),
                         DependencyKind::TypeRef,
                         UsageContext::FunctionCall,
                     );
                     self.usage_counts.function_calls += 1;
                 }
+
+                // Record item-level dependency
+                self.add_item_dependency(
+                    full_path,
+                    ItemDepType::FunctionCall,
+                    0,
+                    Some(format!("{}()", path_str)),
+                );
+            } else {
+                // Simple function call like foo()
+                self.add_item_dependency(
+                    path_str.clone(),
+                    ItemDepType::FunctionCall,
+                    0,
+                    Some(format!("{}()", path_str)),
+                );
             }
         }
         syn::visit::visit_expr_call(self, node);
@@ -773,8 +956,8 @@ struct AnalyzedFile {
     dependencies: Vec<Dependency>,
     /// Type visibility information from this file
     type_visibility: HashMap<String, Visibility>,
-    /// Connascence analysis from this file
-    connascence: ConnascenceAnalyzer,
+    /// Item-level dependencies (function calls, field access, etc.)
+    item_dependencies: Vec<ItemDependency>,
 }
 
 /// Analyze an entire project (parallel version)
@@ -836,7 +1019,7 @@ pub fn analyze_project_parallel(path: &Path) -> Result<ProjectMetrics, AnalyzerE
                         metrics: result.metrics,
                         dependencies: result.dependencies,
                         type_visibility: result.type_visibility,
-                        connascence: result.connascence,
+                        item_dependencies: result.item_dependencies,
                     }),
                     Err(e) => {
                         eprintln!("Warning: Failed to analyze {}: {}", file_path.display(), e);
@@ -866,7 +1049,10 @@ pub fn analyze_project_parallel(path: &Path) -> Result<ProjectMetrics, AnalyzerE
 
     // Second pass: add modules and couplings
     for analyzed in &analyzed_results {
-        project.add_module(analyzed.metrics.clone());
+        // Clone metrics and add item_dependencies
+        let mut metrics = analyzed.metrics.clone();
+        metrics.item_dependencies = analyzed.item_dependencies.clone();
+        project.add_module(metrics);
 
         for dep in &analyzed.dependencies {
             // Skip invalid dependency paths (local variables, Self, etc.)
@@ -915,15 +1101,6 @@ pub fn analyze_project_parallel(path: &Path) -> Result<ProjectMetrics, AnalyzerE
 
     // Update any remaining coupling visibility information
     project.update_coupling_visibility();
-
-    // Merge connascence stats from all analyzed files
-    for analyzed in &analyzed_results {
-        for (conn_type, count) in &analyzed.connascence.stats.by_type {
-            for _ in 0..*count {
-                project.connascence_stats.add(*conn_type);
-            }
-        }
-    }
 
     Ok(project)
 }
@@ -1021,7 +1198,7 @@ fn analyze_with_workspace(
                             file_path: file_path.clone(),
                             metrics: result.metrics,
                             dependencies: result.dependencies,
-                            connascence: result.connascence,
+                            item_dependencies: result.item_dependencies,
                         }),
                         Err(e) => {
                             eprintln!("Warning: Failed to analyze {}: {}", file_path.display(), e);
@@ -1037,7 +1214,10 @@ fn analyze_with_workspace(
 
     // Second pass: build coupling relationships with workspace context
     for analyzed in &analyzed_files {
-        project.add_module(analyzed.metrics.clone());
+        // Clone metrics and add item_dependencies
+        let mut metrics = analyzed.metrics.clone();
+        metrics.item_dependencies = analyzed.item_dependencies.clone();
+        project.add_module(metrics);
 
         for dep in &analyzed.dependencies {
             // Skip invalid dependency paths (local variables, Self, etc.)
@@ -1104,15 +1284,6 @@ fn analyze_with_workspace(
         }
     }
 
-    // Merge connascence stats from all analyzed files
-    for analyzed in &analyzed_files {
-        for (conn_type, count) in &analyzed.connascence.stats.by_type {
-            for _ in 0..*count {
-                project.connascence_stats.add(*conn_type);
-            }
-        }
-    }
-
     Ok(project)
 }
 
@@ -1155,7 +1326,8 @@ struct AnalyzedFileWithCrate {
     file_path: PathBuf,
     metrics: ModuleMetrics,
     dependencies: Vec<Dependency>,
-    connascence: ConnascenceAnalyzer,
+    /// Item-level dependencies (function calls, field access, etc.)
+    item_dependencies: Vec<ItemDependency>,
 }
 
 /// Extract target module name from a path
@@ -1255,7 +1427,7 @@ pub struct AnalyzedFileResult {
     pub metrics: ModuleMetrics,
     pub dependencies: Vec<Dependency>,
     pub type_visibility: HashMap<String, Visibility>,
-    pub connascence: ConnascenceAnalyzer,
+    pub item_dependencies: Vec<ItemDependency>,
 }
 
 pub fn analyze_rust_file(path: &Path) -> Result<(ModuleMetrics, Vec<Dependency>), AnalyzerError> {
@@ -1280,7 +1452,7 @@ pub fn analyze_rust_file_full(path: &Path) -> Result<AnalyzedFileResult, Analyze
         metrics: analyzer.metrics,
         dependencies: analyzer.dependencies,
         type_visibility: analyzer.type_visibility,
-        connascence: analyzer.connascence,
+        item_dependencies: analyzer.item_dependencies,
     })
 }
 
@@ -1318,6 +1490,58 @@ mod tests {
         let result = analyzer.analyze_file(code);
         assert!(result.is_ok());
         assert_eq!(analyzer.metrics.inherent_impl_count, 1);
+    }
+
+    #[test]
+    fn test_item_dependencies() {
+        let mut analyzer =
+            CouplingAnalyzer::new("test".to_string(), std::path::PathBuf::from("test.rs"));
+
+        let code = r#"
+            pub struct Config {
+                pub value: i32,
+            }
+
+            pub fn process(config: Config) -> i32 {
+                let x = config.value;
+                helper(x)
+            }
+
+            fn helper(n: i32) -> i32 {
+                n * 2
+            }
+        "#;
+
+        let result = analyzer.analyze_file(code);
+        assert!(result.is_ok());
+
+        // Check that functions are recorded
+        assert!(analyzer.defined_functions.contains_key("process"));
+        assert!(analyzer.defined_functions.contains_key("helper"));
+
+        // Check item dependencies - process should have deps
+        println!(
+            "Item dependencies count: {}",
+            analyzer.item_dependencies.len()
+        );
+        for dep in &analyzer.item_dependencies {
+            println!(
+                "  {} -> {} ({:?})",
+                dep.source_item, dep.target, dep.dep_type
+            );
+        }
+
+        // process function should have dependencies
+        let process_deps: Vec<_> = analyzer
+            .item_dependencies
+            .iter()
+            .filter(|d| d.source_item == "process")
+            .collect();
+
+        assert!(
+            !process_deps.is_empty(),
+            "process function should have item dependencies"
+        );
     }
 
     #[test]

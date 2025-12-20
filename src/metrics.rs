@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::connascence::ConnascenceStats;
+use crate::analyzer::ItemDependency;
 
 /// Visibility level of a Rust item
 ///
@@ -323,6 +323,226 @@ pub struct TypeDefinition {
     pub visibility: Visibility,
     /// Whether this is a trait (vs struct/enum)
     pub is_trait: bool,
+    /// Whether this is a newtype pattern (tuple struct with single field)
+    pub is_newtype: bool,
+    /// Inner type for newtypes (e.g., "u64" for `struct UserId(u64)`)
+    pub inner_type: Option<String>,
+    /// Whether this type has #[derive(Serialize)] or #[derive(Deserialize)]
+    pub has_serde_derive: bool,
+    /// Number of public fields (for pub field exposure detection)
+    pub public_field_count: usize,
+    /// Total number of fields
+    pub total_field_count: usize,
+}
+
+/// Information about a function definition in a module
+#[derive(Debug, Clone)]
+pub struct FunctionDefinition {
+    /// Name of the function
+    pub name: String,
+    /// Visibility of the function
+    pub visibility: Visibility,
+    /// Number of parameters
+    pub param_count: usize,
+    /// Number of primitive type parameters (String, u32, bool, etc.)
+    pub primitive_param_count: usize,
+    /// Parameter types (for primitive obsession detection)
+    pub param_types: Vec<String>,
+}
+
+/// Khononov's balance classification for couplings
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BalanceClassification {
+    /// High strength + Low distance = High cohesion (ideal)
+    HighCohesion,
+    /// Low strength + High distance = Loose coupling (ideal)
+    LooseCoupling,
+    /// High strength + High distance + Low volatility = Acceptable
+    Acceptable,
+    /// High strength + High distance + High volatility = Pain (needs refactoring)
+    Pain,
+    /// Low strength + Low distance = Local complexity (review needed)
+    LocalComplexity,
+}
+
+impl BalanceClassification {
+    /// Classify a coupling based on Khononov's formula
+    pub fn classify(
+        strength: IntegrationStrength,
+        distance: Distance,
+        volatility: Volatility,
+    ) -> Self {
+        let is_strong = strength.value() >= 0.5;
+        let is_far = distance.value() >= 0.5;
+        let is_volatile = volatility == Volatility::High;
+
+        match (is_strong, is_far, is_volatile) {
+            (true, false, _) => BalanceClassification::HighCohesion,
+            (false, true, _) => BalanceClassification::LooseCoupling,
+            (false, false, _) => BalanceClassification::LocalComplexity,
+            (true, true, false) => BalanceClassification::Acceptable,
+            (true, true, true) => BalanceClassification::Pain,
+        }
+    }
+
+    /// Get Japanese description
+    pub fn description_ja(&self) -> &'static str {
+        match self {
+            BalanceClassification::HighCohesion => "高凝集 (強+近)",
+            BalanceClassification::LooseCoupling => "疎結合 (弱+遠)",
+            BalanceClassification::Acceptable => "許容可能 (強+遠+安定)",
+            BalanceClassification::Pain => "要改善 (強+遠+変動)",
+            BalanceClassification::LocalComplexity => "局所複雑性 (弱+近)",
+        }
+    }
+
+    /// Get English description
+    pub fn description_en(&self) -> &'static str {
+        match self {
+            BalanceClassification::HighCohesion => "High Cohesion",
+            BalanceClassification::LooseCoupling => "Loose Coupling",
+            BalanceClassification::Acceptable => "Acceptable",
+            BalanceClassification::Pain => "Needs Refactoring",
+            BalanceClassification::LocalComplexity => "Local Complexity",
+        }
+    }
+
+    /// Is this classification ideal?
+    pub fn is_ideal(&self) -> bool {
+        matches!(
+            self,
+            BalanceClassification::HighCohesion | BalanceClassification::LooseCoupling
+        )
+    }
+
+    /// Does this need attention?
+    pub fn needs_attention(&self) -> bool {
+        matches!(
+            self,
+            BalanceClassification::Pain | BalanceClassification::LocalComplexity
+        )
+    }
+}
+
+/// Statistics for 3-dimensional coupling analysis
+#[derive(Debug, Clone, Default)]
+pub struct DimensionStats {
+    /// Strength distribution
+    pub strength_counts: StrengthCounts,
+    /// Distance distribution
+    pub distance_counts: DistanceCounts,
+    /// Volatility distribution
+    pub volatility_counts: VolatilityCounts,
+    /// Balance classification counts
+    pub balance_counts: BalanceCounts,
+}
+
+impl DimensionStats {
+    /// Total number of couplings analyzed
+    pub fn total(&self) -> usize {
+        self.strength_counts.total()
+    }
+
+    /// Get percentage of each strength level
+    pub fn strength_percentages(&self) -> (f64, f64, f64, f64) {
+        let total = self.total() as f64;
+        if total == 0.0 {
+            return (0.0, 0.0, 0.0, 0.0);
+        }
+        (
+            self.strength_counts.intrusive as f64 / total * 100.0,
+            self.strength_counts.functional as f64 / total * 100.0,
+            self.strength_counts.model as f64 / total * 100.0,
+            self.strength_counts.contract as f64 / total * 100.0,
+        )
+    }
+
+    /// Get percentage of each distance level
+    pub fn distance_percentages(&self) -> (f64, f64, f64) {
+        let total = self.total() as f64;
+        if total == 0.0 {
+            return (0.0, 0.0, 0.0);
+        }
+        (
+            self.distance_counts.same_module as f64 / total * 100.0,
+            self.distance_counts.different_module as f64 / total * 100.0,
+            self.distance_counts.different_crate as f64 / total * 100.0,
+        )
+    }
+
+    /// Get percentage of each volatility level
+    pub fn volatility_percentages(&self) -> (f64, f64, f64) {
+        let total = self.total() as f64;
+        if total == 0.0 {
+            return (0.0, 0.0, 0.0);
+        }
+        (
+            self.volatility_counts.low as f64 / total * 100.0,
+            self.volatility_counts.medium as f64 / total * 100.0,
+            self.volatility_counts.high as f64 / total * 100.0,
+        )
+    }
+
+    /// Count of ideal couplings (High Cohesion + Loose Coupling)
+    pub fn ideal_count(&self) -> usize {
+        self.balance_counts.high_cohesion + self.balance_counts.loose_coupling
+    }
+
+    /// Count of problematic couplings (Pain + Local Complexity)
+    pub fn problematic_count(&self) -> usize {
+        self.balance_counts.pain + self.balance_counts.local_complexity
+    }
+
+    /// Percentage of ideal couplings
+    pub fn ideal_percentage(&self) -> f64 {
+        let total = self.total() as f64;
+        if total == 0.0 {
+            return 0.0;
+        }
+        self.ideal_count() as f64 / total * 100.0
+    }
+}
+
+/// Counts for each strength level
+#[derive(Debug, Clone, Default)]
+pub struct StrengthCounts {
+    pub intrusive: usize,
+    pub functional: usize,
+    pub model: usize,
+    pub contract: usize,
+}
+
+impl StrengthCounts {
+    /// Total count across all strength levels
+    pub fn total(&self) -> usize {
+        self.intrusive + self.functional + self.model + self.contract
+    }
+}
+
+/// Counts for each distance level
+#[derive(Debug, Clone, Default)]
+pub struct DistanceCounts {
+    pub same_module: usize,
+    pub different_module: usize,
+    pub different_crate: usize,
+}
+
+/// Counts for each volatility level
+#[derive(Debug, Clone, Default)]
+pub struct VolatilityCounts {
+    pub low: usize,
+    pub medium: usize,
+    pub high: usize,
+}
+
+/// Counts for each balance classification
+#[derive(Debug, Clone, Default)]
+pub struct BalanceCounts {
+    pub high_cohesion: usize,
+    pub loose_coupling: usize,
+    pub acceptable: usize,
+    pub pain: usize,
+    pub local_complexity: usize,
 }
 
 /// Aggregated metrics for a module
@@ -346,6 +566,10 @@ pub struct ModuleMetrics {
     pub internal_deps: Vec<String>,
     /// Type definitions in this module with visibility info
     pub type_definitions: HashMap<String, TypeDefinition>,
+    /// Function definitions in this module with visibility info
+    pub function_definitions: HashMap<String, FunctionDefinition>,
+    /// Item-level dependencies (function → function, function → type, etc.)
+    pub item_dependencies: Vec<ItemDependency>,
 }
 
 impl ModuleMetrics {
@@ -357,7 +581,7 @@ impl ModuleMetrics {
         }
     }
 
-    /// Add a type definition to this module
+    /// Add a type definition to this module (simple version for backward compatibility)
     pub fn add_type_definition(&mut self, name: String, visibility: Visibility, is_trait: bool) {
         self.type_definitions.insert(
             name.clone(),
@@ -365,6 +589,74 @@ impl ModuleMetrics {
                 name,
                 visibility,
                 is_trait,
+                is_newtype: false,
+                inner_type: None,
+                has_serde_derive: false,
+                public_field_count: 0,
+                total_field_count: 0,
+            },
+        );
+    }
+
+    /// Add a type definition with full details
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_type_definition_full(
+        &mut self,
+        name: String,
+        visibility: Visibility,
+        is_trait: bool,
+        is_newtype: bool,
+        inner_type: Option<String>,
+        has_serde_derive: bool,
+        public_field_count: usize,
+        total_field_count: usize,
+    ) {
+        self.type_definitions.insert(
+            name.clone(),
+            TypeDefinition {
+                name,
+                visibility,
+                is_trait,
+                is_newtype,
+                inner_type,
+                has_serde_derive,
+                public_field_count,
+                total_field_count,
+            },
+        );
+    }
+
+    /// Add a function definition to this module (simple version for backward compatibility)
+    pub fn add_function_definition(&mut self, name: String, visibility: Visibility) {
+        self.function_definitions.insert(
+            name.clone(),
+            FunctionDefinition {
+                name,
+                visibility,
+                param_count: 0,
+                primitive_param_count: 0,
+                param_types: Vec::new(),
+            },
+        );
+    }
+
+    /// Add a function definition with full details
+    pub fn add_function_definition_full(
+        &mut self,
+        name: String,
+        visibility: Visibility,
+        param_count: usize,
+        primitive_param_count: usize,
+        param_types: Vec<String>,
+    ) {
+        self.function_definitions.insert(
+            name.clone(),
+            FunctionDefinition {
+                name,
+                visibility,
+                param_count,
+                primitive_param_count,
+                param_types,
             },
         );
     }
@@ -403,6 +695,67 @@ impl ModuleMetrics {
 
         (contract_weight + intrusive_weight) / total as f64
     }
+
+    /// Count newtypes in this module
+    pub fn newtype_count(&self) -> usize {
+        self.type_definitions
+            .values()
+            .filter(|t| t.is_newtype)
+            .count()
+    }
+
+    /// Count types with serde derives
+    pub fn serde_type_count(&self) -> usize {
+        self.type_definitions
+            .values()
+            .filter(|t| t.has_serde_derive)
+            .count()
+    }
+
+    /// Calculate newtype usage ratio (newtypes / total non-trait types)
+    pub fn newtype_ratio(&self) -> f64 {
+        let non_trait_types = self
+            .type_definitions
+            .values()
+            .filter(|t| !t.is_trait)
+            .count();
+        if non_trait_types == 0 {
+            return 0.0;
+        }
+        self.newtype_count() as f64 / non_trait_types as f64
+    }
+
+    /// Count types with public fields
+    pub fn types_with_public_fields(&self) -> usize {
+        self.type_definitions
+            .values()
+            .filter(|t| t.public_field_count > 0)
+            .count()
+    }
+
+    /// Total function count
+    pub fn function_count(&self) -> usize {
+        self.function_definitions.len()
+    }
+
+    /// Count functions with high primitive parameter ratio
+    /// (potential Primitive Obsession)
+    pub fn functions_with_primitive_obsession(&self) -> Vec<&FunctionDefinition> {
+        self.function_definitions
+            .values()
+            .filter(|f| {
+                f.param_count >= 3 && f.primitive_param_count as f64 / f.param_count as f64 >= 0.6
+            })
+            .collect()
+    }
+
+    /// Check if this module is a potential "God Module"
+    /// (too many functions, types, or implementations)
+    pub fn is_god_module(&self, max_functions: usize, max_types: usize, max_impls: usize) -> bool {
+        self.function_count() > max_functions
+            || self.type_definitions.len() > max_types
+            || (self.trait_impl_count + self.inherent_impl_count) > max_impls
+    }
 }
 
 /// Project-wide analysis results
@@ -424,8 +777,6 @@ pub struct ProjectMetrics {
     pub crate_dependencies: HashMap<String, Vec<String>>,
     /// Global type registry: type name -> (module name, visibility)
     pub type_registry: HashMap<String, (String, Visibility)>,
-    /// Connascence analysis statistics
-    pub connascence_stats: ConnascenceStats,
 }
 
 impl ProjectMetrics {
@@ -532,28 +883,72 @@ impl ProjectMetrics {
             return;
         }
 
+        // Debug: print file changes for troubleshooting
+        #[cfg(test)]
+        {
+            eprintln!("DEBUG: file_changes = {:?}", self.file_changes);
+        }
+
         for coupling in &mut self.couplings {
             // Try to find the target file in file_changes
-            // The target is like "crate::module" or "crate::submodule::item"
+            // The target is like "crate::module" or "crate::module::Type"
             // We need to match this against file paths like "src/module.rs"
+            //
+            // Special cases in Rust module system:
+            // - crate root "crate::crate_name" or "crate_name::crate_name" -> lib.rs
+            // - binary entry point -> main.rs
+            // - glob imports "crate::*" -> don't match specific files
 
-            let target_module = coupling
-                .target
-                .split("::")
-                .last()
-                .unwrap_or(&coupling.target);
+            // Extract all path components from target
+            let target_parts: Vec<&str> = coupling.target.split("::").collect();
 
             // Find the best matching file
             let mut max_changes = 0usize;
             for (file_path, &changes) in &self.file_changes {
-                // Check if file matches the target module
+                // Get file name without .rs extension (e.g., "balance" from "src/balance.rs")
                 let file_name = file_path
                     .rsplit('/')
                     .next()
                     .unwrap_or(file_path)
                     .trim_end_matches(".rs");
 
-                if file_name == target_module || file_path.contains(target_module) {
+                // Check if any target path component matches the file name
+                let matches = target_parts.iter().any(|part| {
+                    let part_lower = part.to_lowercase();
+                    let file_lower = file_name.to_lowercase();
+
+                    // Direct match: "balance" == "balance"
+                    if part_lower == file_lower {
+                        return true;
+                    }
+
+                    // Handle crate root: if the part matches the crate name and file is lib.rs
+                    // e.g., "cargo_coupling" matches "lib" (lib.rs is the crate root)
+                    if file_lower == "lib" && !part.is_empty() && *part != "*" {
+                        // This could be the crate root reference
+                        // We also match if the part is the crate name (same as first path component)
+                        if target_parts.len() >= 2 && target_parts[1] == *part {
+                            return true;
+                        }
+                    }
+
+                    // Handle underscore vs hyphen in crate names
+                    // e.g., "cargo-coupling" might appear as "cargo_coupling" in code
+                    let part_normalized = part_lower.replace('-', "_");
+                    let file_normalized = file_lower.replace('-', "_");
+                    if part_normalized == file_normalized {
+                        return true;
+                    }
+
+                    // Path contains match: "web" matches "src/web/graph.rs"
+                    if file_path.to_lowercase().contains(&part_lower) {
+                        return true;
+                    }
+
+                    false
+                });
+
+                if matches {
                     max_changes = max_changes.max(changes);
                 }
             }
@@ -686,6 +1081,133 @@ impl ProjectMetrics {
             affected_modules: affected_modules.len(),
             cycles,
         }
+    }
+
+    /// Calculate 3-dimensional coupling statistics
+    ///
+    /// Computes distribution of couplings across Strength, Distance,
+    /// Volatility, and Balance Classification dimensions.
+    pub fn calculate_dimension_stats(&self) -> DimensionStats {
+        let mut stats = DimensionStats::default();
+
+        for coupling in &self.couplings {
+            // Count strength distribution
+            match coupling.strength {
+                IntegrationStrength::Intrusive => stats.strength_counts.intrusive += 1,
+                IntegrationStrength::Functional => stats.strength_counts.functional += 1,
+                IntegrationStrength::Model => stats.strength_counts.model += 1,
+                IntegrationStrength::Contract => stats.strength_counts.contract += 1,
+            }
+
+            // Count distance distribution
+            match coupling.distance {
+                Distance::SameFunction | Distance::SameModule => {
+                    stats.distance_counts.same_module += 1
+                }
+                Distance::DifferentModule => stats.distance_counts.different_module += 1,
+                Distance::DifferentCrate => stats.distance_counts.different_crate += 1,
+            }
+
+            // Count volatility distribution
+            match coupling.volatility {
+                Volatility::Low => stats.volatility_counts.low += 1,
+                Volatility::Medium => stats.volatility_counts.medium += 1,
+                Volatility::High => stats.volatility_counts.high += 1,
+            }
+
+            // Classify and count balance
+            let classification = BalanceClassification::classify(
+                coupling.strength,
+                coupling.distance,
+                coupling.volatility,
+            );
+            match classification {
+                BalanceClassification::HighCohesion => stats.balance_counts.high_cohesion += 1,
+                BalanceClassification::LooseCoupling => stats.balance_counts.loose_coupling += 1,
+                BalanceClassification::Acceptable => stats.balance_counts.acceptable += 1,
+                BalanceClassification::Pain => stats.balance_counts.pain += 1,
+                BalanceClassification::LocalComplexity => {
+                    stats.balance_counts.local_complexity += 1
+                }
+            }
+        }
+
+        stats
+    }
+
+    /// Get total newtype count across all modules
+    pub fn total_newtype_count(&self) -> usize {
+        self.modules.values().map(|m| m.newtype_count()).sum()
+    }
+
+    /// Get total type count across all modules (excluding traits)
+    pub fn total_type_count(&self) -> usize {
+        self.modules
+            .values()
+            .flat_map(|m| m.type_definitions.values())
+            .filter(|t| !t.is_trait)
+            .count()
+    }
+
+    /// Calculate project-wide newtype usage ratio
+    pub fn newtype_ratio(&self) -> f64 {
+        let total = self.total_type_count();
+        if total == 0 {
+            return 0.0;
+        }
+        self.total_newtype_count() as f64 / total as f64
+    }
+
+    /// Get types with serde derives (potential DTO exposure)
+    pub fn serde_types(&self) -> Vec<(&str, &TypeDefinition)> {
+        self.modules
+            .iter()
+            .flat_map(|(module_name, m)| {
+                m.type_definitions
+                    .values()
+                    .filter(|t| t.has_serde_derive)
+                    .map(move |t| (module_name.as_str(), t))
+            })
+            .collect()
+    }
+
+    /// Identify potential God Modules
+    pub fn god_modules(
+        &self,
+        max_functions: usize,
+        max_types: usize,
+        max_impls: usize,
+    ) -> Vec<&str> {
+        self.modules
+            .iter()
+            .filter(|(_, m)| m.is_god_module(max_functions, max_types, max_impls))
+            .map(|(name, _)| name.as_str())
+            .collect()
+    }
+
+    /// Get all functions with potential Primitive Obsession
+    pub fn functions_with_primitive_obsession(&self) -> Vec<(&str, &FunctionDefinition)> {
+        self.modules
+            .iter()
+            .flat_map(|(module_name, m)| {
+                m.functions_with_primitive_obsession()
+                    .into_iter()
+                    .map(move |f| (module_name.as_str(), f))
+            })
+            .collect()
+    }
+
+    /// Get types with exposed public fields
+    pub fn types_with_public_fields(&self) -> Vec<(&str, &TypeDefinition)> {
+        self.modules
+            .iter()
+            .flat_map(|(module_name, m)| {
+                m.type_definitions
+                    .values()
+                    .filter(|t| t.public_field_count > 0 && !t.is_trait)
+                    .map(move |t| (module_name.as_str(), t))
+            })
+            .collect()
     }
 }
 
@@ -944,6 +1466,202 @@ mod tests {
         assert_eq!(
             module.get_type_visibility("PublicStruct"),
             Some(Visibility::Public)
+        );
+    }
+
+    #[test]
+    fn test_update_volatility_from_git() {
+        let mut project = ProjectMetrics::new();
+
+        // Add couplings with targets matching file names
+        project.add_coupling(CouplingMetrics::new(
+            "crate::main".to_string(),
+            "crate::balance".to_string(),
+            IntegrationStrength::Functional,
+            Distance::DifferentModule,
+            Volatility::Low, // Initial volatility
+        ));
+        project.add_coupling(CouplingMetrics::new(
+            "crate::main".to_string(),
+            "crate::analyzer".to_string(),
+            IntegrationStrength::Functional,
+            Distance::DifferentModule,
+            Volatility::Low,
+        ));
+        project.add_coupling(CouplingMetrics::new(
+            "crate::main".to_string(),
+            "crate::report".to_string(),
+            IntegrationStrength::Functional,
+            Distance::DifferentModule,
+            Volatility::Low,
+        ));
+
+        // Simulate git file changes
+        project
+            .file_changes
+            .insert("src/balance.rs".to_string(), 15); // High
+        project
+            .file_changes
+            .insert("src/analyzer.rs".to_string(), 7); // Medium
+        project.file_changes.insert("src/report.rs".to_string(), 2); // Low
+
+        // Update volatility from git data
+        project.update_volatility_from_git();
+
+        // Verify volatility was updated correctly
+        let balance_coupling = project
+            .couplings
+            .iter()
+            .find(|c| c.target == "crate::balance")
+            .unwrap();
+        assert_eq!(balance_coupling.volatility, Volatility::High);
+
+        let analyzer_coupling = project
+            .couplings
+            .iter()
+            .find(|c| c.target == "crate::analyzer")
+            .unwrap();
+        assert_eq!(analyzer_coupling.volatility, Volatility::Medium);
+
+        let report_coupling = project
+            .couplings
+            .iter()
+            .find(|c| c.target == "crate::report")
+            .unwrap();
+        assert_eq!(report_coupling.volatility, Volatility::Low);
+    }
+
+    #[test]
+    fn test_volatility_with_type_targets() {
+        // Test with more realistic targets that include type names (e.g., crate::balance::BalanceScore)
+        let mut project = ProjectMetrics::new();
+
+        // Add couplings with Type-level targets (common in real analysis)
+        project.add_coupling(CouplingMetrics::new(
+            "crate::main".to_string(),
+            "crate::balance::BalanceScore".to_string(), // Type in balance module
+            IntegrationStrength::Functional,
+            Distance::DifferentModule,
+            Volatility::Low,
+        ));
+        project.add_coupling(CouplingMetrics::new(
+            "crate::main".to_string(),
+            "cargo-coupling::analyzer::analyze_file".to_string(), // Function in analyzer module
+            IntegrationStrength::Functional,
+            Distance::DifferentModule,
+            Volatility::Low,
+        ));
+
+        // Simulate git file changes
+        project
+            .file_changes
+            .insert("src/balance.rs".to_string(), 15); // High
+        project
+            .file_changes
+            .insert("src/analyzer.rs".to_string(), 7); // Medium
+
+        // Update volatility from git data
+        project.update_volatility_from_git();
+
+        // Verify volatility was updated correctly by matching module path component
+        let balance_coupling = project
+            .couplings
+            .iter()
+            .find(|c| c.target.contains("balance"))
+            .unwrap();
+        assert_eq!(
+            balance_coupling.volatility,
+            Volatility::High,
+            "Expected High volatility for balance module (15 changes)"
+        );
+
+        let analyzer_coupling = project
+            .couplings
+            .iter()
+            .find(|c| c.target.contains("analyzer"))
+            .unwrap();
+        assert_eq!(
+            analyzer_coupling.volatility,
+            Volatility::Medium,
+            "Expected Medium volatility for analyzer module (7 changes)"
+        );
+    }
+
+    #[test]
+    fn test_volatility_extracted_module_targets() {
+        // Test with extracted module names (like what the analyzer produces)
+        // The analyzer's extract_target_module() returns just "balance" from "crate::balance::Type"
+        let mut project = ProjectMetrics::new();
+
+        // Extracted module targets (single component names)
+        project.add_coupling(CouplingMetrics::new(
+            "cargo-coupling::main".to_string(),
+            "balance".to_string(), // Extracted module name
+            IntegrationStrength::Functional,
+            Distance::DifferentModule,
+            Volatility::Low,
+        ));
+        project.add_coupling(CouplingMetrics::new(
+            "cargo-coupling::main".to_string(),
+            "analyzer".to_string(), // Extracted module name
+            IntegrationStrength::Functional,
+            Distance::DifferentModule,
+            Volatility::Low,
+        ));
+        project.add_coupling(CouplingMetrics::new(
+            "cargo-coupling::main".to_string(),
+            "cli_output".to_string(), // Extracted module name with underscore
+            IntegrationStrength::Functional,
+            Distance::DifferentModule,
+            Volatility::Low,
+        ));
+
+        // Simulate git file changes
+        project
+            .file_changes
+            .insert("src/balance.rs".to_string(), 15); // High
+        project
+            .file_changes
+            .insert("src/analyzer.rs".to_string(), 7); // Medium
+        project
+            .file_changes
+            .insert("src/cli_output.rs".to_string(), 3); // Medium
+
+        // Update volatility from git data
+        project.update_volatility_from_git();
+
+        // Verify volatility was updated
+        let balance = project
+            .couplings
+            .iter()
+            .find(|c| c.target == "balance")
+            .unwrap();
+        assert_eq!(
+            balance.volatility,
+            Volatility::High,
+            "balance should be High (15 changes)"
+        );
+
+        let analyzer = project
+            .couplings
+            .iter()
+            .find(|c| c.target == "analyzer")
+            .unwrap();
+        assert_eq!(
+            analyzer.volatility,
+            Volatility::Medium,
+            "analyzer should be Medium (7 changes)"
+        );
+
+        let cli_output = project
+            .couplings
+            .iter()
+            .find(|c| c.target == "cli_output")
+            .unwrap();
+        assert_eq!(
+            cli_output.volatility,
+            Volatility::Medium,
+            "cli_output should be Medium (3 changes)"
         );
     }
 }

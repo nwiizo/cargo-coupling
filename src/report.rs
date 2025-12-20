@@ -4,13 +4,10 @@
 
 use std::io::{self, Write};
 
-use crate::aposd::analyze_aposd;
 use crate::balance::{
     BalanceScore, IssueThresholds, ProjectBalanceReport, Severity,
     analyze_project_balance_with_thresholds,
 };
-use crate::config::AposdConfig;
-use crate::connascence::ConnascenceType;
 use crate::metrics::{Distance, IntegrationStrength, ProjectMetrics};
 
 /// Generate a summary report to the given writer
@@ -25,13 +22,96 @@ pub fn generate_summary_with_thresholds<W: Write>(
     writer: &mut W,
 ) -> io::Result<()> {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
+    let dimension_stats = metrics.calculate_dimension_stats();
 
-    writeln!(writer, "Coupling Analysis Summary:")?;
-    writeln!(writer, "  Health Grade: {}", report.health_grade)?;
-    writeln!(writer, "  Files: {}", metrics.total_files)?;
-    writeln!(writer, "  Modules: {}", metrics.module_count())?;
-    writeln!(writer, "  Couplings: {}", report.total_couplings)?;
-    writeln!(writer, "  Balance Score: {:.2}", report.average_score)?;
+    let project_name = metrics.workspace_name.as_deref().unwrap_or("project");
+    writeln!(writer, "Balanced Coupling Analysis: {}", project_name)?;
+    writeln!(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")?;
+    writeln!(writer)?;
+
+    writeln!(
+        writer,
+        "Grade: {} | Score: {:.2}/1.00 | Modules: {}",
+        report.health_grade, report.average_score, metrics.module_count()
+    )?;
+    writeln!(writer)?;
+
+    // 3-Dimensional Analysis
+    if !metrics.couplings.is_empty() {
+        writeln!(writer, "┌─ 3-Dimensional Analysis ──────────────────────────────────┐")?;
+
+        // Strength distribution
+        let (intr_pct, func_pct, model_pct, contract_pct) = dimension_stats.strength_percentages();
+        writeln!(
+            writer,
+            "│ Strength  : Contract {:.0}%, Model {:.0}%, Functional {:.0}%, Intrusive {:.0}%",
+            contract_pct, model_pct, func_pct, intr_pct
+        )?;
+
+        // Distance distribution
+        let (same_pct, diff_pct, ext_pct) = dimension_stats.distance_percentages();
+        writeln!(
+            writer,
+            "│ Distance  : Same Module {:.0}%, Different Module {:.0}%, External {:.0}%",
+            same_pct, diff_pct, ext_pct
+        )?;
+
+        // Volatility distribution
+        let (low_pct, med_pct, high_pct) = dimension_stats.volatility_percentages();
+        writeln!(
+            writer,
+            "│ Volatility: Low {:.0}%, Medium {:.0}%, High {:.0}%",
+            low_pct, med_pct, high_pct
+        )?;
+        writeln!(writer, "└────────────────────────────────────────────────────────────┘")?;
+        writeln!(writer)?;
+
+        // Balance Classification
+        writeln!(writer, "Balance State:")?;
+        let bc = &dimension_stats.balance_counts;
+        let total = dimension_stats.total();
+        if bc.high_cohesion > 0 {
+            writeln!(
+                writer,
+                "  ✅ High Cohesion (strong+close): {} ({:.0}%)",
+                bc.high_cohesion,
+                bc.high_cohesion as f64 / total as f64 * 100.0
+            )?;
+        }
+        if bc.loose_coupling > 0 {
+            writeln!(
+                writer,
+                "  ✅ Loose Coupling (weak+far): {} ({:.0}%)",
+                bc.loose_coupling,
+                bc.loose_coupling as f64 / total as f64 * 100.0
+            )?;
+        }
+        if bc.acceptable > 0 {
+            writeln!(
+                writer,
+                "  🤔 Acceptable (strong+far+stable): {} ({:.0}%)",
+                bc.acceptable,
+                bc.acceptable as f64 / total as f64 * 100.0
+            )?;
+        }
+        if bc.pain > 0 {
+            writeln!(
+                writer,
+                "  ❌ Needs Refactoring (strong+far+volatile): {} ({:.0}%)",
+                bc.pain,
+                bc.pain as f64 / total as f64 * 100.0
+            )?;
+        }
+        if bc.local_complexity > 0 {
+            writeln!(
+                writer,
+                "  🔍 Local Complexity (weak+close): {} ({:.0}%)",
+                bc.local_complexity,
+                bc.local_complexity as f64 / total as f64 * 100.0
+            )?;
+        }
+        writeln!(writer)?;
+    }
 
     // Issue breakdown
     let critical = *report
@@ -43,126 +123,66 @@ pub fn generate_summary_with_thresholds<W: Write>(
         .issues_by_severity
         .get(&Severity::Medium)
         .unwrap_or(&0);
+    let low = *report.issues_by_severity.get(&Severity::Low).unwrap_or(&0);
 
-    if critical > 0 || high > 0 || medium > 0 {
-        writeln!(writer)?;
-        writeln!(writer, "  Issues:")?;
+    if critical > 0 || high > 0 || medium > 0 || low > 0 {
+        writeln!(writer, "Detected Issues:")?;
         if critical > 0 {
-            writeln!(writer, "    Critical: {} (must fix)", critical)?;
+            writeln!(writer, "  🔴 Critical: {} (must fix)", critical)?;
         }
         if high > 0 {
-            writeln!(writer, "    High: {} (should fix)", high)?;
+            writeln!(writer, "  🟠 High: {} (should fix)", high)?;
         }
         if medium > 0 {
-            writeln!(writer, "    Medium: {}", medium)?;
+            writeln!(writer, "  🟡 Medium: {}", medium)?;
         }
+        if low > 0 {
+            writeln!(writer, "  ⚪ Low: {}", low)?;
+        }
+        writeln!(writer)?;
     }
 
     // Top priority if any
     if !report.top_priorities.is_empty() {
-        writeln!(writer)?;
-        writeln!(writer, "  Top Priority:")?;
+        writeln!(writer, "Top Priorities:")?;
         for issue in report.top_priorities.iter().take(3) {
             writeln!(
                 writer,
-                "    - [{}] {} → {}",
+                "  - [{}] {} → {}",
                 issue.severity, issue.source, issue.target
             )?;
         }
+        writeln!(writer)?;
     }
 
-    // Coupling breakdown
-    if !metrics.couplings.is_empty() {
-        let internal = metrics
-            .couplings
-            .iter()
-            .filter(|c| c.distance != Distance::DifferentCrate)
-            .count();
-        let external = metrics.couplings.len() - internal;
-        writeln!(writer)?;
-        writeln!(writer, "  Breakdown:")?;
-        writeln!(writer, "    Internal: {}", internal)?;
-        writeln!(writer, "    External: {}", external)?;
-        writeln!(writer, "    Balanced: {}", report.balanced_count)?;
-        writeln!(writer, "    Needs Review: {}", report.needs_review)?;
+    // Rust Design Quality (newtype usage)
+    let newtype_count = metrics.total_newtype_count();
+    let type_count = metrics.total_type_count();
+    if type_count > 0 {
+        let newtype_ratio = metrics.newtype_ratio() * 100.0;
+        let quality = if newtype_ratio >= 20.0 {
+            "✅ Good"
+        } else if newtype_ratio >= 10.0 {
+            "🤔 Consider more"
+        } else {
+            "⚠️ Low usage"
+        };
         writeln!(
             writer,
-            "    Needs Refactoring: {}",
-            report.needs_refactoring
+            "Rust Patterns: Newtype usage: {}/{} ({:.0}%) - {}",
+            newtype_count, type_count, newtype_ratio, quality
         )?;
+        writeln!(writer)?;
     }
 
     // Circular dependencies
     let circular = metrics.circular_dependency_summary();
     if circular.total_cycles > 0 {
-        writeln!(writer)?;
         writeln!(
             writer,
-            "  ⚠️ Circular Dependencies: {} cycles ({} modules)",
+            "⚠️ Circular Dependencies: {} cycles ({} modules)",
             circular.total_cycles, circular.affected_modules
         )?;
-    }
-
-    // Connascence summary
-    if metrics.connascence_stats.total > 0 {
-        writeln!(writer)?;
-        writeln!(writer, "  Connascence:")?;
-        writeln!(
-            writer,
-            "    Total: {} (avg strength: {:.2})",
-            metrics.connascence_stats.total,
-            metrics.connascence_stats.average_strength()
-        )?;
-        let position = metrics.connascence_stats.count(ConnascenceType::Position);
-        let algorithm = metrics.connascence_stats.count(ConnascenceType::Algorithm);
-        if position > 0 || algorithm > 0 {
-            writeln!(
-                writer,
-                "    High-strength: Position={}, Algorithm={}",
-                position, algorithm
-            )?;
-        }
-    }
-
-    // APOSD metrics (A Philosophy of Software Design)
-    // Try to analyze if we have module paths
-    if let Some(first_module) = metrics.modules.values().next()
-        && let Some(parent) = first_module.path.parent()
-    {
-        let aposd_config = AposdConfig::default();
-        let aposd = analyze_aposd(parent, metrics, &aposd_config);
-        let counts = aposd.issue_counts();
-
-        if counts.has_issues() {
-            writeln!(writer)?;
-            writeln!(writer, "  APOSD Metrics:")?;
-            if counts.shallow_modules > 0 {
-                writeln!(
-                    writer,
-                    "    Shallow Modules: {} (interface ≈ implementation)",
-                    counts.shallow_modules
-                )?;
-            }
-            if counts.passthrough_methods > 0 {
-                writeln!(
-                    writer,
-                    "    Pass-Through Methods: {} (simple delegation)",
-                    counts.passthrough_methods
-                )?;
-            }
-            if counts.high_cognitive_load > 0 {
-                writeln!(
-                    writer,
-                    "    High Cognitive Load: {} modules",
-                    counts.high_cognitive_load
-                )?;
-            }
-        }
-
-        // Show average depth if available
-        if let Some(avg_depth) = aposd.average_depth_ratio() {
-            writeln!(writer, "    Avg Module Depth: {:.1}", avg_depth)?;
-        }
     }
 
     Ok(())
@@ -196,9 +216,6 @@ pub fn generate_report_with_thresholds<W: Write>(
 
     // Coupling details
     write_coupling_section(metrics, writer)?;
-
-    // Connascence analysis
-    write_connascence_section(metrics, writer)?;
 
     // Module analysis
     write_module_section(metrics, writer)?;
@@ -490,6 +507,50 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
     }
     writeln!(writer)?;
 
+    // Volatility distribution (only for internal couplings where we have git data)
+    let internal_couplings: Vec<_> = metrics
+        .couplings
+        .iter()
+        .filter(|c| c.distance != Distance::DifferentCrate)
+        .collect();
+
+    if !internal_couplings.is_empty() {
+        let internal_total = internal_couplings.len() as f64;
+        writeln!(writer, "### By Volatility (Internal Couplings)\n")?;
+        writeln!(writer, "| Volatility | Count | % | Impact on Balance |")?;
+        writeln!(writer, "|------------|-------|---|-------------------|")?;
+
+        for (volatility, label, impact) in [
+            (
+                crate::metrics::Volatility::Low,
+                "Low (rarely changes)",
+                "No penalty",
+            ),
+            (
+                crate::metrics::Volatility::Medium,
+                "Medium (sometimes changes)",
+                "Moderate penalty",
+            ),
+            (
+                crate::metrics::Volatility::High,
+                "High (frequently changes)",
+                "Significant penalty",
+            ),
+        ] {
+            let count = internal_couplings
+                .iter()
+                .filter(|c| c.volatility == volatility)
+                .count();
+            let pct = (count as f64 / internal_total) * 100.0;
+            writeln!(
+                writer,
+                "| {} | {} | {:.0}% | {} |",
+                label, count, pct, impact
+            )?;
+        }
+        writeln!(writer)?;
+    }
+
     // Worst balanced couplings
     writeln!(writer, "### Worst Balanced Couplings\n")?;
 
@@ -503,11 +564,11 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
 
     writeln!(
         writer,
-        "| Source | Target | Strength | Distance | Score | Status |"
+        "| Source | Target | Strength | Distance | Volatility | Score | Status |"
     )?;
     writeln!(
         writer,
-        "|--------|--------|----------|----------|-------|--------|"
+        "|--------|--------|----------|----------|------------|-------|--------|"
     )?;
 
     for (coupling, score) in couplings_with_scores.iter().take(15) {
@@ -523,6 +584,11 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
             Distance::DifferentModule => "Diff Mod",
             Distance::DifferentCrate => "External",
         };
+        let volatility_str = match coupling.volatility {
+            crate::metrics::Volatility::Low => "Low",
+            crate::metrics::Volatility::Medium => "Med",
+            crate::metrics::Volatility::High => "High",
+        };
         let status = match score.interpretation {
             crate::balance::BalanceInterpretation::Balanced => "✅ Balanced",
             crate::balance::BalanceInterpretation::Acceptable => "✅ OK",
@@ -533,11 +599,12 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
 
         writeln!(
             writer,
-            "| `{}` | `{}` | {} | {} | {:.2} | {} |",
+            "| `{}` | `{}` | {} | {} | {} | {:.2} | {} |",
             truncate_path(&coupling.source, 20),
             truncate_path(&coupling.target, 20),
             strength_str,
             distance_str,
+            volatility_str,
             score.score,
             status
         )?;
@@ -594,116 +661,6 @@ fn write_module_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> i
         writeln!(writer, "\n*Showing top 20 of {} modules*", modules.len())?;
     }
     writeln!(writer)?;
-
-    Ok(())
-}
-
-fn write_connascence_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
-    let stats = &metrics.connascence_stats;
-
-    if stats.total == 0 {
-        return Ok(());
-    }
-
-    writeln!(writer, "## Connascence Analysis\n")?;
-    writeln!(
-        writer,
-        "Connascence measures the degree to which changes in one component require changes in another."
-    )?;
-    writeln!(
-        writer,
-        "Lower strength connascence is preferred as it's easier to refactor.\n"
-    )?;
-
-    writeln!(
-        writer,
-        "| Type | Count | % | Strength | Description | Refactoring |"
-    )?;
-    writeln!(
-        writer,
-        "|------|-------|---|----------|-------------|-------------|"
-    )?;
-
-    for conn_type in [
-        ConnascenceType::Name,
-        ConnascenceType::Type,
-        ConnascenceType::Meaning,
-        ConnascenceType::Position,
-        ConnascenceType::Algorithm,
-    ] {
-        let count = stats.count(conn_type);
-        if count > 0 {
-            writeln!(
-                writer,
-                "| {:?} | {} | {:.1}% | {:.1} | {} | {} |",
-                conn_type,
-                count,
-                stats.percentage(conn_type),
-                conn_type.strength(),
-                conn_type.description(),
-                conn_type.refactoring_suggestion()
-            )?;
-        }
-    }
-    writeln!(writer)?;
-
-    writeln!(
-        writer,
-        "**Total Instances**: {} | **Average Strength**: {:.2}\n",
-        stats.total,
-        stats.average_strength()
-    )?;
-
-    // Provide interpretation
-    let avg = stats.average_strength();
-    if avg < 0.3 {
-        writeln!(
-            writer,
-            "✅ **Good**: Low average connascence strength. Codebase is loosely coupled.\n"
-        )?;
-    } else if avg < 0.5 {
-        writeln!(
-            writer,
-            "🟡 **Moderate**: Some stronger connascence present. Consider reviewing high-strength instances.\n"
-        )?;
-    } else {
-        writeln!(
-            writer,
-            "🟠 **High**: Significant strong connascence detected. Refactoring recommended.\n"
-        )?;
-    }
-
-    // Highlight position and algorithm connascence if present
-    let position_count = stats.count(ConnascenceType::Position);
-    let algorithm_count = stats.count(ConnascenceType::Algorithm);
-
-    if position_count > 0 || algorithm_count > 0 {
-        writeln!(writer, "### High-Strength Connascence\n")?;
-
-        if position_count > 0 {
-            writeln!(
-                writer,
-                "**Position Connascence** ({} instances): Functions with many positional arguments.\n",
-                position_count
-            )?;
-            writeln!(
-                writer,
-                "- Consider using builder pattern or structs for configuration\n"
-            )?;
-        }
-
-        if algorithm_count > 0 {
-            writeln!(
-                writer,
-                "**Algorithm Connascence** ({} instances): Encode/decode or serialize/deserialize pairs.\n",
-                algorithm_count
-            )?;
-            writeln!(
-                writer,
-                "- Ensure algorithm pairs are co-located and have clear contracts\n"
-            )?;
-        }
-    }
 
     Ok(())
 }
@@ -946,85 +903,6 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
         writeln!(writer)?;
     }
 
-    // APOSD metrics (A Philosophy of Software Design)
-    if let Some(first_module) = metrics.modules.values().next()
-        && let Some(parent) = first_module.path.parent()
-    {
-        let aposd_config = AposdConfig::default();
-        let aposd = analyze_aposd(parent, metrics, &aposd_config);
-        let counts = aposd.issue_counts();
-
-        if counts.has_issues() {
-            writeln!(writer, "APOSD Design Issues:")?;
-
-            // Shallow modules
-            let shallow = aposd.shallow_modules();
-            if !shallow.is_empty() {
-                writeln!(writer)?;
-                writeln!(
-                    writer,
-                    "Shallow Modules ({}) - Interface complexity ≈ Implementation:",
-                    shallow.len()
-                )?;
-                for (i, module) in shallow.iter().take(5).enumerate() {
-                    let ratio = module.depth_ratio().unwrap_or(0.0);
-                    writeln!(
-                        writer,
-                        "  {}. {} (depth ratio: {:.1})",
-                        i + 1,
-                        module.module_name,
-                        ratio
-                    )?;
-                }
-            }
-
-            // Pass-through methods
-            let passthroughs = aposd.confirmed_passthroughs();
-            if !passthroughs.is_empty() {
-                writeln!(writer)?;
-                writeln!(
-                    writer,
-                    "Pass-Through Methods ({}) - Simple delegation without added value:",
-                    passthroughs.len()
-                )?;
-                for (i, pt) in passthroughs.iter().take(5).enumerate() {
-                    writeln!(
-                        writer,
-                        "  {}. {}::{} → {}",
-                        i + 1,
-                        pt.module_name,
-                        pt.method_name,
-                        pt.delegated_to
-                    )?;
-                }
-            }
-
-            // High cognitive load
-            let high_load = aposd.high_load_modules();
-            if !high_load.is_empty() {
-                writeln!(writer)?;
-                writeln!(
-                    writer,
-                    "High Cognitive Load ({}) - Too complex to understand easily:",
-                    high_load.len()
-                )?;
-                for (i, module) in high_load.iter().take(5).enumerate() {
-                    writeln!(
-                        writer,
-                        "  {}. {} (load score: {:.1}, {} public APIs, {} deps)",
-                        i + 1,
-                        module.module_name,
-                        module.cognitive_load_score(),
-                        module.public_api_count,
-                        module.dependency_count
-                    )?;
-                }
-            }
-
-            writeln!(writer)?;
-        }
-    }
-
     writeln!(
         writer,
         "────────────────────────────────────────────────────────────"
@@ -1069,8 +947,8 @@ mod tests {
         assert!(result.is_ok());
 
         let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("Coupling Analysis Summary"));
-        assert!(output_str.contains("Health Grade"));
+        assert!(output_str.contains("Balanced Coupling Analysis"));
+        assert!(output_str.contains("Grade:"));
     }
 
     #[test]

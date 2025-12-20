@@ -37,21 +37,19 @@
 //! - High volatility + strong coupling = Bad (cascading changes)
 
 pub mod analyzer;
-pub mod aposd;
 pub mod balance;
 pub mod cli_output;
 pub mod config;
-pub mod connascence;
 pub mod metrics;
 pub mod report;
-pub mod temporal;
 pub mod volatility;
 pub mod web;
 pub mod workspace;
 
 pub use analyzer::{
-    AnalyzedFileResult, AnalyzerError, CouplingAnalyzer, Dependency, DependencyKind,
-    analyze_project, analyze_rust_file, analyze_rust_file_full, analyze_workspace,
+    AnalyzedFileResult, AnalyzerError, CouplingAnalyzer, Dependency, DependencyKind, ItemDepType,
+    ItemDependency, ItemKind, analyze_project, analyze_rust_file, analyze_rust_file_full,
+    analyze_workspace,
 };
 pub use balance::{
     BalanceInterpretation, BalanceScore, CouplingIssue, HealthGrade, IssueThresholds, IssueType,
@@ -59,30 +57,18 @@ pub use balance::{
     analyze_project_balance_with_thresholds, calculate_project_score,
 };
 pub use config::{
-    AposdConfig, CompiledConfig, ConfigError, CouplingConfig, ThresholdsConfig, VolatilityConfig,
+    CompiledConfig, ConfigError, CouplingConfig, ThresholdsConfig, VolatilityConfig,
     load_compiled_config, load_config,
 };
-pub use connascence::{
-    ConnascenceAnalyzer, ConnascenceInstance, ConnascenceStats, ConnascenceType,
-    detect_algorithm_patterns,
-};
 pub use metrics::{
-    CircularDependencySummary, CouplingMetrics, Distance, IntegrationStrength, ModuleMetrics,
-    ProjectMetrics, TypeDefinition, Visibility, Volatility,
+    BalanceClassification, BalanceCounts, CircularDependencySummary, CouplingMetrics,
+    DimensionStats, Distance, DistanceCounts, FunctionDefinition, IntegrationStrength,
+    ModuleMetrics, ProjectMetrics, StrengthCounts, TypeDefinition, Visibility, Volatility,
+    VolatilityCounts,
 };
 pub use report::{
     generate_ai_output, generate_ai_output_with_thresholds, generate_report,
     generate_report_with_thresholds, generate_summary, generate_summary_with_thresholds,
 };
-pub use temporal::{
-    LifecyclePhase, TemporalAnalyzer, TemporalCouplingInstance, TemporalCouplingStats,
-    TemporalPattern,
-};
 pub use volatility::{VolatilityAnalyzer, VolatilityError, VolatilityStats};
 pub use workspace::{CrateInfo, WorkspaceError, WorkspaceInfo};
-
-// APOSD (A Philosophy of Software Design) metrics
-pub use aposd::{
-    AposdAnalysis, AposdIssueCounts, CognitiveLoadLevel, CognitiveLoadMetrics, ModuleDepthClass,
-    ModuleDepthMetrics, PassThroughMethodInfo, analyze_aposd,
-};

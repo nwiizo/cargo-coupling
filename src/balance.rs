@@ -62,6 +62,14 @@ pub enum IssueType {
     PassThroughMethod,
     /// Module requiring too much knowledge to understand/modify
     HighCognitiveLoad,
+
+    // === Khononov/Rust-specific issues ===
+    /// Module with too many functions, types, or implementations
+    GodModule,
+    /// Public fields exposed to external modules (should use getters/methods)
+    PublicFieldExposure,
+    /// Functions with too many primitive parameters (consider newtype)
+    PrimitiveObsession,
 }
 
 impl std::fmt::Display for IssueType {
@@ -78,6 +86,10 @@ impl std::fmt::Display for IssueType {
             IssueType::ShallowModule => write!(f, "Shallow Module"),
             IssueType::PassThroughMethod => write!(f, "Pass-Through Method"),
             IssueType::HighCognitiveLoad => write!(f, "High Cognitive Load"),
+            // Khononov/Rust-specific
+            IssueType::GodModule => write!(f, "God Module"),
+            IssueType::PublicFieldExposure => write!(f, "Public Field Exposure"),
+            IssueType::PrimitiveObsession => write!(f, "Primitive Obsession"),
         }
     }
 }
@@ -116,6 +128,16 @@ impl IssueType {
             }
             IssueType::HighCognitiveLoad => {
                 "Module requires too much knowledge to understand and modify. Too many public APIs, dependencies, or complex type signatures. (APOSD: Cognitive Load)"
+            }
+            // Khononov/Rust-specific descriptions
+            IssueType::GodModule => {
+                "Module has too many responsibilities - too many functions, types, or implementations. Consider splitting into focused, cohesive modules. (SRP violation)"
+            }
+            IssueType::PublicFieldExposure => {
+                "Struct has public fields accessed from other modules. Consider using getter methods to reduce coupling and allow future implementation changes."
+            }
+            IssueType::PrimitiveObsession => {
+                "Function has many primitive parameters of the same type. Consider using newtype pattern (e.g., `struct UserId(u64)`) for type safety and clarity."
             }
         }
     }
@@ -165,6 +187,13 @@ pub enum RefactoringAction {
     StabilizeInterface { interface_name: String },
     /// General refactoring suggestion
     General { action: String },
+    /// Add getter methods to replace direct field access
+    AddGetters { fields: Vec<String> },
+    /// Introduce newtype pattern for type safety
+    IntroduceNewtype {
+        suggested_name: String,
+        wrapped_type: String,
+    },
 }
 
 impl std::fmt::Display for RefactoringAction {
@@ -206,6 +235,19 @@ impl std::fmt::Display for RefactoringAction {
             }
             RefactoringAction::General { action } => {
                 write!(f, "{}", action)
+            }
+            RefactoringAction::AddGetters { fields } => {
+                write!(f, "Add getter methods for: {}", fields.join(", "))
+            }
+            RefactoringAction::IntroduceNewtype {
+                suggested_name,
+                wrapped_type,
+            } => {
+                write!(
+                    f,
+                    "Introduce newtype: `struct {}({});`",
+                    suggested_name, wrapped_type
+                )
             }
         }
     }
@@ -333,6 +375,14 @@ pub struct IssueThresholds {
     pub max_dependencies: usize,
     /// Number of dependents to consider "high afferent coupling"
     pub max_dependents: usize,
+    /// Maximum functions before flagging God Module
+    pub max_functions: usize,
+    /// Maximum types before flagging God Module
+    pub max_types: usize,
+    /// Maximum implementations before flagging God Module
+    pub max_impls: usize,
+    /// Minimum primitive parameter count for Primitive Obsession
+    pub min_primitive_params: usize,
 }
 
 impl Default for IssueThresholds {
@@ -343,6 +393,10 @@ impl Default for IssueThresholds {
             high_volatility: 0.75, // High volatility only (was 0.5)
             max_dependencies: 20,  // More than 20 outgoing dependencies (was 15)
             max_dependents: 30,    // More than 30 incoming dependencies (was 20)
+            max_functions: 30,     // More than 30 functions = God Module
+            max_types: 15,         // More than 15 types = God Module
+            max_impls: 20,         // More than 20 implementations = God Module
+            min_primitive_params: 3, // 3+ primitive params = Primitive Obsession
         }
     }
 }
@@ -572,6 +626,10 @@ pub fn analyze_project_balance_with_thresholds(
     let module_issues = analyze_module_coupling(metrics, &thresholds);
     all_issues.extend(module_issues);
 
+    // Analyze Khononov/Rust-specific issues
+    let rust_issues = analyze_rust_patterns(metrics, &thresholds);
+    all_issues.extend(rust_issues);
+
     // Sort by severity (critical first), then by balance score (worst first)
     all_issues.sort_by(|a, b| {
         b.severity
@@ -712,6 +770,120 @@ fn analyze_module_coupling(
     }
 
     issues
+}
+
+/// Analyze Rust-specific patterns (God Module, Public Field Exposure, Primitive Obsession)
+fn analyze_rust_patterns(
+    metrics: &ProjectMetrics,
+    thresholds: &IssueThresholds,
+) -> Vec<CouplingIssue> {
+    let mut issues = Vec::new();
+
+    // God Module detection
+    for (module_name, module) in &metrics.modules {
+        if module.is_god_module(
+            thresholds.max_functions,
+            thresholds.max_types,
+            thresholds.max_impls,
+        ) {
+            let func_count = module.function_count();
+            let type_count = module.type_definitions.len();
+            let impl_count = module.trait_impl_count + module.inherent_impl_count;
+
+            issues.push(CouplingIssue {
+                issue_type: IssueType::GodModule,
+                severity: if func_count > thresholds.max_functions * 2
+                    || type_count > thresholds.max_types * 2
+                {
+                    Severity::High
+                } else {
+                    Severity::Medium
+                },
+                source: module_name.clone(),
+                target: format!(
+                    "{} functions, {} types, {} impls",
+                    func_count, type_count, impl_count
+                ),
+                description: format!(
+                    "Module {} has too many responsibilities (functions: {}/{}, types: {}/{}, impls: {}/{})",
+                    module_name,
+                    func_count, thresholds.max_functions,
+                    type_count, thresholds.max_types,
+                    impl_count, thresholds.max_impls,
+                ),
+                refactoring: RefactoringAction::SplitModule {
+                    suggested_modules: vec![
+                        format!("{}_core", module_name),
+                        format!("{}_helpers", module_name),
+                    ],
+                },
+                balance_score: 0.5,
+            });
+        }
+
+        // Public Field Exposure detection
+        for type_def in module.type_definitions.values() {
+            if type_def.public_field_count > 0
+                && !type_def.is_trait
+                && type_def.visibility == crate::metrics::Visibility::Public
+            {
+                issues.push(CouplingIssue {
+                    issue_type: IssueType::PublicFieldExposure,
+                    severity: Severity::Low,
+                    source: format!("{}::{}", module_name, type_def.name),
+                    target: format!("{} public fields", type_def.public_field_count),
+                    description: format!(
+                        "Type {} has {} public field(s). Consider using getter methods.",
+                        type_def.name, type_def.public_field_count
+                    ),
+                    refactoring: RefactoringAction::AddGetters {
+                        fields: vec!["// Add getter methods".to_string()],
+                    },
+                    balance_score: 0.7,
+                });
+            }
+        }
+
+        // Primitive Obsession detection
+        for func_def in module.function_definitions.values() {
+            if func_def.primitive_param_count >= thresholds.min_primitive_params
+                && func_def.param_count >= thresholds.min_primitive_params
+            {
+                let ratio = func_def.primitive_param_count as f64 / func_def.param_count as f64;
+                if ratio >= 0.6 {
+                    issues.push(CouplingIssue {
+                        issue_type: IssueType::PrimitiveObsession,
+                        severity: Severity::Low,
+                        source: format!("{}::{}", module_name, func_def.name),
+                        target: format!(
+                            "{}/{} primitive params",
+                            func_def.primitive_param_count, func_def.param_count
+                        ),
+                        description: format!(
+                            "Function {} has {} primitive parameters. Consider newtype pattern.",
+                            func_def.name, func_def.primitive_param_count
+                        ),
+                        refactoring: RefactoringAction::IntroduceNewtype {
+                            suggested_name: format!("{}Params", capitalize_first(&func_def.name)),
+                            wrapped_type: "// Group related parameters".to_string(),
+                        },
+                        balance_score: 0.7,
+                    });
+                }
+            }
+        }
+    }
+
+    issues
+}
+
+/// Capitalize first letter of a string
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
 }
 
 /// Health grade for the overall project
