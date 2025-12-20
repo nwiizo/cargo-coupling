@@ -911,7 +911,7 @@ pub enum HealthGrade {
 impl std::fmt::Display for HealthGrade {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HealthGrade::S => write!(f, "S (Over-optimized! Stop refactoring!)"),
+            HealthGrade::S => write!(f, "S (Over-optimized! Real code has some issues. Ship it!)"),
             HealthGrade::A => write!(f, "A (Well-balanced)"),
             HealthGrade::B => write!(f, "B (Healthy)"),
             HealthGrade::C => write!(f, "C (Room for improvement)"),
