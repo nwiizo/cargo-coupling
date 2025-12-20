@@ -262,13 +262,15 @@ Real-world validation on OSS projects (bat, fd, eza, ripgrep) showed:
 **JavaScript Module Structure** (ES6 modules):
 ```
 web-assets/js/
-├── state.js      # Shared state & configuration
-├── i18n.js       # Internationalization (EN/JA)
-├── utils.js      # Utility functions (debounce, STABLE_CRATES, etc.)
-├── graph.js      # Cytoscape setup, styles, layouts, analyzeCoupling()
-├── ui.js         # UI components, filters, search, keyboard shortcuts
-├── item-graph.js # Item-level dependency graph
-└── main.js       # Entry point, initialization
+├── state.js       # Shared state & configuration
+├── i18n.js        # Internationalization (EN/JA)
+├── utils.js       # Utility functions (debounce, STABLE_CRATES, etc.)
+├── graph.js       # Cytoscape setup, styles, layouts, analyzeCoupling()
+├── graph-queue.js # Operation queue for graph stability
+├── ui.js          # UI components, filters, search, details modal
+├── item-graph.js  # Item-level dependency graph
+├── url-router.js  # URL-based navigation for sharing
+└── main.js        # Entry point, initialization
 ```
 
 **API Data Consistency**:
@@ -280,6 +282,33 @@ web-assets/js/
 - Center mode (`centerMode=true`): Re-layout graph with selected node at center (concentric)
 - Zoom mode (`centerMode=false`): Just animate to center the node without re-layout
 - Toggle with 'c' key or checkbox
+
+**Details Panel (Recent Improvements)**:
+- Fixed ID mismatch: HTML uses `node-details`, JS expects `node-details` (was `details-content`)
+- Node details now show: circular dependency warning, volatility, impl breakdown (trait/inherent)
+- Edge details now show: connascence info, issue details, balance interpretation
+- "Full Details" button opens modal with tabbed interface (Overview, Couplings, Items, Source)
+
+**URL-based Navigation**:
+- Shareable links: `?module=analyzer&item=AnalyzerConfig`
+- `url-router.js`: `getInitialSelection()`, `updateUrl()`, `initUrlRouter()`
+- Browser back/forward navigation supported via popstate
+
+**Graph Stability**:
+- `graph-queue.js`: Operation queue prevents animation conflicts
+- Debounced rebuild prevents rapid-fire re-layouts
+- Singleton event listeners (use flags/cloneNode to prevent duplication)
+
+**Item Graph Dependencies**:
+- Shows dependencies within a module (item-level granularity)
+- External module dependencies shown as rectangular nodes with dashed edges
+- Click on items to focus in main graph
+
+**Jobs Panel Buttons**:
+- Entry Points: Find modules with high incoming, low outgoing (start reading here)
+- Find Path: Shortest dependency path between two modules
+- Simple View: Show only internal modules (hide external crates)
+- What Breaks: Impact analysis for selected module
 
 ## References
 

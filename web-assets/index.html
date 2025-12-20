@@ -313,7 +313,7 @@
                 <!-- Details -->
                 <section class="panel" id="details-panel">
                     <h2>Details</h2>
-                    <div id="details-content">
+                    <div id="node-details">
                         <p class="placeholder">Click a node or edge to see details</p>
                     </div>
                 </section>
@@ -399,6 +399,29 @@
                 <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
             </table>
             <button onclick="toggleHelpModal()" class="btn">Close</button>
+        </div>
+    </div>
+
+    <!-- Details Modal -->
+    <div id="details-modal" class="details-modal hidden">
+        <div class="details-modal-backdrop"></div>
+        <div class="details-modal-content">
+            <div class="details-modal-header">
+                <h2 id="details-modal-title">Module Details</h2>
+                <button class="btn-close-modal" id="close-details-modal">×</button>
+            </div>
+            <div class="details-tabs">
+                <button class="tab active" data-tab="overview">Overview</button>
+                <button class="tab" data-tab="couplings">Couplings</button>
+                <button class="tab" data-tab="items">Items</button>
+                <button class="tab" data-tab="source">Source</button>
+            </div>
+            <div class="details-modal-body">
+                <div class="tab-content active" id="tab-overview"></div>
+                <div class="tab-content" id="tab-couplings"></div>
+                <div class="tab-content" id="tab-items"></div>
+                <div class="tab-content" id="tab-source"></div>
+            </div>
         </div>
     </div>
 

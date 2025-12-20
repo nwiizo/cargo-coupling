@@ -21,7 +21,8 @@ import {
     showEdgeDetails,
     clearDetails,
     showBlastRadius,
-    clearBlastRadius
+    clearBlastRadius,
+    setupDetailsModal
 } from './ui.js';
 import { showItemGraph, hideItemGraph } from './item-graph.js';
 import {
@@ -236,6 +237,7 @@ function initUI(data) {
     setupClusterView();
     populateIssueList();
     setupResizableSidebar();
+    setupDetailsModal();
 
     setupKeyboardShortcuts({
         onEscape: () => clearSelection()

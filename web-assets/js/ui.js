@@ -342,12 +342,17 @@ export function showNodeDetails(data) {
     if (!container) return;
 
     const fullNode = state.graphData?.nodes?.find(n => n.id === data.id);
-    const fnCount = data.fn_count || fullNode?.metrics?.fn_count || 0;
-    const typeCount = data.type_count || fullNode?.metrics?.type_count || 0;
-    const implCount = data.impl_count || fullNode?.metrics?.impl_count || 0;
+    const metrics = fullNode?.metrics || {};
+    const fnCount = data.fn_count || metrics.fn_count || 0;
+    const typeCount = data.type_count || metrics.type_count || 0;
+    const implCount = data.impl_count || metrics.impl_count || 0;
+    const traitImplCount = metrics.trait_impl_count || 0;
+    const inherentImplCount = metrics.inherent_impl_count || 0;
     const filePath = data.file_path || fullNode?.file_path;
     const isExternal = filePath && filePath.startsWith('[external]');
     const items = data.items || fullNode?.items || [];
+    const inCycle = data.in_cycle || fullNode?.in_cycle || false;
+    const volatility = data.volatility || metrics.volatility || 'Medium';
 
     // Group items by kind
     const types = items.filter(i => i.kind === 'type' || i.kind === 'struct' || i.kind === 'enum');
@@ -379,7 +384,18 @@ export function showNodeDetails(data) {
         `;
     };
 
+    const getVolatilityClass = (vol) => {
+        if (vol === 'High') return 'high';
+        if (vol === 'Medium') return 'medium';
+        return 'low';
+    };
+
     container.innerHTML = `
+        ${inCycle ? `
+            <div class="warning-banner critical">
+                ⚠️ This module is part of a circular dependency
+            </div>
+        ` : ''}
         <div class="detail-header">${escapeHtml(data.label)}</div>
         <div class="detail-stats">
             <span class="stat-badge fn">${fnCount} fn</span>
@@ -395,6 +411,10 @@ export function showNodeDetails(data) {
             <span>${((data.balance_score || 0) * 100).toFixed(0)}%</span>
         </div>
         <div class="detail-row">
+            <span class="detail-label">Volatility:</span>
+            <span class="volatility-badge ${getVolatilityClass(volatility)}">${volatility}</span>
+        </div>
+        <div class="detail-row">
             <span class="detail-label">Outgoing:</span>
             <span>${data.couplings_out || 0}</span>
         </div>
@@ -402,6 +422,18 @@ export function showNodeDetails(data) {
             <span class="detail-label">Incoming:</span>
             <span>${data.couplings_in || 0}</span>
         </div>
+        ${implCount > 0 ? `
+            <div class="impl-breakdown">
+                <div class="impl-item">
+                    <span class="label">Trait impl:</span>
+                    <span class="count">${traitImplCount}</span>
+                </div>
+                <div class="impl-item">
+                    <span class="label">Inherent impl:</span>
+                    <span class="count">${inherentImplCount}</span>
+                </div>
+            </div>
+        ` : ''}
         ${filePath && !isExternal ? `
             <div class="file-path-display">
                 <span class="file-path-label">File:</span>
@@ -423,7 +455,16 @@ export function showNodeDetails(data) {
                 ${renderItemList(functions, 'Functions', 'ƒ')}
             </div>
         ` : ''}
+        <button class="btn-expand-details" data-module-id="${data.id}">
+            <span>⤢</span> Full Details (Modal)
+        </button>
     `;
+
+    // Setup expand details button
+    const expandBtn = container.querySelector('.btn-expand-details');
+    expandBtn?.addEventListener('click', () => {
+        showDetailsModal(data);
+    });
 
     // Setup view code button
     if (filePath && !isExternal) {
@@ -446,7 +487,7 @@ export function showNodeDetails(data) {
 /**
  * Focus on a specific item in the graph
  */
-function focusOnItem(moduleId, itemName) {
+export function focusOnItem(moduleId, itemName) {
     if (!state.cy) return;
 
     const itemNodeId = `${moduleId}::${itemName}`;
@@ -516,8 +557,26 @@ export function showEdgeDetails(data) {
     const effectiveVol = estimateVolatility(data.target || '', data.volatility || 'Medium');
     const location = data.location;
     const hasLocation = location && location.file_path && !location.file_path.startsWith('[external]');
+    const inCycle = data.inCycle || false;
+    const issue = data.issue;
+    const connascence = data.connascence;
+    const interpretation = data.interpretation;
+
+    // Determine issue severity class
+    const getIssueSeverityClass = (severity) => {
+        if (!severity) return 'medium';
+        const s = severity.toLowerCase();
+        if (s === 'critical' || s === 'high') return 'critical';
+        if (s === 'medium') return 'medium';
+        return 'low';
+    };
 
     container.innerHTML = `
+        ${inCycle ? `
+            <div class="warning-banner critical">
+                ⚠️ Part of a circular dependency chain
+            </div>
+        ` : ''}
         <div class="detail-header">Coupling Details</div>
         <div class="detail-row">
             <span class="detail-label">Source:</span>
@@ -538,18 +597,35 @@ export function showEdgeDetails(data) {
         </div>
         <div class="detail-row">
             <span class="detail-label">${t('volatility')}:</span>
-            <span>${effectiveVol}</span>
+            <span class="volatility-badge ${effectiveVol.toLowerCase()}">${effectiveVol}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">${t('balance')}:</span>
             <span>${((data.balance || 0) * 100).toFixed(0)}%</span>
         </div>
+        ${connascence ? `
+            <div class="connascence-info">
+                <span class="connascence-type">${connascence.type || 'Identity'}</span>
+                <span class="connascence-strength">${connascence.strength || 'Weak'}</span>
+            </div>
+        ` : ''}
         <hr class="detail-divider">
         <div class="analysis-result ${analysis.status}">
             <span class="analysis-icon">${analysis.icon}</span>
             <span class="analysis-text">${analysis.statusText}</span>
         </div>
         ${analysis.action ? `<div class="analysis-action">${analysis.action}</div>` : ''}
+        ${interpretation ? `
+            <div class="balance-interpretation">
+                ${escapeHtml(interpretation)}
+            </div>
+        ` : ''}
+        ${issue ? `
+            <div class="issue-detail ${getIssueSeverityClass(issue.severity)}">
+                <div class="issue-type">${escapeHtml(issue.type || issue.issue_type || 'Issue')}</div>
+                <div class="issue-description">${escapeHtml(issue.description || issue.message || '')}</div>
+            </div>
+        ` : ''}
         ${data.classification ? `<div class="classification-badge">${state.currentLang === 'ja' ? data.classificationJa : data.classification}</div>` : ''}
         ${hasLocation ? `
             <button class="btn-view-code" data-path="${escapeHtml(location.file_path)}" data-line="${location.line || 0}">
@@ -767,6 +843,347 @@ export async function loadEdgeSourceCode(location) {
     if (!panel) return;
 
     await loadSourceCode(location.file_path, location.line || 1, 10);
+}
+
+// =====================================================
+// Details Modal
+// =====================================================
+
+let currentModalData = null;
+
+/**
+ * Setup the details modal
+ */
+export function setupDetailsModal() {
+    const modal = document.getElementById('details-modal');
+    const closeBtn = document.getElementById('close-details-modal');
+    const backdrop = modal?.querySelector('.details-modal-backdrop');
+    const tabs = modal?.querySelectorAll('.details-tabs .tab');
+
+    if (!modal) return;
+
+    // Close button
+    closeBtn?.addEventListener('click', hideDetailsModal);
+
+    // Backdrop click
+    backdrop?.addEventListener('click', hideDetailsModal);
+
+    // Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+            hideDetailsModal();
+        }
+    });
+
+    // Tab switching
+    tabs?.forEach(tab => {
+        tab.addEventListener('click', () => {
+            const tabName = tab.dataset.tab;
+            switchModalTab(tabName);
+        });
+    });
+}
+
+/**
+ * Show the details modal for a module
+ */
+export function showDetailsModal(nodeData) {
+    const modal = document.getElementById('details-modal');
+    if (!modal) return;
+
+    currentModalData = nodeData;
+
+    // Find full node data
+    const fullNode = state.graphData?.nodes?.find(n => n.id === nodeData.id);
+    const data = { ...nodeData, ...fullNode };
+
+    // Update title
+    const title = document.getElementById('details-modal-title');
+    if (title) {
+        title.textContent = `📦 ${data.label || data.id}`;
+    }
+
+    // Populate tabs
+    populateOverviewTab(data);
+    populateCouplingsTab(data);
+    populateItemsTab(data);
+    populateSourceTab(data);
+
+    // Show modal
+    modal.classList.remove('hidden');
+    switchModalTab('overview');
+}
+
+/**
+ * Hide the details modal
+ */
+export function hideDetailsModal() {
+    const modal = document.getElementById('details-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+    }
+    currentModalData = null;
+}
+
+/**
+ * Switch modal tab
+ */
+function switchModalTab(tabName) {
+    const modal = document.getElementById('details-modal');
+    if (!modal) return;
+
+    // Update tab buttons
+    modal.querySelectorAll('.details-tabs .tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.tab === tabName);
+    });
+
+    // Update tab content
+    modal.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.toggle('active', content.id === `tab-${tabName}`);
+    });
+}
+
+/**
+ * Populate Overview tab
+ */
+function populateOverviewTab(data) {
+    const container = document.getElementById('tab-overview');
+    if (!container) return;
+
+    const metrics = data.metrics || {};
+    const fnCount = metrics.fn_count || 0;
+    const typeCount = metrics.type_count || 0;
+    const implCount = metrics.impl_count || 0;
+    const traitImplCount = metrics.trait_impl_count || 0;
+    const inherentImplCount = metrics.inherent_impl_count || 0;
+    const inCycle = data.in_cycle || false;
+    const volatility = metrics.volatility || 'Medium';
+    const health = data.health || 'good';
+    const balanceScore = data.balance_score || 0;
+
+    const getHealthClass = (h) => {
+        if (h === 'critical') return 'critical';
+        if (h === 'warning') return 'warning';
+        return 'good';
+    };
+
+    container.innerHTML = `
+        ${inCycle ? `
+            <div class="warning-banner critical">
+                ⚠️ This module is part of a circular dependency
+            </div>
+        ` : ''}
+        <div class="modal-section">
+            <div class="modal-section-title">Statistics</div>
+            <div class="modal-stat-grid">
+                <div class="modal-stat-card">
+                    <div class="modal-stat-value">${fnCount}</div>
+                    <div class="modal-stat-label">Functions</div>
+                </div>
+                <div class="modal-stat-card">
+                    <div class="modal-stat-value">${typeCount}</div>
+                    <div class="modal-stat-label">Types</div>
+                </div>
+                <div class="modal-stat-card">
+                    <div class="modal-stat-value">${implCount}</div>
+                    <div class="modal-stat-label">Implementations</div>
+                </div>
+                <div class="modal-stat-card">
+                    <div class="modal-stat-value ${getHealthClass(health)}">${health}</div>
+                    <div class="modal-stat-label">Health</div>
+                </div>
+                <div class="modal-stat-card">
+                    <div class="modal-stat-value">${(balanceScore * 100).toFixed(0)}%</div>
+                    <div class="modal-stat-label">Balance</div>
+                </div>
+                <div class="modal-stat-card">
+                    <div class="modal-stat-value volatility-badge ${volatility.toLowerCase()}">${volatility}</div>
+                    <div class="modal-stat-label">Volatility</div>
+                </div>
+            </div>
+        </div>
+        ${implCount > 0 ? `
+            <div class="modal-section">
+                <div class="modal-section-title">Implementation Breakdown</div>
+                <div class="impl-breakdown">
+                    <div class="impl-item">
+                        <span class="label">Trait impl:</span>
+                        <span class="count">${traitImplCount}</span>
+                    </div>
+                    <div class="impl-item">
+                        <span class="label">Inherent impl:</span>
+                        <span class="count">${inherentImplCount}</span>
+                    </div>
+                </div>
+            </div>
+        ` : ''}
+        <div class="modal-section">
+            <div class="modal-section-title">File Location</div>
+            <div class="file-path-display">
+                <span class="file-path-value">${escapeHtml(data.file_path || 'Unknown')}</span>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Populate Couplings tab
+ */
+function populateCouplingsTab(data) {
+    const container = document.getElementById('tab-couplings');
+    if (!container || !state.cy) return;
+
+    const node = state.cy.getElementById(data.id);
+    if (!node || node.length === 0) {
+        container.innerHTML = '<p class="placeholder">No coupling data available</p>';
+        return;
+    }
+
+    const outgoing = node.outgoers('edge').map(e => ({
+        target: e.data('target'),
+        strength: e.data('strengthLabel') || 'Model',
+        balance: e.data('balance') || 0
+    }));
+
+    const incoming = node.incomers('edge').map(e => ({
+        source: e.data('source'),
+        strength: e.data('strengthLabel') || 'Model',
+        balance: e.data('balance') || 0
+    }));
+
+    container.innerHTML = `
+        <div class="modal-section">
+            <div class="modal-section-title">Outgoing Couplings (${outgoing.length})</div>
+            ${outgoing.length > 0 ? `
+                <div class="coupling-list">
+                    ${outgoing.map(c => `
+                        <div class="coupling-item outgoing" data-target="${c.target}">
+                            <span class="coupling-target">→ ${escapeHtml(c.target)}</span>
+                            <span class="coupling-meta">
+                                <span class="strength-badge ${c.strength.toLowerCase()}">${c.strength}</span>
+                                <span>${(c.balance * 100).toFixed(0)}%</span>
+                            </span>
+                        </div>
+                    `).join('')}
+                </div>
+            ` : '<p class="placeholder">No outgoing couplings</p>'}
+        </div>
+        <div class="modal-section">
+            <div class="modal-section-title">Incoming Couplings (${incoming.length})</div>
+            ${incoming.length > 0 ? `
+                <div class="coupling-list">
+                    ${incoming.map(c => `
+                        <div class="coupling-item incoming" data-source="${c.source}">
+                            <span class="coupling-target">← ${escapeHtml(c.source)}</span>
+                            <span class="coupling-meta">
+                                <span class="strength-badge ${c.strength.toLowerCase()}">${c.strength}</span>
+                                <span>${(c.balance * 100).toFixed(0)}%</span>
+                            </span>
+                        </div>
+                    `).join('')}
+                </div>
+            ` : '<p class="placeholder">No incoming couplings</p>'}
+        </div>
+    `;
+}
+
+/**
+ * Populate Items tab
+ */
+function populateItemsTab(data) {
+    const container = document.getElementById('tab-items');
+    if (!container) return;
+
+    const items = data.items || [];
+    const types = items.filter(i => i.kind === 'type' || i.kind === 'struct' || i.kind === 'enum');
+    const traits = items.filter(i => i.kind === 'trait');
+    const functions = items.filter(i => i.kind === 'fn');
+
+    const renderItems = (itemList, kind, icon) => {
+        if (itemList.length === 0) return '<p class="placeholder">None</p>';
+        return `
+            <div class="modal-item-list">
+                ${itemList.map(item => `
+                    <div class="modal-item" data-module="${data.id}" data-item="${item.name}">
+                        <span class="modal-item-icon ${kind}">${icon}</span>
+                        <span class="modal-item-name">${escapeHtml(item.name)}</span>
+                        ${item.visibility === 'pub' || item.visibility === 'Public' ?
+                            '<span class="modal-item-vis">pub</span>' : ''}
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    };
+
+    container.innerHTML = `
+        <div class="modal-section">
+            <div class="modal-section-title">Types (${types.length})</div>
+            ${renderItems(types, 'type', 'S')}
+        </div>
+        <div class="modal-section">
+            <div class="modal-section-title">Traits (${traits.length})</div>
+            ${renderItems(traits, 'trait', 'T')}
+        </div>
+        <div class="modal-section">
+            <div class="modal-section-title">Functions (${functions.length})</div>
+            ${renderItems(functions, 'fn', 'ƒ')}
+        </div>
+    `;
+
+    // Setup click handlers
+    container.querySelectorAll('.modal-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const moduleId = item.dataset.module;
+            const itemName = item.dataset.item;
+            hideDetailsModal();
+            focusOnItem(moduleId, itemName);
+        });
+    });
+}
+
+/**
+ * Populate Source tab
+ */
+async function populateSourceTab(data) {
+    const container = document.getElementById('tab-source');
+    if (!container) return;
+
+    const filePath = data.file_path;
+    if (!filePath || filePath.startsWith('[external]')) {
+        container.innerHTML = '<p class="placeholder">Source code not available for external modules</p>';
+        return;
+    }
+
+    container.innerHTML = '<div class="source-loading">Loading source code...</div>';
+
+    try {
+        const response = await fetch(`/api/source?path=${encodeURIComponent(filePath)}&context=50`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const sourceData = await response.json();
+        const lines = sourceData.lines || [];
+
+        container.innerHTML = `
+            <div class="modal-source-code">
+                <div class="modal-source-header">
+                    <span class="modal-source-path">${escapeHtml(sourceData.file_path)}</span>
+                    <span>${sourceData.total_lines} lines</span>
+                </div>
+                <div class="modal-source-content source-code-content">
+                    ${lines.map(line => `
+                        <div class="source-line">
+                            <span class="line-number">${line.number}</span>
+                            <span class="line-content">${escapeHtml(line.content)}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        container.innerHTML = `<div class="source-error">Failed to load source: ${escapeHtml(error.message)}</div>`;
+    }
 }
 
 // =====================================================

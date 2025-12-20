@@ -185,7 +185,11 @@ async fn get_module(
     let graph = graph::project_to_graph(&state.metrics, &state.thresholds);
 
     // Find the module by name
-    if let Some(node) = graph.nodes.iter().find(|n| n.id == query.name || n.label == query.name) {
+    if let Some(node) = graph
+        .nodes
+        .iter()
+        .find(|n| n.id == query.name || n.label == query.name)
+    {
         Json(serde_json::json!({
             "id": node.id,
             "label": node.label,
