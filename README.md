@@ -6,7 +6,7 @@
 
 **Measure the "right distance" in your Rust code.**
 
-`cargo-coupling` analyzes coupling in Rust projects based on Vlad Khononov's "Balancing Coupling in Software Design" framework. It calculates a **Balance Score** from three core dimensions: **Integration Strength**, **Distance**, and **Volatility**. Additional insights are provided through Connascence and Temporal Coupling analysis.
+`cargo-coupling` analyzes coupling in Rust projects based on Vlad Khononov's "Balancing Coupling in Software Design" framework. It calculates a **Balance Score** from three core dimensions: **Integration Strength**, **Distance**, and **Volatility**.
 
 > ⚠️ **Experimental Project**
 >
@@ -30,11 +30,18 @@ cargo install cargo-coupling
 ### 2. Analyze
 
 ```bash
-# Analyze current project
+# Analyze current project (default: shows only important issues)
 cargo coupling ./src
 
 # Show summary only
 cargo coupling --summary ./src
+
+# Japanese output with explanations (日本語出力)
+cargo coupling --summary --japanese ./src
+cargo coupling --summary --jp ./src
+
+# Show all issues including Low severity
+cargo coupling --summary --all ./src
 ```
 
 ### 3. Refactor with AI
@@ -157,295 +164,229 @@ cargo coupling --no-git ./src
 ## Features
 
 - **3-Dimensional Balance Score**: Calculates coupling balance based on **Integration Strength**, **Distance**, and **Volatility** (0.0 - 1.0)
+- **Khononov Balance Formula**: `BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY`
 - **Interactive Web UI**: `--web` flag starts a browser-based visualization with graph, hotspots, and blast radius analysis
 - **Job-Focused CLI**: Quick commands for common tasks (`--hotspots`, `--impact`, `--check`, `--json`)
+- **Japanese Support**: `--japanese` / `--jp` flag for Japanese output with explanations and design decision matrix
+- **Noise Reduction**: Default strict mode hides Low severity issues (`--all` to show all)
 - **Beginner-Friendly**: `--verbose` flag explains issues in plain language with fix examples
 - **CI/CD Quality Gate**: `--check` command with configurable thresholds and exit codes
 - **AI-Friendly Output**: `--ai` flag generates output optimized for coding agents (Claude, Copilot, etc.)
-- **Issue Detection**: Automatically identifies problematic coupling patterns
+- **Rust Pattern Detection**: Detects newtype usage, serde derives, public fields, primitive obsession
+- **Issue Detection**: Automatically identifies problematic coupling patterns (God Module, etc.)
 - **Circular Dependency Detection**: Detects and reports dependency cycles
 - **Visibility Tracking**: Analyzes Rust visibility modifiers (pub, pub(crate), etc.)
 - **Git Integration**: Analyzes change frequency from Git history for volatility scoring
-- **Additional Insights** (informational): Connascence types, Temporal Coupling patterns, APOSD metrics
 - **Configuration File**: Supports `.coupling.toml` for volatility overrides
 - **Parallel Processing**: Uses Rayon for fast analysis of large codebases
 - **Configurable Thresholds**: Customize dependency limits via CLI or config
 - **Markdown Reports**: Generates detailed analysis reports
 - **Cargo Integration**: Works as a cargo subcommand
 
-## The Three Dimensions of Coupling
+## Khononovのカップリングバランス
 
-Based on Vlad Khononov's framework, coupling is measured across three dimensions. The key insight is that **the goal is not to eliminate coupling, but to balance it appropriately**.
+Vlad Khononovが提唱する**カップリングバランス**は、モジュール間の結合度を3つの次元で評価し、設計判断を導くフレームワークです。
 
-### 1. Integration Strength
+### 基本原則
 
-The **amount of knowledge shared** between components. Four levels from weakest to strongest:
+結合（カップリング）は必ずしも悪ではありません。重要なのは**結合の強さ、距離、変動性のバランス**です。
 
-| Level | Description | Detection Method | Score |
-|-------|-------------|------------------|-------|
-| **Contract** | Interface/trait abstraction | `impl Trait for Type`, trait bounds | 0.25 (weak) |
-| **Model** | Shared business domain models | Type parameters, use statements | 0.50 |
-| **Functional** | Shared responsibilities | Method calls, function calls | 0.75 |
-| **Intrusive** | Internal implementation details | Field access, struct construction | 1.00 (strong) |
+## 3つの次元
 
-Lower scores (Contract, Model) are generally preferable as they provide looser coupling.
+### 1. Strength（結合強度）
 
-### 2. Distance
+コンポーネント間の依存がどれだけ密かを表します。
 
-**How far apart** the dependent components are:
+| レベル | 説明 | 例（Rust） | Score |
+|--------|------|------------|-------|
+| **Intrusive**（侵入的） | 内部実装に直接依存 | `struct.field` への直接アクセス | 1.00 (強) |
+| **Functional**（機能的） | 振る舞いに依存 | 具象型のメソッド呼び出し | 0.75 |
+| **Model**（モデル） | データ構造に依存 | 型定義の共有 | 0.50 |
+| **Contract**（契約） | インターフェースのみに依存 | `trait` 経由のアクセス | 0.25 (弱) |
 
-| Level | Description | Score |
-|-------|-------------|-------|
-| Same Function | Within the same function | 0.00 (close) |
-| Same Module | Within the same file/module | 0.25 |
-| Different Module | Across modules in same crate | 0.50 |
-| Different Crate | External crate dependency | 1.00 (far) |
+→ 下にいくほど結合が**弱い**（望ましい）
 
-Greater distance means higher cost of change - changes must propagate across more boundaries.
+### 2. Distance（距離）
 
-### 3. Volatility
+依存関係にあるコンポーネント間の物理的・論理的な距離です。
 
-**How frequently** a component changes (from Git history):
+| レベル | 説明 | Score |
+|--------|------|-------|
+| **Same Module** | 同一モジュール内 | 0.25 (近) |
+| **Different Module** | 同一クレート内の別モジュール | 0.50 |
+| **External Crate** | 外部クレートへの依存 | 1.00 (遠) |
 
-| Level | Description | Score |
-|-------|-------------|-------|
-| **Low** (Generic Subdomain) | Stable, rarely changes (0-2 changes/6mo) | 0.00 |
-| **Medium** (Supporting Subdomain) | Moderate changes (3-10 changes/6mo) | 0.50 |
-| **High** (Core Subdomain) | Frequently changing (11+ changes/6mo) | 1.00 |
+→ 下にいくほど距離が**遠い**
 
-High volatility components require more careful coupling management.
+### 3. Volatility（変動性）
+
+そのコンポーネントがどれくらい頻繁に変更されるかを表します（Git履歴から自動計算）。
+
+| レベル | 説明 | 変更回数（6ヶ月） | Score |
+|--------|------|-------------------|-------|
+| **Low** | 安定しており、ほとんど変更されない | 0-2回 | 0.00 |
+| **Medium** | 時々変更される | 3-10回 | 0.50 |
+| **High** | 頻繁に変更される | 11回以上 | 1.00 |
 
 > **Note**: Volatility requires Git history. Use `cargo coupling ./src` (not `--no-git`) to enable volatility analysis.
 
-## Balance Equation
+## バランスの法則
 
-The balance score is conceptually expressed as:
+良い設計は以下の原則に従います：
+
+```
+強い結合が許容されるのは、距離が近いか、変動性が低い場合のみ
+```
+
+論理式で表現すると：
+
+```
+BALANCED = (STRENGTH ≤ threshold) OR (DISTANCE = near) OR (VOLATILITY = low)
+```
+
+または、Khononovの式：
 
 ```
 BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
 ```
 
-### Understanding the Formula
+- **STRENGTH XOR DISTANCE**: 強結合×近距離 or 弱結合×遠距離 = Good
+- **OR NOT VOLATILITY**: 上記を満たさなくても、変動性が低ければOK
 
-**MODULARITY = STRENGTH XOR DISTANCE**
+## 設計判断マトリクス
 
-- **Strong coupling + Close distance = Good** (locality preserved)
-- **Weak coupling + Far distance = Good** (loose coupling)
-- Strong coupling + Far distance = Bad (global complexity)
-- Weak coupling + Close distance = Suboptimal (unnecessary indirection)
+| 結合強度 | 距離 | 変動性 | 判断 | 理由 |
+|----------|------|--------|------|------|
+| 強 | 近 | 低〜中 | ✅ OK | 凝集性（cohesion）が高く、変更も局所化される |
+| 弱 | 遠 | 任意 | ✅ OK | 疎結合で健全な依存関係 |
+| 強 | 遠 | 任意 | ⚠️ 要改善 | 変更の影響範囲が広がる（グローバル複雑性） |
+| 強 | 任意 | 高 | ⚠️ 要改善 | 変更が連鎖的に波及する |
+| 弱 | 近 | 低 | 🤔 検討 | 統合の余地あり（過度な分割かも） |
 
-**BALANCE = MODULARITY OR NOT VOLATILITY**
+## 改善パターン
 
-- Either modular (good strength/distance combo), OR
-- Low volatility (stable, so coupling is less risky)
-- Meeting either condition achieves balance
+### パターン1: 抽象化による結合強度の低減
 
-### Numeric Implementation
+**問題**: 強結合 + 遠距離
+
+```
+┌─────────────┐         ┌─────────────┐
+│  Module A   │ ──────▶ │  Module B   │
+│             │  強結合  │  (実装詳細)  │
+└─────────────┘         └─────────────┘
+       遠距離（別モジュール）
+```
+
+**解決策**: Contract（trait）を導入
+
+```
+┌─────────────┐         ┌─────────────┐
+│  Module A   │ ──────▶ │   trait T   │
+│             │  弱結合  │  (契約)     │
+└─────────────┘         └─────────────┘
+                              ▲
+                              │ 実装
+                        ┌─────────────┐
+                        │  Module B   │
+                        │  (実装詳細)  │
+                        └─────────────┘
+```
+
+### パターン2: 変動性の隔離
+
+**問題**: 強結合 + 高変動性
+
+**解決策**: 安定したインターフェース層を挟む
+
+## 具体例（Rust）
+
+### Before: 問題のあるコード
+
+```rust
+// module_a.rs
+fn process_user(user: &User) {
+    // 構造体の内部フィールドに直接アクセス（Intrusive）
+    let name = &user.name;           // ← 強結合
+    let age = user.age;              // ← 強結合
+    let email = &user.email_address; // ← フィールド名変更で壊れる
+    // ...
+}
+```
+
+```rust
+// module_b.rs（頻繁に変更される）
+pub struct User {
+    pub name: String,
+    pub age: u32,
+    pub email_address: String,  // ← email から変更された
+}
+```
+
+**問題点**:
+- 結合強度: Intrusive（フィールド直接アクセス）
+- 距離: Different Module（別モジュール）
+- 変動性: High（User構造体は頻繁に変更）
+
+### After: 改善されたコード
+
+```rust
+// contracts.rs（安定層）
+pub trait UserInfo {
+    fn display_name(&self) -> &str;
+    fn age(&self) -> u32;
+    fn contact_email(&self) -> &str;
+}
+```
+
+```rust
+// module_b.rs（実装詳細を隠蔽）
+pub struct User {
+    name: String,        // private に変更
+    age: u32,
+    email_address: String,
+}
+
+impl UserInfo for User {
+    fn display_name(&self) -> &str { &self.name }
+    fn age(&self) -> u32 { self.age }
+    fn contact_email(&self) -> &str { &self.email_address }
+}
+```
+
+```rust
+// module_a.rs（trait経由でアクセス）
+fn process_user(user: &impl UserInfo) {
+    let name = user.display_name();    // ← Contract結合
+    let age = user.age();              // ← Contract結合
+    let email = user.contact_email();  // ← 内部変更の影響を受けない
+    // ...
+}
+```
+
+**改善点**:
+- 結合強度: Contract（trait経由）に低減
+- 変更が `User` 構造体内に閉じ込められる
+- `module_a` は `User` の内部構造を知らなくてよい
+
+## カップリングバランスまとめ
+
+| 観点 | 指針 |
+|------|------|
+| 強い結合は… | 近くに置くか、変動性を下げる |
+| 遠い依存は… | 弱い結合（Contract）にする |
+| 変動が激しいものは… | 安定した抽象層で隔離する |
+
+カップリングバランスは「結合を無くす」のではなく「適切な場所に適切な強さの結合を配置する」ための考え方です。
+
+## Numeric Implementation
 
 In the actual implementation:
-
-- `XOR` → Calculated as alignment between extremes (strong×close, weak×far)
-- `OR` → Calculated as max value
-- `NOT` → Calculated as complement (1.0 - x)
 
 ```rust
 let alignment = 1.0 - (strength - (1.0 - distance)).abs();
 let volatility_impact = 1.0 - (volatility * strength);
 let score = alignment * volatility_impact;
 ```
-
-## Connascence (Additional Insight)
-
-> **Note**: Connascence is detected and reported for additional insight, but does **not** affect the Balance Score or Health Grade.
-
-Based on Meilir Page-Jones' taxonomy, connascence measures how changes in one component require changes in another.
-
-### Static Connascence (Compile-time detectable)
-
-| Type | Strength | Description | Refactoring Suggestion |
-|------|----------|-------------|------------------------|
-| **Name (CoN)** | 0.2 (weakest) | Dependency on names | Use IDE rename refactoring |
-| **Type (CoT)** | 0.4 | Dependency on types | Use traits/generics |
-| **Meaning (CoM)** | 0.6 | Dependency on value semantics | Replace magic values with constants |
-| **Position (CoP)** | 0.7 | Dependency on parameter order | Use builder pattern or named parameters |
-| **Algorithm (CoA)** | 0.9 (strongest) | Dependency on algorithms | Extract to shared module |
-
-### Dynamic Connascence (Runtime detectable)
-
-| Type | Description |
-|------|-------------|
-| **Execution (CoE)** | Dependency on execution order |
-| **Timing (CoT)** | Dependency on timing |
-| **Value (CoV)** | Synchronous value changes required |
-| **Identity (CoI)** | Dependency on same instance |
-
-> **Important**: Even the weakest dynamic connascence is stronger than the strongest static connascence. Dynamic coupling is harder to detect and manage.
-
-## Temporal Coupling (Additional Insight)
-
-> **Note**: Temporal Coupling is detected and reported for additional insight, but does **not** affect the Balance Score or Health Grade.
-
-Components that must be used in a specific order.
-
-### Paired Operations
-
-| Operation | Description | Severity |
-|-----------|-------------|----------|
-| open/close | File, connection, resource handles | High |
-| lock/unlock | Mutex, RwLock synchronization | Critical |
-| begin/commit | Transaction boundaries | High |
-| init/cleanup | Lifecycle management | Medium |
-| subscribe/unsubscribe | Event handlers | Medium |
-
-### Rust-Specific Patterns
-
-| Pattern | Detection | Status |
-|---------|-----------|--------|
-| **Drop impl** | Types with automatic cleanup | Positive (RAII) |
-| **Guard patterns** | MutexGuard, RwLockGuard, RefMut | Positive (auto-release) |
-| **Async spawn/join** | Orphaned tasks detection | Warning |
-| **Unsafe allocations** | Manual memory management | Critical |
-
-### Lifecycle Phases
-
-The analyzer tracks lifecycle methods to detect initialization order dependencies:
-
-1. **Create**: `new`, `create`, `build`
-2. **Configure**: `configure`, `with_config`
-3. **Initialize**: `init`, `setup`, `prepare`
-4. **Start**: `start`, `run`, `connect`
-5. **Active**: `process`, `handle`
-6. **Stop**: `stop`, `close`, `disconnect`
-7. **Cleanup**: `cleanup`, `destroy`, `shutdown`
-
-## APOSD Metrics
-
-> **Note**: APOSD metrics are **informational only** and do not affect the Health Grade calculation. The grade is determined solely by traditional coupling metrics (Integration Strength, Distance, Volatility).
-
-Based on John Ousterhout's ["A Philosophy of Software Design"](https://web.stanford.edu/~ouster/cgi-bin/book.php) (2nd Edition), cargo-coupling detects the following design anti-patterns:
-
-### Module Depth
-
-Measures whether a module provides a simple interface that hides complex implementation.
-
-| Classification | Depth Ratio | Description |
-|----------------|-------------|-------------|
-| Very Deep | >= 10.0 | Excellent abstraction (like Unix I/O) |
-| Deep | >= 5.0 | Good hiding of complexity |
-| Moderate | >= 2.0 | Acceptable design |
-| Shallow | >= 1.0 | Interface nearly as complex as implementation ⚠️ |
-| Very Shallow | < 1.0 | Interface MORE complex than implementation ⚠️ |
-
-**Depth Ratio** = Implementation Complexity / Interface Complexity
-
-### Pass-Through Methods
-
-Detects methods that simply delegate to another method without adding significant functionality:
-
-```rust
-// ❌ Pass-through method (Red Flag)
-impl Service {
-    pub fn process(&self, data: Data) -> Result<Output> {
-        self.inner.process(data)  // Just delegation
-    }
-}
-
-// ✅ Deep method (Good)
-impl Service {
-    pub fn process(&self, data: Data) -> Result<Output> {
-        let validated = self.validate(data)?;
-        let transformed = self.transform(validated);
-        self.inner.process(transformed)
-    }
-}
-```
-
-### Cognitive Load
-
-Estimates how much a developer needs to know to work with a module:
-
-| Level | Score | Description |
-|-------|-------|-------------|
-| Low | < 5.0 | Easy to understand |
-| Moderate | 5.0 - 15.0 | Manageable complexity |
-| High | 15.0 - 30.0 | Requires significant effort ⚠️ |
-| Very High | > 30.0 | Overwhelming complexity ⚠️ |
-
-Factors considered:
-- Number of public APIs
-- Number of dependencies
-- Average parameter count
-- Generic type parameters
-- Trait bounds
-- Control flow complexity
-
-### APOSD and Rust Compatibility
-
-APOSD concepts generally align well with Rust. This tool is **Rust-optimized** and automatically excludes idiomatic Rust patterns from detection.
-
-**Good Compatibility:**
-- Rust's visibility system (`pub`, `pub(crate)`, private) naturally supports information hiding
-- Traits enable deep abstractions with simple interfaces
-- RAII (Drop trait) reduces temporal coupling automatically
-
-**Excluded from Pass-Through Detection (Rust Idioms):**
-
-The following patterns are automatically excluded because they are intentional Rust idioms:
-
-| Category | Patterns |
-|----------|----------|
-| **Conversion Methods** | `as_*`, `into_*`, `from_*`, `to_*` |
-| **Accessor Methods** | `get_*`, `set_*`, `*_ref`, `*_mut` |
-| **Trait Implementations** | `deref`, `deref_mut`, `as_ref`, `as_mut`, `borrow`, `clone`, `default`, `eq`, `cmp`, `hash`, `fmt`, `drop`, `index` |
-| **Builder Pattern** | `with_*`, `and_*` |
-| **Iterator Methods** | `iter`, `iter_mut`, `into_iter` |
-| **Simple Accessors** | `len`, `is_empty`, `capacity`, `inner`, `get`, `new` |
-| **Error Propagation** | Methods using `?` operator |
-
-**Example - Not Flagged:**
-```rust
-// These are Rust idioms, NOT design issues:
-
-impl MyType {
-    pub fn as_str(&self) -> &str { &self.inner }     // Conversion
-    pub fn into_inner(self) -> Inner { self.inner }  // Ownership transfer
-    pub fn len(&self) -> usize { self.data.len() }   // Simple accessor
-}
-
-impl Deref for MyType {
-    fn deref(&self) -> &Self::Target { &self.inner } // Trait impl
-}
-
-fn process(&self) -> Result<T> {
-    self.inner.process()?  // Error propagation with `?`
-}
-```
-
-**Flagged as Potential Issues:**
-```rust
-// These MAY indicate design issues:
-
-impl Service {
-    // Just delegates without adding value - consider if needed
-    pub fn execute(&self, cmd: Command) -> Output {
-        self.executor.execute(cmd)
-    }
-}
-```
-
-## Balance Equation
-
-```
-BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
-```
-
-**Well-balanced patterns:**
-- Strong coupling + Close distance = Good (locality)
-- Weak coupling + Far distance = Good (loose coupling)
-
-**Problematic patterns:**
-- Strong coupling + Far distance = Bad (global complexity)
-- Strong coupling + High volatility = Bad (cascading changes)
 
 ## CLI Options
 
@@ -459,6 +400,8 @@ Options:
   -o, --output <FILE>           Output report to file
   -s, --summary                 Show summary only
       --ai                      AI-friendly output for coding agents
+      --all                     Show all issues (default: hide Low severity)
+      --japanese, --jp          Japanese output with explanations (日本語)
       --git-months <MONTHS>     Git history period [default: 6]
       --no-git                  Skip Git analysis
   -v, --verbose                 Verbose output with explanations
@@ -523,74 +466,68 @@ Issues are classified by severity based on:
 | **Medium** | Count > threshold but <= threshold × 2 |
 | **Low** | Minor issues, generally informational |
 
-### APOSD Configuration
-
-Configure APOSD metrics detection in `.coupling.toml`:
-
-```toml
-[aposd]
-# Minimum depth ratio to consider a module "deep" (default: 2.0)
-min_depth_ratio = 2.0
-
-# Maximum cognitive load score before flagging (default: 15.0)
-max_cognitive_load = 15.0
-
-# Enable/disable automatic exclusion of Rust idioms (default: true)
-exclude_rust_idioms = true
-
-# Additional method prefixes to exclude from pass-through detection
-exclude_prefixes = ["my_custom_", "legacy_"]
-
-# Additional specific method names to exclude
-exclude_methods = ["special_delegate", "wrapper_call"]
-```
-
-**Configuration Options:**
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `min_depth_ratio` | 2.0 | Modules with depth ratio below this are flagged as "shallow" |
-| `max_cognitive_load` | 15.0 | Modules with load score above this are flagged as "high load" |
-| `exclude_rust_idioms` | true | Auto-exclude Rust patterns (`as_*`, `into_*`, `deref`, etc.) |
-| `exclude_prefixes` | [] | Custom prefixes to exclude from pass-through detection |
-| `exclude_methods` | [] | Custom method names to exclude from pass-through detection |
-
-**Example - Disabling Rust Idiom Exclusion:**
-```toml
-[aposd]
-# Detect ALL pass-through methods, including Rust idioms
-exclude_rust_idioms = false
-```
-
 ## Output Example
 
-### Summary Mode
+### Summary Mode (English)
 
 ```
-$ cargo coupling --summary --timing ./src
+$ cargo coupling --summary ./src
 
-Analyzing project at './src'...
-Analysis complete: 65 files, 38 modules (took 200.00ms)
+Balanced Coupling Analysis: my-project
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Coupling Analysis Summary:
-  Health Grade: C (Fair)
-  Files: 65
-  Modules: 38
-  Couplings: 650
-  Balance Score: 0.55
+Grade: B (Good) | Score: 0.67/1.00 | Modules: 14
 
-  Issues:
-    High: 12 (should fix)
-    Medium: 34
+┌─ 3-Dimensional Analysis ──────────────────────────────────┐
+│ Strength  : Contract 1%, Model 24%, Functional 66%, Intrusive 8%
+│ Distance  : Same Module 6%, Different Module 2%, External 91%
+│ Volatility: Low 2%, Medium 98%, High 0%
+└────────────────────────────────────────────────────────────┘
 
-  Breakdown:
-    Internal: 104
-    External: 546
-    Balanced: 207
-    Needs Review: 144
-    Needs Refactoring: 299
+Balance State:
+  ✅ High Cohesion (strong+close): 24 (6%)
+  ✅ Loose Coupling (weak+far): 5 (1%)
+  🤔 Acceptable (strong+far+stable): 352 (92%)
 
-Total time: 205.32ms (316.7 files/sec)
+Detected Issues:
+  🟡 Medium: 3
+
+Top Priorities:
+  - [Medium] metrics → 17 functions, 17 types, 11 impls
+  - [Medium] main → 21 dependencies
+```
+
+### Summary Mode (Japanese)
+
+```
+$ cargo coupling --summary --jp ./src
+
+カップリング分析: my-project
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+評価: B (Good) | スコア: 0.67/1.00 | モジュール数: 14
+
+┌─ 3次元分析 ────────────────────────────────────────────────┐
+│ 【結合強度】どれだけ密に依存しているか
+│   Contract(トレイト) 1%, Model(型) 24%, Functional(関数) 66%, Intrusive(内部) 8%
+│ 【距離】モジュール間の距離
+│   同一モジュール 6%, 別モジュール 2%, 外部クレート 91%
+│ 【変更頻度】Git履歴からの変更回数
+│   低(安定) 2%, 中 98%, 高(頻繁に変更) 0%
+└────────────────────────────────────────────────────────────┘
+
+優先的に対処すべき問題:
+  - 神モジュール (責務が多すぎる) | metrics
+    → モジュールを分割: metrics_core, metrics_helpers
+
+┌─ 設計判断マトリクス ──────────────────────────────────────┐
+│ 結合強度 │  距離  │ 変更頻度 │ 判定           │
+├──────────┼────────┼──────────┼────────────────┤
+│ 強い     │ 近い   │ 任意     │ ✅ 高凝集      │
+│ 弱い     │ 遠い   │ 任意     │ ✅ 疎結合      │
+│ 強い     │ 遠い   │ 低い     │ 🤔 許容可能    │
+│ 強い     │ 遠い   │ 高い     │ ❌ 要リファクタ │
+└──────────┴────────┴──────────┴────────────────┘
 ```
 
 ### Coupling Distribution
@@ -609,57 +546,22 @@ By Integration Strength:
 
 ## Detected Issues
 
-### 1. Global Complexity (Critical)
-Strong coupling spanning long distances.
-```
-Issue: Strong coupling over long distance increases global complexity
-Action: Move components closer or reduce coupling strength
-```
+### Critical Severity
+- **Circular Dependencies**: Modules that depend on each other in a cycle
 
-### 2. Cascading Change Risk (Critical)
-Strong coupling with frequently changing components.
-```
-Issue: Strongly coupled to a frequently changing component
-Action: Isolate the volatile component behind a stable interface
-```
+### High Severity
+- **Global Complexity**: Strong coupling spanning long distances
+- **Cascading Change Risk**: Strong coupling with frequently changing components
 
-### 3. High Efferent Coupling (High)
-Module depends on too many other modules.
-```
-Issue: Module has 25 outgoing dependencies (threshold: 15)
-Action: Split module or introduce facade
-```
+### Medium Severity
+- **God Module**: Module with too many functions, types, or implementations
+- **High Efferent Coupling**: Module depends on too many other modules
+- **High Afferent Coupling**: Too many modules depend on this module
+- **Inappropriate Intimacy**: Intrusive coupling across module boundaries
 
-### 4. High Afferent Coupling (High)
-Too many modules depend on this module.
-```
-Issue: Module has 30 incoming dependencies (threshold: 20)
-Action: Extract stable interface or split responsibilities
-```
-
-### 5. Inappropriate Intimacy (High)
-Intrusive coupling across module boundaries.
-```
-Issue: Direct access to internal details of another module
-Action: Use public API or extract interface
-```
-
-### 6. Circular Dependencies
-Modules that depend on each other.
-```
-⚠️ Circular Dependencies: 2 cycles (5 modules)
-1. module_a → module_b → module_c → module_a
-```
-
-### 7. Temporal Coupling Issues
-Execution order dependencies detected.
-```
-Issue: More open() calls (5) than close() calls (3)
-Action: Ensure every open() has a matching close(). Consider RAII pattern.
-
-Issue: Async spawn without join detected
-Action: Ensure spawned tasks are awaited or JoinHandles collected.
-```
+### Low Severity (hidden by default, use `--all` to show)
+- **Public Field Exposure**: Public fields that could use getter methods
+- **Primitive Obsession**: Functions with many primitive parameters (suggest newtype)
 
 ## Performance
 
@@ -851,39 +753,6 @@ use crate::module_b::TypeB;  // ❌ Creates cycle
 use crate::module_a::TypeA;  // ❌ Creates cycle
 ```
 
-### ✅ Good: RAII for Temporal Coupling
-
-```rust
-// Use Drop trait for automatic cleanup
-struct Connection { /* ... */ }
-
-impl Drop for Connection {
-    fn drop(&mut self) {
-        self.close();  // Automatic cleanup
-    }
-}
-
-// Use guards for lock management
-fn process_data(mutex: &Mutex<Data>) {
-    let guard = mutex.lock().unwrap();  // Auto-unlocks on drop
-    // ... use guard ...
-}  // Automatically unlocked here
-```
-
-### ❌ Bad: Manual Temporal Coupling
-
-```rust
-// Requires remembering to call close()
-let conn = Connection::open()?;
-process(&conn);
-conn.close();  // Easy to forget!
-
-// Manual lock management
-mutex.lock();
-// ... if panic here, lock is never released!
-mutex.unlock();
-```
-
 ## Limitations
 
 **This tool is a measurement aid, not an absolute authority on code quality.**
@@ -902,7 +771,6 @@ Please keep the following limitations in mind:
 - **External Dependencies Are Excluded**: The health grade only considers internal couplings. Dependencies on external crates (serde, tokio, etc.) are not penalized since you cannot control their design.
 - **Git History Affects Volatility**: If Git history is unavailable or limited, volatility analysis will be incomplete.
 - **Small Projects May Score Differently**: Projects with very few internal couplings (< 10) may receive a Grade B by default, as there's insufficient data for accurate assessment.
-- **Heuristic-Based Detection**: Temporal coupling and connascence detection use pattern matching heuristics, which may produce false positives or miss some patterns.
 
 ### Recommended Usage
 
@@ -916,8 +784,6 @@ Please keep the following limitations in mind:
 ## References
 
 - [Vlad Khononov - "Balancing Coupling in Software Design"](https://www.amazon.com/dp/B0FVDYKJYQ)
-- [John Ousterhout - "A Philosophy of Software Design" (2nd Edition)](https://web.stanford.edu/~ouster/cgi-bin/book.php)
-- [Meilir Page-Jones - Connascence](https://en.wikipedia.org/wiki/Connascence)
 
 ## Contributing
 

@@ -7,11 +7,18 @@ Rust CLI tool for coupling analysis based on Vlad Khononov's "Balancing Coupling
 ### CLI Analysis
 
 ```bash
-# Basic analysis
+# Basic analysis (default: strict mode, hides Low severity)
 cargo run -- coupling ./src
 
 # Summary only
 cargo run -- coupling --summary ./src
+
+# Japanese output with explanations (日本語出力)
+cargo run -- coupling --summary --japanese ./src
+cargo run -- coupling --summary --jp ./src
+
+# Show all issues including Low severity
+cargo run -- coupling --summary --all ./src
 
 # AI-friendly output (for Claude, Copilot, etc.)
 cargo run -- coupling --ai ./src
@@ -78,15 +85,24 @@ cargo run -- coupling --web --no-open ./src
 - **Blast Radius**: Impact analysis with risk score
 - **Clusters**: Architecture grouping detection
 
-## 5 Coupling Dimensions
+## 3 Coupling Dimensions (Khononov)
 
 | Dimension | Description | Values |
 |-----------|-------------|--------|
 | **Strength** | How tightly coupled | Intrusive > Functional > Model > Contract |
-| **Distance** | Module proximity | SameFunction > SameModule > DifferentModule > DifferentCrate |
+| **Distance** | Module proximity | SameModule > DifferentModule > DifferentCrate |
 | **Volatility** | Change frequency | High > Medium > Low (from git history) |
-| **Balance** | Strength vs Distance trade-off | 0.0-1.0 (higher is better) |
-| **Connascence** | Type of coupling | Name, Type, Position, Algorithm, etc. |
+
+### Balance Formula
+
+```
+BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
+```
+
+- Strong + Close = ✅ High Cohesion (ideal)
+- Weak + Far = ✅ Loose Coupling (ideal)
+- Strong + Far + Stable = 🤔 Acceptable
+- Strong + Far + Volatile = ❌ Needs Refactoring
 
 ## Issue Types Detected
 
@@ -95,9 +111,12 @@ cargo run -- coupling --web --no-open ./src
 | CircularDependency | Critical | Modules depend on each other |
 | GlobalComplexity | High | Too many strong external dependencies |
 | CascadingChangeRisk | High | Changes likely to cascade |
-| InappropriateIntimacy | Medium | Internal details exposed |
+| GodModule | Medium | Too many functions/types/impls |
 | HighEfferentCoupling | Medium | Too many outgoing dependencies |
 | HighAfferentCoupling | Medium | Too many incoming dependencies |
+| InappropriateIntimacy | Medium | Internal details exposed |
+| PublicFieldExposure | Low | Public fields (use getters) |
+| PrimitiveObsession | Low | Too many primitive params (use newtype) |
 
 ## Quick Commands
 
@@ -113,14 +132,11 @@ cargo bench                    # Benchmarks
 
 | File | Purpose |
 |------|---------|
-| `src/analyzer.rs` | AST analysis with syn |
+| `src/analyzer.rs` | AST analysis with syn (newtype, serde detection) |
 | `src/balance.rs` | Balance score and issue detection |
-| `src/aposd.rs` | APOSD metrics (depth, pass-through, cognitive load) |
-| `src/metrics.rs` | Data structures and types |
-| `src/connascence.rs` | Connascence pattern detection |
+| `src/metrics.rs` | Data structures, 3D analysis, BalanceClassification |
 | `src/volatility.rs` | Git history volatility analysis |
-| `src/temporal.rs` | Temporal coupling patterns |
-| `src/report.rs` | Report generation |
+| `src/report.rs` | Report generation (English/Japanese) |
 | `src/cli_output.rs` | Job-focused CLI output (hotspots, impact, check, json) |
 | `src/web/` | Web visualization server |
 
