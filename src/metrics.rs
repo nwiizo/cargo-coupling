@@ -129,7 +129,7 @@ impl Distance {
 }
 
 /// Volatility levels (how often a component changes)
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Volatility {
     /// Rarely changes (0-2 times)
     Low,

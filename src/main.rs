@@ -17,6 +17,10 @@ use clap::{Parser, Subcommand};
 
 use cargo_coupling::{
     CompiledConfig, IssueThresholds, VolatilityAnalyzer, analyze_workspace,
+    cli_output::{
+        CheckConfig, generate_check_output, generate_hotspots_output, generate_impact_output,
+        generate_json_output, parse_grade, parse_severity,
+    },
     generate_ai_output_with_thresholds, generate_report_with_thresholds,
     generate_summary_with_thresholds, load_compiled_config,
     web::{ServerConfig, start_server},
@@ -105,6 +109,39 @@ struct Args {
     /// API endpoint URL for frontend (useful for separate deployments)
     #[arg(long)]
     api_endpoint: Option<String>,
+
+    // === Job-focused CLI options ===
+    /// Show top N refactoring hotspots (default: 5). Use --hotspots or --hotspots=N
+    #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "5")]
+    hotspots: Option<usize>,
+
+    /// Analyze change impact for a specific module
+    #[arg(long, value_name = "MODULE")]
+    impact: Option<String>,
+
+    /// Run quality gate check (returns non-zero exit code on failure)
+    #[arg(long)]
+    check: bool,
+
+    /// Minimum grade for --check (A, B, C, D, F). Default: C
+    #[arg(long, value_name = "GRADE", requires = "check")]
+    min_grade: Option<String>,
+
+    /// Maximum critical issues for --check. Default: 0
+    #[arg(long, value_name = "N", requires = "check")]
+    max_critical: Option<usize>,
+
+    /// Maximum circular dependencies for --check. Default: 0
+    #[arg(long, value_name = "N", requires = "check")]
+    max_circular: Option<usize>,
+
+    /// Fail --check on any issue at this severity or higher (critical, high, medium, low)
+    #[arg(long, value_name = "SEVERITY", requires = "check")]
+    fail_on: Option<String>,
+
+    /// Output in JSON format (machine-readable)
+    #[arg(long)]
+    json: bool,
 }
 
 fn main() {
@@ -274,6 +311,42 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut writer = output;
 
+    // Job-focused CLI modes (mutually exclusive with other modes)
+
+    // --json: Machine-readable JSON output
+    if args.json {
+        generate_json_output(&metrics, &thresholds, &mut writer)?;
+        return Ok(());
+    }
+
+    // --check: Quality gate check (returns exit code)
+    if args.check {
+        let check_config = CheckConfig {
+            min_grade: args.min_grade.as_ref().and_then(|s| parse_grade(s)),
+            max_critical: args.max_critical,
+            max_circular: args.max_circular,
+            fail_on: args.fail_on.as_ref().and_then(|s| parse_severity(s)),
+        };
+        let exit_code = generate_check_output(&metrics, &thresholds, &check_config, &mut writer)?;
+        process::exit(exit_code);
+    }
+
+    // --hotspots: Show top refactoring targets
+    if let Some(limit) = args.hotspots {
+        generate_hotspots_output(&metrics, &thresholds, limit, &mut writer)?;
+        return Ok(());
+    }
+
+    // --impact: Analyze impact of a specific module
+    if let Some(module_name) = &args.impact {
+        let found = generate_impact_output(&metrics, module_name, &mut writer)?;
+        if !found {
+            process::exit(1);
+        }
+        return Ok(());
+    }
+
+    // Default modes
     if args.ai {
         generate_ai_output_with_thresholds(&metrics, &thresholds, &mut writer)?;
     } else if args.summary {

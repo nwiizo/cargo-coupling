@@ -26,6 +26,28 @@ cargo run -- coupling --no-git ./src
 cargo run -- coupling --verbose --timing ./src
 ```
 
+### Job-Focused CLI Commands
+
+```bash
+# Hotspots: Find top refactoring targets (default: 5)
+cargo run -- coupling --hotspots ./src
+cargo run -- coupling --hotspots=10 ./src
+
+# Impact: Analyze change impact for a module
+cargo run -- coupling --impact analyzer ./src
+cargo run -- coupling --impact main ./src
+
+# Check: CI/CD quality gate (returns exit code 1 on failure)
+cargo run -- coupling --check ./src
+cargo run -- coupling --check --min-grade=B ./src
+cargo run -- coupling --check --max-critical=0 --max-circular=0 ./src
+cargo run -- coupling --check --fail-on=high ./src
+
+# JSON: Machine-readable output
+cargo run -- coupling --json ./src
+cargo run -- coupling --json ./src | jq '.hotspots[0]'
+```
+
 ### Web Visualization
 
 ```bash
@@ -96,6 +118,7 @@ cargo bench                    # Benchmarks
 | `src/volatility.rs` | Git history volatility analysis |
 | `src/temporal.rs` | Temporal coupling patterns |
 | `src/report.rs` | Report generation |
+| `src/cli_output.rs` | Job-focused CLI output (hotspots, impact, check, json) |
 | `src/web/` | Web visualization server |
 
 ## Configuration (.coupling.toml)
@@ -137,13 +160,13 @@ cargo test
 
 ## Jobs to be Done (JTBD)
 
-| Job | Description | Primary Tool |
-|-----|-------------|--------------|
-| **Change Impact** | 変更の影響範囲を事前把握 | Web UI: Blast Radius |
-| **Refactoring Priority** | 費用対効果の高いリファクタリング対象特定 | Web UI: Hotspots |
-| **Architecture Understanding** | モジュール間依存関係の把握 | Web UI: Graph + Clusters |
-| **Code Review** | 新しいカップリング問題の検出 | CLI: --ai / /full-review |
-| **Quality Monitoring** | 健全性の継続的監視 | CLI: --summary |
+| Job | Description | CLI | Web UI |
+|-----|-------------|-----|--------|
+| **Change Impact** | 変更の影響範囲を事前把握 | `--impact <module>` | Blast Radius |
+| **Refactoring Priority** | 費用対効果の高いリファクタリング対象特定 | `--hotspots` | Hotspots Panel |
+| **Architecture Understanding** | モジュール間依存関係の把握 | `--json` | Graph + Clusters |
+| **Code Review** | 新しいカップリング問題の検出 | `--ai` | Issue List |
+| **Quality Monitoring** | 健全性の継続的監視 | `--check`, `--summary` | Health Grade |
 
 詳細: `.claude/docs/jobs-to-be-done.md`
 

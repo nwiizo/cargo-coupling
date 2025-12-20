@@ -39,6 +39,7 @@
 pub mod analyzer;
 pub mod aposd;
 pub mod balance;
+pub mod cli_output;
 pub mod config;
 pub mod connascence;
 pub mod metrics;

@@ -8,8 +8,18 @@
     <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
 </head>
 <body>
+    <!-- Trigger zones for auto-hide UI -->
+    <div class="header-trigger" id="header-trigger"></div>
+    <div class="footer-trigger" id="footer-trigger"></div>
+
+    <!-- Sidebar toggle button -->
+    <button class="sidebar-toggle" id="sidebar-toggle" title="Toggle sidebar (s)">
+        <span class="icon">◀</span>
+    </button>
+
     <div class="container">
-        <header class="header">
+        <!-- Header - auto-hide -->
+        <header class="header" id="header">
             <div class="header-left">
                 <h1>🔗 cargo-coupling</h1>
             </div>
@@ -18,10 +28,51 @@
             </div>
         </header>
 
+        <!-- Main Graph Area - full viewport -->
         <main class="main">
             <div class="graph-container" id="cy"></div>
+        </main>
 
-            <aside class="sidebar">
+        <!-- Sidebar - auto-hide (fixed positioned, outside main) -->
+        <aside class="sidebar" id="sidebar">
+                <!-- Quick Jobs -->
+                <section class="panel">
+                    <h2>Jobs</h2>
+                    <div class="job-buttons">
+                        <button id="job-entry-points" class="btn btn-job" title="Where should I start reading?">
+                            🚀 Entry Points
+                        </button>
+                        <button id="job-path-finder" class="btn btn-job" title="How does A connect to B?">
+                            🔍 Find Path
+                        </button>
+                        <button id="job-simple-view" class="btn btn-job" title="Show simplified architecture">
+                            📊 Simple View
+                        </button>
+                        <button id="job-what-breaks" class="btn btn-job" title="What might break if I change this?" disabled>
+                            ⚠️ What Breaks?
+                        </button>
+                    </div>
+                    <div id="job-result" class="job-result"></div>
+                </section>
+
+                <!-- Path Finder -->
+                <section class="panel" id="path-finder-panel" style="display: none;">
+                    <h2>Path Finder</h2>
+                    <div class="path-finder-inputs">
+                        <select id="path-from" class="select">
+                            <option value="">From module...</option>
+                        </select>
+                        <span style="color: var(--text-secondary);">→</span>
+                        <select id="path-to" class="select">
+                            <option value="">To module...</option>
+                        </select>
+                    </div>
+                    <button id="find-path-btn" class="btn" style="width: 100%; margin-top: 0.5rem;">
+                        Find Dependency Path
+                    </button>
+                    <div id="path-result" class="path-result"></div>
+                </section>
+
                 <!-- Search -->
                 <section class="panel">
                     <h2>Search</h2>
@@ -199,6 +250,7 @@
                     <h2>Shortcuts <span style="opacity: 0.5;">(?)</span></h2>
                     <div class="shortcuts-list">
                         <div class="shortcut"><kbd>/</kbd> Search</div>
+                        <div class="shortcut"><kbd>s</kbd> Toggle sidebar</div>
                         <div class="shortcut"><kbd>f</kbd> Fit to screen</div>
                         <div class="shortcut"><kbd>r</kbd> Reset layout</div>
                         <div class="shortcut"><kbd>e</kbd> Export PNG</div>
@@ -206,9 +258,9 @@
                     </div>
                 </section>
             </aside>
-        </main>
 
-        <footer class="footer">
+        <!-- Footer - auto-hide -->
+        <footer class="footer" id="footer">
             <div id="summary-stats"></div>
         </footer>
     </div>

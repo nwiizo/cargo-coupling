@@ -1,7 +1,24 @@
-// cargo-coupling Visualization App
+// =====================================================
+// cargo-coupling Web Visualization
+// =====================================================
+// Organized into sections:
+// 1. Configuration & State
+// 2. Initialization
+// 3. Data Loading
+// 4. Cytoscape Graph
+// 5. UI Components (Header, Filters, Search, Layout)
+// 6. Node/Edge Interaction
+// 7. Analysis Features (Impact, Clusters)
+// 8. Job-focused Features (Entry Points, Path Finder, etc.)
+// 9. Sidebar & Resize
+// 10. Utilities
+// =====================================================
 
-// Configuration - loaded from server or defaults
-let CONFIG = {
+// =====================================================
+// 1. Configuration & State
+// =====================================================
+
+const CONFIG = {
     apiEndpoint: '',
     graphPath: '/api/graph',
     configPath: '/api/config'
@@ -10,40 +27,56 @@ let CONFIG = {
 let cy = null;
 let graphData = null;
 let currentLayout = 'cose';
+let selectedNode = null;
+let isSimpleView = false;
 
-// Initialize the application
-let selectedNode = null; // Track currently selected node
+// =====================================================
+// 2. Initialization
+// =====================================================
 
 async function init() {
     try {
-        // Load config from server
         await loadConfig();
-
         graphData = await fetchGraphData();
+
         initCytoscape(graphData);
-        updateHeaderStats(graphData.summary);
-        updateFooterStats(graphData.summary);
-        setupFilters();
-        setupSearch();
-        setupLayoutSelector();
-        setupExportButtons();
-        setupEventHandlers();
-        setupAnalysisButtons();
-        setupClusterView();
-        populateIssueList();
-        setupResizableSidebar();
-        // JTBD: Refactoring & Architecture features
-        populateHotspots();
-        populateModuleRankings();
-        setupModuleRankingSorting();
+        initUI();
+        initJobFeatures();
+
     } catch (error) {
         console.error('Failed to initialize:', error);
         document.getElementById('cy').innerHTML =
-            '<div style="padding: 2rem; color: #ef4444;">Failed to load graph data: ' + error.message + '</div>';
+            `<div style="padding: 2rem; color: #ef4444;">Failed to load graph data: ${error.message}</div>`;
     }
 }
 
-// Load configuration from server
+function initUI() {
+    updateHeaderStats(graphData.summary);
+    updateFooterStats(graphData.summary);
+    setupFilters();
+    setupSearch();
+    setupLayoutSelector();
+    setupExportButtons();
+    setupAnalysisButtons();
+    setupClusterView();
+    populateIssueList();
+    setupResizableSidebar();
+    setupKeyboardShortcuts();
+    setupAutoHideTriggers();
+}
+
+function initJobFeatures() {
+    populateHotspots();
+    populateModuleRankings();
+    setupModuleRankingSorting();
+    setupJobButtons();
+    populatePathFinderSelects();
+}
+
+// =====================================================
+// 3. Data Loading
+// =====================================================
+
 async function loadConfig() {
     try {
         const response = await fetch(CONFIG.configPath);
@@ -58,7 +91,6 @@ async function loadConfig() {
     }
 }
 
-// Fetch graph data from API
 async function fetchGraphData() {
     const url = CONFIG.apiEndpoint + CONFIG.graphPath;
     const response = await fetch(url);
@@ -68,7 +100,10 @@ async function fetchGraphData() {
     return response.json();
 }
 
-// Initialize Cytoscape graph
+// =====================================================
+// 4. Cytoscape Graph
+// =====================================================
+
 function initCytoscape(data) {
     const elements = buildElements(data);
 
@@ -77,120 +112,35 @@ function initCytoscape(data) {
         elements: elements,
         style: getCytoscapeStyle(),
         layout: getLayoutConfig('cose'),
-        minZoom: 0.1,
+        minZoom: 0.2,
         maxZoom: 3,
-        wheelSensitivity: 0.3
+        wheelSensitivity: 0.3,
+        pixelRatio: 'auto'
     });
 
-    // Node click: center and highlight neighbors
-    cy.on('tap', 'node', function(evt) {
-        const node = evt.target;
-        selectedNode = node;
-        highlightNeighbors(node);
-        centerOnNode(node);
-        showNodeDetails(node.data());
-        enableAnalysisButtons(true);
-        showBlastRadius(node);
-    });
-
-    // Edge click: highlight dependency path
-    cy.on('tap', 'edge', function(evt) {
-        const edge = evt.target;
-        highlightDependencyPath(edge);
-        showEdgeDetails(edge.data());
-    });
-
-    // Click on background: clear selection
-    cy.on('tap', function(evt) {
-        if (evt.target === cy) {
-            selectedNode = null;
-            clearHighlights();
-            clearDetails();
-            enableAnalysisButtons(false);
-            clearBlastRadius();
-        }
-    });
-
-    // Hover: show tooltip
-    cy.on('mouseover', 'node', function(evt) {
-        evt.target.addClass('hover');
-    });
-    cy.on('mouseout', 'node', function(evt) {
-        evt.target.removeClass('hover');
-    });
+    setupGraphEventHandlers();
 }
 
-// Get layout configuration
-function getLayoutConfig(name) {
-    const layouts = {
-        cose: {
-            name: 'cose',
-            animate: true,
-            animationDuration: 500,
-            nodeRepulsion: function() { return 8000; },
-            nodeOverlap: 20,
-            idealEdgeLength: function(edge) {
-                const distance = edge.data('distance') || 0.5;
-                return 80 + distance * 120;
-            },
-            gravity: 80,
-            numIter: 1000
-        },
-        concentric: {
-            name: 'concentric',
-            animate: true,
-            animationDuration: 500,
-            concentric: function(node) {
-                return node.data('couplings_out') + node.data('couplings_in');
-            },
-            levelWidth: function() { return 3; }
-        },
-        circle: {
-            name: 'circle',
-            animate: true,
-            animationDuration: 500
-        },
-        grid: {
-            name: 'grid',
-            animate: true,
-            animationDuration: 500,
-            rows: Math.ceil(Math.sqrt(cy ? cy.nodes().length : 10))
-        },
-        breadthfirst: {
-            name: 'breadthfirst',
-            animate: true,
-            animationDuration: 500,
-            directed: true
-        }
-    };
-    return layouts[name] || layouts.cose;
-}
-
-// Build Cytoscape elements from graph data
 function buildElements(data) {
     const nodes = data.nodes.map(node => ({
         data: {
             id: node.id,
             label: node.label,
             ...node.metrics,
-            inCycle: node.in_cycle,
-            filePath: node.file_path
+            file_path: node.file_path,
+            in_cycle: node.in_cycle
         }
     }));
 
     const edges = data.edges.map(edge => ({
         data: {
-            id: edge.id,
+            id: `${edge.source}-${edge.target}`,
             source: edge.source,
             target: edge.target,
-            strength: edge.dimensions.strength.value,
-            strengthLabel: edge.dimensions.strength.label,
-            distance: edge.dimensions.distance.value,
-            distanceLabel: edge.dimensions.distance.label,
-            volatility: edge.dimensions.volatility.value,
-            volatilityLabel: edge.dimensions.volatility.label,
-            balance: edge.dimensions.balance.value,
-            balanceLabel: edge.dimensions.balance.label,
+            strength: getStrengthValue(edge.strength),
+            distance: edge.distance,
+            volatility: edge.volatility,
+            balance: edge.balance_score,
             issue: edge.issue,
             inCycle: edge.in_cycle,
             location: edge.location
@@ -200,322 +150,262 @@ function buildElements(data) {
     return [...nodes, ...edges];
 }
 
-// Cytoscape styles
 function getCytoscapeStyle() {
     return [
+        // Node styles
         {
             selector: 'node',
             style: {
                 'label': 'data(label)',
                 'text-valign': 'center',
                 'text-halign': 'center',
-                'background-color': function(ele) {
-                    const health = ele.data('health');
-                    if (health === 'critical') return '#ef4444';
-                    if (health === 'needs_review') return '#eab308';
-                    if (health === 'acceptable') return '#4ade80';
-                    return '#22c55e';
-                },
-                'border-width': function(ele) {
-                    return ele.data('inCycle') ? 4 : 2;
-                },
-                'border-color': function(ele) {
-                    return ele.data('inCycle') ? '#dc2626' : '#475569';
-                },
-                'width': function(ele) {
-                    const count = (ele.data('couplings_out') || 0) + (ele.data('couplings_in') || 0);
-                    return Math.max(40, Math.min(80, 30 + count * 3));
-                },
-                'height': function(ele) {
-                    const count = (ele.data('couplings_out') || 0) + (ele.data('couplings_in') || 0);
-                    return Math.max(40, Math.min(80, 30 + count * 3));
-                },
+                'background-color': node => getHealthColor(node.data('health')),
+                'border-width': 2,
+                'border-color': '#475569',
+                'color': '#f8fafc',
                 'font-size': '10px',
-                'color': '#1e293b',
-                'text-wrap': 'ellipsis',
-                'text-max-width': '80px'
+                'text-outline-color': '#0f172a',
+                'text-outline-width': 2,
+                'width': node => 30 + (node.data('couplings_out') || 0) * 2,
+                'height': node => 30 + (node.data('couplings_out') || 0) * 2
             }
         },
-        {
-            selector: 'node:selected',
-            style: {
-                'border-width': 4,
-                'border-color': '#3b82f6'
-            }
-        },
-        {
-            selector: 'node.hover',
-            style: {
-                'border-width': 3,
-                'border-color': '#60a5fa'
-            }
-        },
-        {
-            selector: 'node.highlighted',
-            style: {
-                'border-width': 4,
-                'border-color': '#3b82f6',
-                'opacity': 1
-            }
-        },
-        {
-            selector: 'node.dimmed',
-            style: {
-                'opacity': 0.2
-            }
-        },
-        {
-            selector: 'node.search-match',
-            style: {
-                'border-width': 4,
-                'border-color': '#f59e0b',
-                'background-color': '#fbbf24'
-            }
-        },
-        {
-            selector: 'node.dependency-source',
-            style: {
-                'border-width': 5,
-                'border-color': '#22c55e',
-                'opacity': 1
-            }
-        },
-        {
-            selector: 'node.dependency-target',
-            style: {
-                'border-width': 5,
-                'border-color': '#ef4444',
-                'opacity': 1
-            }
-        },
+        // Edge styles
         {
             selector: 'edge',
             style: {
-                'width': function(ele) {
-                    const strength = ele.data('strength') || 0.5;
-                    return 1 + strength * 4;
-                },
-                'line-color': function(ele) {
-                    if (ele.data('inCycle')) return '#dc2626';
-                    const balance = ele.data('balance') || 0.5;
-                    if (balance >= 0.8) return '#22c55e';
-                    if (balance >= 0.4) return '#eab308';
-                    return '#ef4444';
-                },
-                'line-style': function(ele) {
-                    const distanceLabel = ele.data('distanceLabel');
-                    if (distanceLabel === 'DifferentCrate') return 'dotted';
-                    if (distanceLabel === 'DifferentModule') return 'dashed';
-                    return 'solid';
-                },
-                'target-arrow-color': function(ele) {
-                    if (ele.data('inCycle')) return '#dc2626';
-                    const balance = ele.data('balance') || 0.5;
-                    if (balance >= 0.8) return '#22c55e';
-                    if (balance >= 0.4) return '#eab308';
-                    return '#ef4444';
-                },
+                'width': edge => 1 + edge.data('strength') * 4,
+                'line-color': edge => getBalanceColor(edge.data('balance')),
+                'target-arrow-color': edge => getBalanceColor(edge.data('balance')),
                 'target-arrow-shape': 'triangle',
+                'arrow-scale': 1.5,
                 'curve-style': 'bezier',
-                'opacity': 0.8
+                'opacity': 0.7,
+                'line-style': edge => getDistanceStyle(edge.data('distance'))
             }
         },
+        // Cycle edges
         {
-            selector: 'edge:selected',
+            selector: 'edge[?inCycle]',
             style: {
-                'width': 6,
-                'opacity': 1
+                'line-color': '#dc2626',
+                'target-arrow-color': '#dc2626',
+                'width': 3,
+                'line-style': 'solid'
             }
         },
+        // Highlighted state
         {
-            selector: 'edge.highlighted',
+            selector: '.highlighted',
             style: {
-                'width': 5,
-                'opacity': 1
-            }
-        },
-        {
-            selector: 'edge.dimmed',
-            style: {
-                'opacity': 0.1
-            }
-        },
-        {
-            selector: 'edge.dependency-edge',
-            style: {
-                'width': 6,
                 'opacity': 1,
-                'line-color': '#3b82f6',
-                'target-arrow-color': '#3b82f6'
+                'border-width': 3,
+                'border-color': '#3b82f6'
             }
         },
+        // Dimmed state
+        {
+            selector: '.dimmed',
+            style: { 'opacity': 0.15 }
+        },
+        // Hidden state
         {
             selector: '.hidden',
+            style: { 'display': 'none' }
+        },
+        // Dependency highlighting
+        {
+            selector: '.dependency-source',
             style: {
-                'display': 'none'
+                'border-color': '#22c55e',
+                'border-width': 4
+            }
+        },
+        {
+            selector: '.dependency-target',
+            style: {
+                'border-color': '#ef4444',
+                'border-width': 4
+            }
+        },
+        // Hover state
+        {
+            selector: '.hover',
+            style: {
+                'border-color': '#3b82f6',
+                'border-width': 3
+            }
+        },
+        // Search match
+        {
+            selector: '.search-match',
+            style: {
+                'border-color': '#eab308',
+                'border-width': 4,
+                'background-color': '#eab308'
             }
         }
     ];
 }
 
-// Highlight neighbors of a node
-function highlightNeighbors(node) {
-    clearHighlights();
-    const neighborhood = node.neighborhood().add(node);
-    cy.elements().addClass('dimmed');
-    neighborhood.removeClass('dimmed').addClass('highlighted');
-}
-
-// Highlight dependency path when edge is clicked
-function highlightDependencyPath(edge) {
-    clearHighlights();
-    const source = cy.getElementById(edge.data('source'));
-    const target = cy.getElementById(edge.data('target'));
-
-    cy.elements().addClass('dimmed');
-    source.removeClass('dimmed').addClass('dependency-source');
-    target.removeClass('dimmed').addClass('dependency-target');
-    edge.removeClass('dimmed').addClass('dependency-edge');
-
-    // Fit view to show both nodes
-    cy.fit(source.union(target), 100);
-}
-
-// Center view on a node with concentric layout
-function centerOnNode(node) {
-    const layout = cy.layout({
-        name: 'concentric',
-        animate: true,
-        animationDuration: 500,
-        concentric: function(n) {
-            if (n.id() === node.id()) return 100;
-            if (node.neighborhood().contains(n)) return 50;
-            return 1;
+function getLayoutConfig(name) {
+    const configs = {
+        cose: {
+            name: 'cose',
+            animate: true,
+            animationDuration: 500,
+            nodeRepulsion: 8000,
+            idealEdgeLength: 100,
+            edgeElasticity: 100,
+            gravity: 0.25,
+            numIter: 1000
         },
-        levelWidth: function() { return 2; },
-        minNodeSpacing: 50
-    });
-    layout.run();
+        concentric: {
+            name: 'concentric',
+            animate: true,
+            animationDuration: 500,
+            concentric: node => node.data('couplings_in') || 0,
+            levelWidth: () => 2
+        },
+        circle: { name: 'circle', animate: true, animationDuration: 500 },
+        grid: { name: 'grid', animate: true, animationDuration: 500 },
+        breadthfirst: { name: 'breadthfirst', animate: true, animationDuration: 500, directed: true }
+    };
+    return configs[name] || configs.cose;
 }
 
-// Clear all highlights
-function clearHighlights() {
-    cy.elements().removeClass('highlighted dimmed dependency-source dependency-target dependency-edge search-match');
+function applyLayout(name) {
+    if (!cy) return;
+    currentLayout = name;
+    cy.layout(getLayoutConfig(name)).run();
 }
 
-// Update header stats
+// =====================================================
+// 5. UI Components
+// =====================================================
+
 function updateHeaderStats(summary) {
-    const gradeClass = summary.health_grade.charAt(0);
-    document.getElementById('header-stats').innerHTML = `
-        <span class="stat">
-            Health: <span class="health-grade ${gradeClass}">${summary.health_grade}</span>
-        </span>
-        <span class="stat">
-            Score: <span class="stat-value">${(summary.health_score * 100).toFixed(0)}%</span>
-        </span>
-        <span class="stat">
-            Modules: <span class="stat-value">${summary.total_modules}</span>
-        </span>
-        <span class="stat">
-            Couplings: <span class="stat-value">${summary.total_couplings}</span>
-        </span>
+    const container = document.getElementById('header-stats');
+    if (!container || !summary) return;
+
+    container.innerHTML = `
+        <span class="stat">Modules: <span class="stat-value">${summary.total_modules}</span></span>
+        <span class="stat">Couplings: <span class="stat-value">${summary.total_couplings}</span></span>
+        <span class="stat">Health: <span class="health-grade ${summary.health_grade}">${summary.health_grade}</span></span>
     `;
 }
 
-// Update footer stats
 function updateFooterStats(summary) {
-    const issues = summary.issues_by_severity;
-    document.getElementById('summary-stats').innerHTML = `
-        <span>Internal: ${summary.internal_couplings}</span>
-        <span>External: ${summary.external_couplings}</span>
-        <span style="color: #ef4444;">Critical: ${issues.critical}</span>
-        <span style="color: #f97316;">High: ${issues.high}</span>
-        <span style="color: #eab308;">Medium: ${issues.medium}</span>
-        <span style="color: #3b82f6;">Low: ${issues.low}</span>
+    const container = document.getElementById('summary-stats');
+    if (!container || !summary) return;
+
+    const issueCount = Object.values(summary.issues_by_severity || {}).reduce((a, b) => a + b, 0);
+    container.innerHTML = `
+        <span>Issues: ${issueCount}</span>
+        <span>Health Score: ${(summary.health_score * 100).toFixed(1)}%</span>
     `;
 }
 
-// Setup search functionality
+function setupFilters() {
+    const applyFilters = () => {
+        const strengths = getCheckedValues('strength-filters');
+        const distances = getCheckedValues('distance-filters');
+        const volatilities = getCheckedValues('volatility-filters');
+        const balanceMin = parseInt(document.getElementById('balance-min')?.value || 0) / 100;
+        const balanceMax = parseInt(document.getElementById('balance-max')?.value || 100) / 100;
+        const issuesOnly = document.getElementById('show-issues-only')?.checked;
+        const cyclesOnly = document.getElementById('show-cycles-only')?.checked;
+
+        cy.edges().forEach(edge => {
+            const strength = getStrengthName(edge.data('strength'));
+            const distance = edge.data('distance');
+            const volatility = edge.data('volatility') || 'Low';
+            const balance = edge.data('balance') || 0.5;
+            const hasIssue = edge.data('issue');
+            const inCycle = edge.data('inCycle');
+
+            let visible = true;
+            if (!strengths.includes(strength)) visible = false;
+            if (!distances.includes(distance)) visible = false;
+            if (!volatilities.includes(volatility)) visible = false;
+            if (balance < balanceMin || balance > balanceMax) visible = false;
+            if (issuesOnly && !hasIssue) visible = false;
+            if (cyclesOnly && !inCycle) visible = false;
+
+            edge.style('display', visible ? 'element' : 'none');
+        });
+
+        // Update balance label
+        const balanceLabel = document.getElementById('balance-value');
+        if (balanceLabel) {
+            balanceLabel.textContent = `${balanceMin.toFixed(1)} - ${balanceMax.toFixed(1)}`;
+        }
+    };
+
+    // Attach filter listeners
+    document.querySelectorAll('#strength-filters input, #distance-filters input, #volatility-filters input').forEach(cb => {
+        cb.addEventListener('change', applyFilters);
+    });
+
+    ['balance-min', 'balance-max'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', applyFilters);
+    });
+
+    document.getElementById('show-issues-only')?.addEventListener('change', applyFilters);
+    document.getElementById('show-cycles-only')?.addEventListener('change', applyFilters);
+
+    document.getElementById('reset-filters')?.addEventListener('click', () => {
+        document.querySelectorAll('#strength-filters input, #distance-filters input, #volatility-filters input').forEach(cb => cb.checked = true);
+        document.getElementById('balance-min').value = 0;
+        document.getElementById('balance-max').value = 100;
+        document.getElementById('show-issues-only').checked = false;
+        document.getElementById('show-cycles-only').checked = false;
+        applyFilters();
+    });
+
+    document.getElementById('fit-graph')?.addEventListener('click', () => cy?.fit(undefined, 50));
+}
+
 function setupSearch() {
     const input = document.getElementById('search-input');
     if (!input) return;
 
     input.addEventListener('input', (e) => {
         const query = e.target.value.toLowerCase().trim();
-        clearHighlights();
+        cy.nodes().removeClass('search-match dimmed');
 
-        if (query.length === 0) {
-            return;
-        }
+        if (!query) return;
 
-        const matches = cy.nodes().filter(n =>
-            n.data('label').toLowerCase().includes(query) ||
-            n.data('id').toLowerCase().includes(query)
-        );
-
+        const matches = cy.nodes().filter(n => n.data('label').toLowerCase().includes(query));
         if (matches.length > 0) {
-            cy.elements().addClass('dimmed');
+            cy.nodes().addClass('dimmed');
             matches.removeClass('dimmed').addClass('search-match');
-            matches.neighborhood().removeClass('dimmed');
-
-            if (matches.length === 1) {
-                cy.animate({
-                    center: { eles: matches },
-                    zoom: 1.5
-                }, { duration: 300 });
-            }
+            cy.fit(matches, 50);
         }
     });
 
-    // Enter key to focus on first match
     input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            const matches = cy.nodes('.search-match');
-            if (matches.length > 0) {
-                const first = matches[0];
-                centerOnNode(first);
-                showNodeDetails(first.data());
-            }
-        }
         if (e.key === 'Escape') {
             input.value = '';
-            clearHighlights();
-            input.blur();
+            cy.nodes().removeClass('search-match dimmed');
         }
     });
 }
 
-// Setup layout selector
 function setupLayoutSelector() {
     const select = document.getElementById('layout-select');
     if (!select) return;
 
     select.addEventListener('change', (e) => {
-        currentLayout = e.target.value;
-        applyLayout(currentLayout);
+        applyLayout(e.target.value);
     });
 }
 
-// Apply layout
-function applyLayout(name) {
-    const layout = cy.layout(getLayoutConfig(name));
-    layout.run();
-}
-
-// Setup export buttons
 function setupExportButtons() {
-    const pngBtn = document.getElementById('export-png');
-    const jsonBtn = document.getElementById('export-json');
-
-    if (pngBtn) {
-        pngBtn.addEventListener('click', () => exportGraph('png'));
-    }
-    if (jsonBtn) {
-        jsonBtn.addEventListener('click', () => exportGraph('json'));
-    }
+    document.getElementById('export-png')?.addEventListener('click', () => exportGraph('png'));
+    document.getElementById('export-json')?.addEventListener('click', () => exportGraph('json'));
 }
 
-// Export graph
 function exportGraph(format) {
     if (format === 'png') {
         const png = cy.png({ full: true, scale: 2, bg: '#0f172a' });
@@ -528,153 +418,34 @@ function exportGraph(format) {
         const blob = new Blob([json], { type: 'application/json' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = 'coupling-graph.json';
+        link.download = 'coupling-data.json';
         link.click();
     }
 }
 
-// Setup filter controls
-function setupFilters() {
-    // Checkbox filters
-    document.querySelectorAll('#strength-filters input, #distance-filters input, #volatility-filters input')
-        .forEach(input => {
-            input.addEventListener('change', applyFilters);
-        });
-
-    // Balance range
-    const balanceMin = document.getElementById('balance-min');
-    const balanceMax = document.getElementById('balance-max');
-    if (balanceMin && balanceMax) {
-        balanceMin.addEventListener('input', updateBalanceLabel);
-        balanceMax.addEventListener('input', updateBalanceLabel);
-        balanceMin.addEventListener('change', applyFilters);
-        balanceMax.addEventListener('change', applyFilters);
-    }
-
-    // Special filters
-    const showIssues = document.getElementById('show-issues-only');
-    const showCycles = document.getElementById('show-cycles-only');
-    if (showIssues) showIssues.addEventListener('change', applyFilters);
-    if (showCycles) showCycles.addEventListener('change', applyFilters);
-
-    // Buttons
-    const resetBtn = document.getElementById('reset-filters');
-    const fitBtn = document.getElementById('fit-graph');
-    if (resetBtn) resetBtn.addEventListener('click', resetFilters);
-    if (fitBtn) fitBtn.addEventListener('click', () => cy.fit());
-}
-
-function updateBalanceLabel() {
-    const min = document.getElementById('balance-min').value / 100;
-    const max = document.getElementById('balance-max').value / 100;
-    const label = document.getElementById('balance-value');
-    if (label) {
-        label.textContent = `${min.toFixed(1)} - ${max.toFixed(1)}`;
-    }
-}
-
-// Apply filters to the graph
-function applyFilters() {
-    const strengthFilters = getCheckedValues('strength-filters');
-    const distanceFilters = getCheckedValues('distance-filters');
-    const volatilityFilters = getCheckedValues('volatility-filters');
-
-    const balanceMinEl = document.getElementById('balance-min');
-    const balanceMaxEl = document.getElementById('balance-max');
-    const balanceMin = balanceMinEl ? balanceMinEl.value / 100 : 0;
-    const balanceMax = balanceMaxEl ? balanceMaxEl.value / 100 : 1;
-
-    const showIssuesOnly = document.getElementById('show-issues-only')?.checked || false;
-    const showCyclesOnly = document.getElementById('show-cycles-only')?.checked || false;
-
-    // Filter edges
-    cy.edges().forEach(edge => {
-        const data = edge.data();
-        let visible = true;
-
-        if (!strengthFilters.includes(data.strengthLabel)) visible = false;
-        if (!distanceFilters.includes(data.distanceLabel)) visible = false;
-        if (!volatilityFilters.includes(data.volatilityLabel)) visible = false;
-        if (data.balance < balanceMin || data.balance > balanceMax) visible = false;
-        if (showIssuesOnly && !data.issue) visible = false;
-        if (showCyclesOnly && !data.inCycle) visible = false;
-
-        if (visible) {
-            edge.removeClass('hidden');
-        } else {
-            edge.addClass('hidden');
-        }
-    });
-
-    // Hide orphan nodes (nodes with no visible edges)
-    cy.nodes().forEach(node => {
-        const visibleEdges = node.connectedEdges().filter(e => !e.hasClass('hidden'));
-        if (visibleEdges.length === 0) {
-            node.addClass('hidden');
-        } else {
-            node.removeClass('hidden');
-        }
-    });
-}
-
-function getCheckedValues(groupId) {
-    const group = document.getElementById(groupId);
-    if (!group) return [];
-    return Array.from(group.querySelectorAll('input:checked'))
-        .map(input => input.value);
-}
-
-function resetFilters() {
-    // Reset checkboxes
-    document.querySelectorAll('.checkbox-group input').forEach(input => {
-        input.checked = true;
-    });
-
-    // Reset range
-    const balanceMin = document.getElementById('balance-min');
-    const balanceMax = document.getElementById('balance-max');
-    if (balanceMin) balanceMin.value = 0;
-    if (balanceMax) balanceMax.value = 100;
-    updateBalanceLabel();
-
-    // Reset special filters
-    const showIssues = document.getElementById('show-issues-only');
-    const showCycles = document.getElementById('show-cycles-only');
-    if (showIssues) showIssues.checked = false;
-    if (showCycles) showCycles.checked = false;
-
-    // Show all
-    cy.elements().removeClass('hidden');
-    clearHighlights();
-}
-
-// Setup event handlers
-function setupEventHandlers() {
-    // Keyboard shortcuts
+function setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
-        // Don't trigger shortcuts when typing in input
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-            return;
-        }
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
 
         switch (e.key) {
-            case 'Escape':
-                clearHighlights();
-                clearDetails();
-                cy.elements().unselect();
-                break;
-            case 'f':
-                cy.fit();
-                break;
-            case 'r':
-                applyLayout(currentLayout);
-                break;
             case '/':
                 e.preventDefault();
                 document.getElementById('search-input')?.focus();
                 break;
+            case 'f':
+                cy?.fit(undefined, 50);
+                break;
+            case 'r':
+                applyLayout(currentLayout);
+                break;
             case 'e':
                 exportGraph('png');
+                break;
+            case 's':
+                document.getElementById('sidebar-toggle')?.click();
+                break;
+            case 'Escape':
+                clearSelection();
                 break;
             case '?':
                 toggleHelpModal();
@@ -683,586 +454,253 @@ function setupEventHandlers() {
     });
 }
 
-// Toggle help modal
 function toggleHelpModal() {
-    let modal = document.getElementById('help-modal');
-    if (modal) {
-        modal.classList.toggle('visible');
-    }
+    const modal = document.getElementById('help-modal');
+    if (modal) modal.classList.toggle('visible');
 }
 
-// Show node details
-function showNodeDetails(data) {
-    const healthClass = data.health === 'critical' ? 'critical' :
-                       data.health === 'needs_review' ? 'warning' : 'good';
+// =====================================================
+// 6. Node/Edge Interaction
+// =====================================================
 
-    // Format file path for display
-    let filePathHtml = '';
-    let viewCodeBtn = '';
-    if (data.filePath) {
-        const shortPath = data.filePath.split('/').slice(-3).join('/');
-        filePathHtml = `
-            <div class="detail-section">
-                <h4>Location</h4>
-                <div class="detail-row" style="flex-direction: column; gap: 0.25rem;">
-                    <span class="detail-label">File</span>
-                    <span class="detail-value file-path" title="${data.filePath}">${shortPath}</span>
-                </div>
-                <button class="btn-view-code" onclick="loadSourceCode('${data.filePath}', null, 'node-source-container')">
-                    View Source Code
-                </button>
-                <div id="node-source-container"></div>
-            </div>
-        `;
-    }
-
-    document.getElementById('details-content').innerHTML = `
-        <div class="detail-section">
-            <h4>Module</h4>
-            <div class="detail-row">
-                <span class="detail-label">Name</span>
-                <span class="detail-value">${data.label}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">ID</span>
-                <span class="detail-value" style="font-size: 0.75rem; word-break: break-all;">${data.id}</span>
-            </div>
-        </div>
-
-        ${filePathHtml}
-
-        <div class="detail-section">
-            <h4>Metrics</h4>
-            <div class="detail-row">
-                <span class="detail-label">Health</span>
-                <span class="detail-value ${healthClass}">${data.health}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Balance Score</span>
-                <span class="detail-value ${healthClass}">${(data.balance_score * 100).toFixed(0)}%</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Outgoing</span>
-                <span class="detail-value">${data.couplings_out}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Incoming</span>
-                <span class="detail-value">${data.couplings_in}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Trait Impls</span>
-                <span class="detail-value">${data.trait_impl_count}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Inherent Impls</span>
-                <span class="detail-value">${data.inherent_impl_count}</span>
-            </div>
-        </div>
-
-        ${data.inCycle ? '<span class="issue-badge high">In Circular Dependency</span>' : ''}
-    `;
-}
-
-// Show edge details
-function showEdgeDetails(data) {
-    const balanceClass = data.balance >= 0.8 ? 'good' : data.balance >= 0.4 ? 'warning' : 'critical';
-
-    let issueHtml = '';
-    if (data.issue) {
-        const severityClass = data.issue.severity.toLowerCase();
-        issueHtml = `
-            <div class="detail-section">
-                <h4>Issue</h4>
-                <span class="issue-badge ${severityClass}">${data.issue.type}</span>
-                <p style="margin-top: 0.5rem; font-size: 0.8125rem;">${data.issue.description}</p>
-            </div>
-        `;
-    }
-
-    // Format location info with view code button
-    let locationHtml = '';
-    if (data.location) {
-        const filePath = data.location.file_path;
-        const line = data.location.line;
-        if (filePath) {
-            const shortPath = filePath.split('/').slice(-3).join('/');
-            const lineInfo = line > 0 ? `:${line}` : '';
-            const lineParam = line > 0 ? line : 'null';
-            locationHtml = `
-                <div class="detail-section">
-                    <h4>Source Location</h4>
-                    <div class="detail-row" style="flex-direction: column; gap: 0.25rem;">
-                        <span class="detail-value file-path" title="${filePath}${lineInfo}">
-                            ${shortPath}${lineInfo}
-                        </span>
-                    </div>
-                    <button class="btn-view-code" onclick="loadSourceCode('${filePath}', ${lineParam}, 'edge-source-container')">
-                        View Source Code
-                    </button>
-                    <div id="edge-source-container"></div>
-                </div>
-            `;
-        }
-    }
-
-    document.getElementById('details-content').innerHTML = `
-        <div class="detail-section">
-            <h4>Dependency</h4>
-            <div class="detail-row" style="flex-direction: column; gap: 0.5rem;">
-                <div style="display: flex; align-items: center; gap: 0.5rem;">
-                    <span style="color: #22c55e; font-weight: bold;">From:</span>
-                    <span>${data.source}</span>
-                </div>
-                <div style="text-align: center; color: #64748b;">↓ depends on ↓</div>
-                <div style="display: flex; align-items: center; gap: 0.5rem;">
-                    <span style="color: #ef4444; font-weight: bold;">To:</span>
-                    <span>${data.target}</span>
-                </div>
-            </div>
-        </div>
-
-        ${locationHtml}
-
-        <div class="detail-section">
-            <h4>5 Dimensions</h4>
-            <div class="detail-row">
-                <span class="detail-label">Strength</span>
-                <span class="detail-value">${data.strengthLabel} (${(data.strength * 100).toFixed(0)}%)</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Distance</span>
-                <span class="detail-value">${data.distanceLabel}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Volatility</span>
-                <span class="detail-value">${data.volatilityLabel}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Balance</span>
-                <span class="detail-value ${balanceClass}">${data.balanceLabel} (${(data.balance * 100).toFixed(0)}%)</span>
-            </div>
-        </div>
-
-        ${issueHtml}
-        ${data.inCycle ? '<span class="issue-badge high">In Circular Dependency</span>' : ''}
-    `;
-}
-
-// Clear details panel
-function clearDetails() {
-    document.getElementById('details-content').innerHTML =
-        '<p class="placeholder">Click a node or edge to see details</p>';
-}
-
-// =====================
-// Source Code Functions
-// =====================
-
-// Load and display source code
-async function loadSourceCode(filePath, line, containerId) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    // Show loading state
-    container.innerHTML = '<div style="padding: 0.5rem; color: var(--text-secondary); font-size: 0.75rem;">Loading...</div>';
-
-    try {
-        const params = new URLSearchParams({ path: filePath });
-        if (line) params.set('line', line);
-        params.set('context', '8');
-
-        const url = CONFIG.apiEndpoint + '/api/source?' + params.toString();
-        const response = await fetch(url);
-
-        if (!response.ok) {
-            const error = await response.json();
-            container.innerHTML = `<div style="padding: 0.5rem; color: var(--accent-red); font-size: 0.75rem;">Error: ${error.error || 'Failed to load'}</div>`;
-            return;
-        }
-
-        const data = await response.json();
-        renderSourceCode(container, data);
-
-    } catch (error) {
-        container.innerHTML = `<div style="padding: 0.5rem; color: var(--accent-red); font-size: 0.75rem;">Error: ${error.message}</div>`;
-    }
-}
-
-// Render source code with syntax highlighting (basic)
-function renderSourceCode(container, data) {
-    const linesHtml = data.lines.map(line => {
-        const highlightClass = line.is_highlight ? ' highlight' : '';
-        const content = escapeHtml(line.content);
-        const highlightedContent = syntaxHighlight(content);
-        return `
-            <div class="source-line${highlightClass}">
-                <span class="line-number">${line.number}</span>
-                <span class="line-content">${highlightedContent}</span>
-            </div>
-        `;
-    }).join('');
-
-    const lineInfo = data.highlight_line
-        ? `Line ${data.highlight_line}`
-        : `Lines ${data.start_line}-${data.end_line}`;
-
-    const containerId = container.id;
-
-    container.innerHTML = `
-        <div class="source-code-container">
-            <div class="source-code-header">
-                <div class="file-info">
-                    <span class="file-icon">📄</span>
-                    <span class="file-name">${data.file_name}</span>
-                    <span class="line-info">${lineInfo} / ${data.total_lines}</span>
-                </div>
-                <div class="source-code-actions">
-                    <button onclick="copySourceCode('${containerId}')" title="Copy code">Copy</button>
-                    <button onclick="toggleExpandCode('${containerId}')" title="Expand/Collapse">Expand</button>
-                </div>
-            </div>
-            <div class="source-code-content" id="${containerId}-content">
-                ${linesHtml}
-            </div>
-            <div class="source-code-footer">
-                <span class="path" title="${data.file_path}">${data.file_path}</span>
-                <span>${data.lines.length} lines shown</span>
-            </div>
-        </div>
-    `;
-
-    // Scroll to highlighted line if present
-    if (data.highlight_line) {
-        setTimeout(() => {
-            const highlightedLine = container.querySelector('.source-line.highlight');
-            if (highlightedLine) {
-                const contentDiv = container.querySelector('.source-code-content');
-                const lineTop = highlightedLine.offsetTop;
-                const contentHeight = contentDiv.clientHeight;
-                contentDiv.scrollTop = lineTop - contentHeight / 2 + highlightedLine.clientHeight / 2;
-            }
-        }, 100);
-    }
-}
-
-// Copy source code to clipboard
-function copySourceCode(containerId) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-
-    const lines = container.querySelectorAll('.line-content');
-    const code = Array.from(lines).map(el => el.textContent).join('\n');
-
-    navigator.clipboard.writeText(code).then(() => {
-        // Show feedback
-        const btn = container.querySelector('.source-code-actions button');
-        if (btn) {
-            const originalText = btn.textContent;
-            btn.textContent = 'Copied!';
-            btn.style.color = 'var(--accent-green)';
-            setTimeout(() => {
-                btn.textContent = originalText;
-                btn.style.color = '';
-            }, 1500);
-        }
-    });
-}
-
-// Toggle expand/collapse source code
-function toggleExpandCode(containerId) {
-    const content = document.getElementById(containerId + '-content');
-    if (!content) return;
-
-    content.classList.toggle('expanded');
-
-    const container = document.getElementById(containerId);
-    const btn = container?.querySelectorAll('.source-code-actions button')[1];
-    if (btn) {
-        btn.textContent = content.classList.contains('expanded') ? 'Collapse' : 'Expand';
-    }
-}
-
-// Escape HTML entities
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// Basic syntax highlighting for Rust
-function syntaxHighlight(code) {
-    // Keywords
-    const keywords = ['fn', 'let', 'mut', 'const', 'static', 'pub', 'use', 'mod', 'struct', 'enum', 'trait', 'impl', 'for', 'if', 'else', 'match', 'loop', 'while', 'return', 'break', 'continue', 'async', 'await', 'where', 'type', 'self', 'Self', 'super', 'crate', 'dyn', 'move', 'ref', 'as', 'in', 'unsafe', 'extern'];
-
-    // Types
-    const types = ['String', 'Vec', 'Option', 'Result', 'Box', 'Rc', 'Arc', 'HashMap', 'HashSet', 'bool', 'u8', 'u16', 'u32', 'u64', 'usize', 'i8', 'i16', 'i32', 'i64', 'isize', 'f32', 'f64', 'str', 'char'];
-
-    let result = code;
-
-    // Highlight strings (simple approach)
-    result = result.replace(/"([^"\\]|\\.)*"/g, '<span style="color: #a5d6a7;">$&</span>');
-
-    // Highlight comments
-    result = result.replace(/(\/\/.*$)/gm, '<span style="color: #6b7280;">$1</span>');
-
-    // Highlight keywords
-    keywords.forEach(kw => {
-        const regex = new RegExp(`\\b(${kw})\\b`, 'g');
-        result = result.replace(regex, '<span style="color: #c792ea;">$1</span>');
+function setupGraphEventHandlers() {
+    // Node click
+    cy.on('tap', 'node', function(evt) {
+        const node = evt.target;
+        selectNode(node);
     });
 
-    // Highlight types
-    types.forEach(t => {
-        const regex = new RegExp(`\\b(${t})\\b`, 'g');
-        result = result.replace(regex, '<span style="color: #82aaff;">$1</span>');
+    // Edge click
+    cy.on('tap', 'edge', function(evt) {
+        highlightDependencyPath(evt.target);
+        showEdgeDetails(evt.target.data());
     });
 
-    // Highlight numbers
-    result = result.replace(/\b(\d+)\b/g, '<span style="color: #f78c6c;">$1</span>');
-
-    // Highlight function calls (word followed by ()
-    result = result.replace(/\b([a-z_][a-z0-9_]*)\s*\(/gi, '<span style="color: #82aaff;">$1</span>(');
-
-    return result;
-}
-
-// =====================
-// Analysis Functions
-// =====================
-
-// Enable/disable analysis buttons based on node selection
-function enableAnalysisButtons(enabled) {
-    const buttons = ['show-dependents', 'show-dependencies', 'show-impact'];
-    buttons.forEach(id => {
-        const btn = document.getElementById(id);
-        if (btn) {
-            btn.disabled = !enabled;
+    // Background click
+    cy.on('tap', function(evt) {
+        if (evt.target === cy) {
+            clearSelection();
         }
     });
+
+    // Hover
+    cy.on('mouseover', 'node', (evt) => evt.target.addClass('hover'));
+    cy.on('mouseout', 'node', (evt) => evt.target.removeClass('hover'));
 }
 
-// Setup analysis buttons
+function selectNode(node) {
+    selectedNode = node;
+    focusOnNode(node);
+    showNodeDetails(node.data());
+    enableAnalysisButtons(true);
+    showBlastRadius(node);
+    updateWhatBreaksButton();
+}
+
+function clearSelection() {
+    selectedNode = null;
+
+    // Restore all elements (just clear classes, don't re-layout)
+    cy.elements().removeClass('hidden highlighted dimmed dependency-source dependency-target search-match');
+
+    // Fit to show all elements
+    cy.fit(undefined, 50);
+
+    clearDetails();
+    enableAnalysisButtons(false);
+    clearBlastRadius();
+    updateWhatBreaksButton();
+    document.getElementById('job-result').innerHTML = '';
+}
+
+function highlightNeighbors(node) {
+    clearHighlights();
+    cy.elements().addClass('dimmed');
+    node.removeClass('dimmed').addClass('highlighted');
+    node.neighborhood().removeClass('dimmed').addClass('highlighted');
+}
+
+function highlightDependencyPath(edge) {
+    clearHighlights();
+    cy.elements().addClass('dimmed');
+
+    const source = edge.source();
+    const target = edge.target();
+
+    source.removeClass('dimmed').addClass('dependency-source');
+    target.removeClass('dimmed').addClass('dependency-target');
+    edge.removeClass('dimmed').addClass('highlighted');
+
+    cy.fit(source.union(target), 50);
+}
+
+function focusOnNode(node) {
+    // Get the node and its direct neighborhood (1-hop connections)
+    const neighborhood = node.neighborhood();
+    const focusElements = node.union(neighborhood);
+
+    // Dim all elements, then highlight focused ones
+    cy.elements().addClass('dimmed');
+    focusElements.removeClass('dimmed');
+
+    // Highlight the selected node
+    node.addClass('highlighted');
+
+    // Fit to the focused elements
+    cy.fit(focusElements, 80);
+}
+
+function clearHighlights() {
+    cy.elements().removeClass('hidden highlighted dimmed dependency-source dependency-target search-match');
+}
+
+// =====================================================
+// 7. Analysis Features
+// =====================================================
+
 function setupAnalysisButtons() {
-    const showDependents = document.getElementById('show-dependents');
-    const showDependencies = document.getElementById('show-dependencies');
-    const showImpact = document.getElementById('show-impact');
+    document.getElementById('show-dependents')?.addEventListener('click', () => {
+        if (selectedNode) showDependents(selectedNode);
+    });
 
-    if (showDependents) {
-        showDependents.addEventListener('click', () => {
-            if (selectedNode) {
-                showNodeDependents(selectedNode);
-            }
-        });
-    }
+    document.getElementById('show-dependencies')?.addEventListener('click', () => {
+        if (selectedNode) showDependencies(selectedNode);
+    });
 
-    if (showDependencies) {
-        showDependencies.addEventListener('click', () => {
-            if (selectedNode) {
-                showNodeDependencies(selectedNode);
-            }
-        });
-    }
-
-    if (showImpact) {
-        showImpact.addEventListener('click', () => {
-            if (selectedNode) {
-                showFullImpact(selectedNode);
-            }
-        });
-    }
+    document.getElementById('show-impact')?.addEventListener('click', () => {
+        if (selectedNode) showFullImpact(selectedNode);
+    });
 }
 
-// Show all nodes that depend on the selected node (who uses this?)
-function showNodeDependents(node) {
+function enableAnalysisButtons(enabled) {
+    ['show-dependents', 'show-dependencies', 'show-impact'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.disabled = !enabled;
+    });
+    document.getElementById('analysis-hint').style.display = enabled ? 'none' : 'block';
+}
+
+function showDependents(node) {
     clearHighlights();
-
-    const dependents = new Set();
-    const visitedEdges = new Set();
-
-    function findDependents(n, depth) {
-        if (depth > 10) return; // Limit recursion
-
-        // Find all edges where this node is the target
-        const incomingEdges = n.incomers('edge');
-        incomingEdges.forEach(edge => {
-            if (!visitedEdges.has(edge.id())) {
-                visitedEdges.add(edge.id());
-                const source = edge.source();
-                dependents.add(source.id());
-                findDependents(source, depth + 1);
-            }
-        });
-    }
-
-    findDependents(node, 0);
-
-    // Highlight the results
     cy.elements().addClass('dimmed');
-    node.removeClass('dimmed').addClass('highlighted');
-
-    dependents.forEach(id => {
-        const n = cy.getElementById(id);
-        n.removeClass('dimmed').addClass('highlighted');
-    });
-
-    visitedEdges.forEach(id => {
-        const e = cy.getElementById(id);
-        e.removeClass('dimmed').addClass('highlighted');
-    });
-
-    // Show count
-    showAnalysisResult(`${dependents.size} modules depend on ${node.data('label')}`);
+    node.removeClass('dimmed').addClass('dependency-source');
+    node.incomers().removeClass('dimmed').addClass('highlighted');
 }
 
-// Show all nodes that the selected node depends on (what does this use?)
-function showNodeDependencies(node) {
+function showDependencies(node) {
     clearHighlights();
-
-    const dependencies = new Set();
-    const visitedEdges = new Set();
-
-    function findDependencies(n, depth) {
-        if (depth > 10) return;
-
-        // Find all edges where this node is the source
-        const outgoingEdges = n.outgoers('edge');
-        outgoingEdges.forEach(edge => {
-            if (!visitedEdges.has(edge.id())) {
-                visitedEdges.add(edge.id());
-                const target = edge.target();
-                dependencies.add(target.id());
-                findDependencies(target, depth + 1);
-            }
-        });
-    }
-
-    findDependencies(node, 0);
-
-    // Highlight the results
     cy.elements().addClass('dimmed');
-    node.removeClass('dimmed').addClass('highlighted');
-
-    dependencies.forEach(id => {
-        const n = cy.getElementById(id);
-        n.removeClass('dimmed').addClass('highlighted');
-    });
-
-    visitedEdges.forEach(id => {
-        const e = cy.getElementById(id);
-        e.removeClass('dimmed').addClass('highlighted');
-    });
-
-    showAnalysisResult(`${node.data('label')} depends on ${dependencies.size} modules`);
+    node.removeClass('dimmed').addClass('dependency-target');
+    node.outgoers().removeClass('dimmed').addClass('highlighted');
 }
 
-// Show full impact (both directions)
 function showFullImpact(node) {
     clearHighlights();
 
-    const allNodes = new Set([node.id()]);
-    const allEdges = new Set();
+    const visited = new Set();
+    const toVisit = [node];
 
-    function traverse(n, depth) {
-        if (depth > 5) return;
+    while (toVisit.length > 0) {
+        const current = toVisit.shift();
+        if (visited.has(current.id())) continue;
+        visited.add(current.id());
 
-        n.connectedEdges().forEach(edge => {
-            if (!allEdges.has(edge.id())) {
-                allEdges.add(edge.id());
-                const other = edge.source().id() === n.id() ? edge.target() : edge.source();
-                if (!allNodes.has(other.id())) {
-                    allNodes.add(other.id());
-                    traverse(other, depth + 1);
-                }
-            }
+        current.connectedEdges().forEach(edge => {
+            const other = edge.source().id() === current.id() ? edge.target() : edge.source();
+            if (!visited.has(other.id())) toVisit.push(other);
         });
     }
 
-    traverse(node, 0);
-
     cy.elements().addClass('dimmed');
-
-    allNodes.forEach(id => {
-        cy.getElementById(id).removeClass('dimmed').addClass('highlighted');
+    visited.forEach(id => {
+        const n = cy.getElementById(id);
+        n.removeClass('dimmed').addClass('highlighted');
+        n.connectedEdges().filter(e => visited.has(e.source().id()) && visited.has(e.target().id()))
+            .removeClass('dimmed').addClass('highlighted');
     });
 
-    allEdges.forEach(id => {
-        cy.getElementById(id).removeClass('dimmed').addClass('highlighted');
+    node.addClass('dependency-source');
+}
+
+function setupClusterView() {
+    const colors = ['#3b82f6', '#22c55e', '#eab308', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
+
+    document.getElementById('detect-clusters')?.addEventListener('click', () => {
+        const visited = new Set();
+        const clusters = [];
+
+        cy.nodes().forEach(node => {
+            if (visited.has(node.id())) return;
+
+            const cluster = [];
+            const queue = [node];
+
+            while (queue.length > 0) {
+                const current = queue.shift();
+                if (visited.has(current.id())) continue;
+                visited.add(current.id());
+                cluster.push(current);
+
+                current.neighborhood('node').forEach(neighbor => {
+                    if (!visited.has(neighbor.id())) queue.push(neighbor);
+                });
+            }
+
+            if (cluster.length > 0) clusters.push(cluster);
+        });
+
+        clusters.forEach((cluster, idx) => {
+            const color = colors[idx % colors.length];
+            cluster.forEach(node => node.style('background-color', color));
+        });
+
+        const infoContainer = document.getElementById('cluster-info');
+        if (infoContainer) {
+            infoContainer.innerHTML = clusters.map((cluster, idx) => `
+                <div class="cluster-item">
+                    <span class="cluster-color" style="background: ${colors[idx % colors.length]}"></span>
+                    <span>Cluster ${idx + 1}: ${cluster.length} modules</span>
+                </div>
+            `).join('');
+        }
     });
 
-    showAnalysisResult(`Impact: ${allNodes.size} modules, ${allEdges.size} connections`);
+    document.getElementById('clear-clusters')?.addEventListener('click', () => {
+        cy.nodes().forEach(node => node.style('background-color', getHealthColor(node.data('health'))));
+        document.getElementById('cluster-info').innerHTML = '';
+    });
 }
-
-function showAnalysisResult(message) {
-    const hint = document.querySelector('.panel .hint');
-    if (hint) {
-        hint.textContent = message;
-        hint.style.fontStyle = 'normal';
-        hint.style.color = 'var(--accent-blue)';
-    }
-}
-
-// =====================
-// Issue List Functions
-// =====================
 
 function populateIssueList() {
     const container = document.getElementById('issue-list');
-    const countBadge = document.getElementById('issue-count');
-
+    const countEl = document.getElementById('issue-count');
     if (!container || !graphData) return;
 
-    // Collect all issues from edges
-    const issues = [];
-    graphData.edges.forEach(edge => {
-        if (edge.issue) {
-            issues.push({
-                ...edge.issue,
-                source: edge.source,
-                target: edge.target,
-                edgeId: edge.id
-            });
-        }
-        if (edge.in_cycle) {
-            issues.push({
-                type: 'CircularDependency',
-                severity: 'Critical',
-                description: 'Part of circular dependency',
-                source: edge.source,
-                target: edge.target,
-                edgeId: edge.id
-            });
-        }
-    });
+    const issues = graphData.edges
+        .filter(e => e.issue)
+        .map(e => ({ ...e.issue, source: e.source, target: e.target }))
+        .sort((a, b) => getSeverityOrder(a.severity) - getSeverityOrder(b.severity));
 
-    // Sort by severity
-    const severityOrder = { Critical: 0, High: 1, Medium: 2, Low: 3 };
-    issues.sort((a, b) => (severityOrder[a.severity] || 4) - (severityOrder[b.severity] || 4));
-
-    // Update count badge
-    if (countBadge) {
-        countBadge.textContent = issues.length;
-    }
+    countEl.textContent = issues.length;
 
     if (issues.length === 0) {
-        container.innerHTML = '<p class="placeholder">No issues detected</p>';
+        container.innerHTML = '<p class="placeholder" style="color: var(--accent-green);">No issues detected</p>';
         return;
     }
 
-    container.innerHTML = issues.map(issue => `
-        <div class="issue-item" data-edge-id="${issue.edgeId}">
-            <span class="severity ${issue.severity.toLowerCase()}"></span>
+    container.innerHTML = issues.slice(0, 20).map(issue => `
+        <div class="issue-item" data-source="${issue.source}" data-target="${issue.target}">
+            <span class="severity ${issue.severity?.toLowerCase()}"></span>
             <div class="content">
-                <span class="type">${issue.type}</span>
-                <span class="target">${issue.source} → ${issue.target}</span>
+                <div class="type">${formatIssueType(issue.issue_type)}</div>
+                <div class="target">${issue.source} → ${issue.target}</div>
             </div>
         </div>
     `).join('');
 
-    // Add click handlers
     container.querySelectorAll('.issue-item').forEach(item => {
         item.addEventListener('click', () => {
-            const edgeId = item.dataset.edgeId;
-            const edge = cy.getElementById(edgeId);
+            const edge = cy.getElementById(`${item.dataset.source}-${item.dataset.target}`);
             if (edge.length > 0) {
                 highlightDependencyPath(edge);
                 showEdgeDetails(edge.data());
@@ -1271,400 +709,374 @@ function populateIssueList() {
     });
 }
 
-// =====================
-// Cluster View Functions
-// =====================
+// =====================================================
+// 8. Job-focused Features
+// =====================================================
 
-const clusterColors = [
-    '#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6',
-    '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1'
-];
-
-function setupClusterView() {
-    const detectBtn = document.getElementById('detect-clusters');
-    const clearBtn = document.getElementById('clear-clusters');
-
-    if (detectBtn) {
-        detectBtn.addEventListener('click', detectClusters);
-    }
-
-    if (clearBtn) {
-        clearBtn.addEventListener('click', clearClusterColors);
-    }
+function setupJobButtons() {
+    document.getElementById('job-entry-points')?.addEventListener('click', showEntryPoints);
+    document.getElementById('job-path-finder')?.addEventListener('click', togglePathFinder);
+    document.getElementById('job-simple-view')?.addEventListener('click', toggleSimpleView);
+    document.getElementById('job-what-breaks')?.addEventListener('click', showWhatBreaks);
+    document.getElementById('find-path-btn')?.addEventListener('click', findPath);
 }
 
-function detectClusters() {
-    // Simple clustering based on connected components
-    const visited = new Set();
-    const clusters = [];
-
-    cy.nodes().forEach(node => {
-        if (!visited.has(node.id())) {
-            const cluster = [];
-            const queue = [node];
-
-            while (queue.length > 0) {
-                const current = queue.shift();
-                if (!visited.has(current.id())) {
-                    visited.add(current.id());
-                    cluster.push(current);
-
-                    // Add connected nodes
-                    current.neighborhood('node').forEach(neighbor => {
-                        if (!visited.has(neighbor.id())) {
-                            queue.push(neighbor);
-                        }
-                    });
-                }
-            }
-
-            if (cluster.length > 0) {
-                clusters.push(cluster);
-            }
-        }
-    });
-
-    // Sort clusters by size (largest first)
-    clusters.sort((a, b) => b.length - a.length);
-
-    // Apply colors to clusters
-    clusters.forEach((cluster, idx) => {
-        const color = clusterColors[idx % clusterColors.length];
-        cluster.forEach(node => {
-            node.style('background-color', color);
-        });
-    });
-
-    // Update cluster info
-    updateClusterInfo(clusters);
+function updateWhatBreaksButton() {
+    const btn = document.getElementById('job-what-breaks');
+    if (btn) btn.disabled = !selectedNode;
 }
 
-function updateClusterInfo(clusters) {
-    const container = document.getElementById('cluster-info');
-    if (!container) return;
+// Entry Points - "Where should I start reading?"
+function showEntryPoints() {
+    const resultContainer = document.getElementById('job-result');
+    if (!resultContainer || !graphData) return;
 
-    if (clusters.length === 0) {
-        container.innerHTML = '<p class="placeholder">No clusters detected</p>';
+    const modules = graphData.nodes.map(node => {
+        const inDegree = node.metrics?.couplings_in || 0;
+        const outDegree = node.metrics?.couplings_out || 0;
+        let score = inDegree * 2 - outDegree;
+        if (node.metrics?.health === 'good') score += 10;
+        if (node.in_cycle) score -= 20;
+
+        let reason = inDegree > outDegree * 2 ? 'Core module' :
+                     outDegree === 0 ? 'Leaf module' :
+                     inDegree > 5 ? 'Central hub' : 'Starting point';
+
+        return { id: node.id, label: node.label, score, reason };
+    }).sort((a, b) => b.score - a.score).slice(0, 5);
+
+    resultContainer.innerHTML = `
+        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+            Start reading from these modules:
+        </div>
+        <div class="entry-points-list">
+            ${modules.map((m, idx) => `
+                <div class="entry-point-item" data-node-id="${m.id}">
+                    <span class="rank">${idx + 1}</span>
+                    <span class="name">${m.label}</span>
+                    <span class="reason">${m.reason}</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+
+    attachNodeClickHandlers(resultContainer, '.entry-point-item');
+
+    // Highlight on graph
+    clearHighlights();
+    cy.elements().addClass('dimmed');
+    modules.forEach(m => cy.getElementById(m.id).removeClass('dimmed').addClass('highlighted'));
+}
+
+// Path Finder - "How does A connect to B?"
+function togglePathFinder() {
+    const panel = document.getElementById('path-finder-panel');
+    if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function populatePathFinderSelects() {
+    const fromSelect = document.getElementById('path-from');
+    const toSelect = document.getElementById('path-to');
+    if (!fromSelect || !toSelect || !graphData) return;
+
+    const options = graphData.nodes.map(n => `<option value="${n.id}">${n.label}</option>`).join('');
+    fromSelect.innerHTML = '<option value="">From module...</option>' + options;
+    toSelect.innerHTML = '<option value="">To module...</option>' + options;
+}
+
+function findPath() {
+    const fromId = document.getElementById('path-from')?.value;
+    const toId = document.getElementById('path-to')?.value;
+    const resultContainer = document.getElementById('path-result');
+
+    if (!fromId || !toId) {
+        resultContainer.innerHTML = '<div class="path-not-found">Select both modules</div>';
         return;
     }
 
-    container.innerHTML = clusters.slice(0, 10).map((cluster, idx) => {
-        const color = clusterColors[idx % clusterColors.length];
-        const names = cluster.slice(0, 3).map(n => n.data('label')).join(', ');
-        const more = cluster.length > 3 ? ` +${cluster.length - 3}` : '';
-        return `
-            <div class="cluster-item">
-                <span class="cluster-color" style="background: ${color}"></span>
-                <span>${cluster.length} modules: ${names}${more}</span>
+    if (fromId === toId) {
+        resultContainer.innerHTML = '<div class="path-not-found">Select different modules</div>';
+        return;
+    }
+
+    // BFS for shortest path
+    const visited = new Set();
+    const queue = [[fromId]];
+    let foundPath = null;
+
+    while (queue.length > 0 && !foundPath) {
+        const path = queue.shift();
+        const current = path[path.length - 1];
+
+        if (current === toId) {
+            foundPath = path;
+            break;
+        }
+
+        if (visited.has(current)) continue;
+        visited.add(current);
+
+        cy.getElementById(current).outgoers('edge').forEach(edge => {
+            const target = edge.target().id();
+            if (!visited.has(target)) queue.push([...path, target]);
+        });
+    }
+
+    if (!foundPath) {
+        const fromLabel = graphData.nodes.find(n => n.id === fromId)?.label;
+        const toLabel = graphData.nodes.find(n => n.id === toId)?.label;
+        resultContainer.innerHTML = `<div class="path-not-found">No path from ${fromLabel} to ${toLabel}</div>`;
+        return;
+    }
+
+    resultContainer.innerHTML = `
+        <div class="path-found">Path found! ${foundPath.length} modules, ${foundPath.length - 1} steps</div>
+        <div class="path-chain">
+            ${foundPath.map((nodeId, idx) => {
+                const node = graphData.nodes.find(n => n.id === nodeId);
+                const cls = idx === 0 ? 'start' : idx === foundPath.length - 1 ? 'end' : 'intermediate';
+                const arrow = idx < foundPath.length - 1 ? '<div class="path-arrow">↓ depends on</div>' : '';
+                return `<div class="path-node ${cls}" data-node-id="${nodeId}">${node?.label || nodeId}</div>${arrow}`;
+            }).join('')}
+        </div>
+    `;
+
+    // Highlight path
+    clearHighlights();
+    cy.elements().addClass('dimmed');
+    foundPath.forEach((nodeId, idx) => {
+        const node = cy.getElementById(nodeId);
+        node.removeClass('dimmed').addClass('highlighted');
+        if (idx < foundPath.length - 1) {
+            node.edgesTo(cy.getElementById(foundPath[idx + 1])).removeClass('dimmed').addClass('highlighted');
+        }
+    });
+
+    cy.fit(cy.collection(foundPath.map(id => cy.getElementById(id))), 50);
+    attachNodeClickHandlers(resultContainer, '.path-node');
+}
+
+// Simple View - "Show simplified architecture"
+function toggleSimpleView() {
+    isSimpleView = !isSimpleView;
+    const btn = document.getElementById('job-simple-view');
+
+    if (isSimpleView) {
+        btn?.classList.add('active');
+        applySimpleView();
+    } else {
+        btn?.classList.remove('active');
+        removeSimpleView();
+    }
+}
+
+function applySimpleView() {
+    cy.edges().forEach(edge => {
+        const strength = edge.data('strength') || 0;
+        const balance = edge.data('balance') || 0.5;
+        if (strength < 0.5 && balance > 0.6) edge.addClass('hidden');
+    });
+
+    cy.nodes().forEach(node => {
+        if (node.connectedEdges().filter(e => !e.hasClass('hidden')).length === 0) {
+            node.addClass('hidden');
+        }
+    });
+
+    const indicator = document.createElement('div');
+    indicator.id = 'simple-view-indicator';
+    indicator.className = 'simple-view-active';
+    indicator.innerHTML = '📊 Simplified View (click to exit)';
+    indicator.onclick = toggleSimpleView;
+    document.body.appendChild(indicator);
+
+    applyLayout('concentric');
+}
+
+function removeSimpleView() {
+    cy.elements().removeClass('hidden');
+    document.getElementById('simple-view-indicator')?.remove();
+    applyLayout(currentLayout);
+}
+
+// What Breaks? - "What might break if I change this?"
+function showWhatBreaks() {
+    if (!selectedNode) return;
+
+    const resultContainer = document.getElementById('job-result');
+    if (!resultContainer) return;
+
+    const affected = [];
+    const visited = new Set();
+
+    function findDependents(nodeId, depth) {
+        if (depth > 5 || visited.has(nodeId)) return;
+        visited.add(nodeId);
+
+        cy.getElementById(nodeId).incomers('edge').forEach(edge => {
+            const source = edge.source();
+            const sourceId = source.id();
+
+            if (!visited.has(sourceId)) {
+                const strength = edge.data('strength') || 0.5;
+                let risk = 'low';
+                if (depth === 0 && strength > 0.7) risk = 'high';
+                else if (depth <= 1 && strength > 0.5) risk = 'medium';
+
+                affected.push({ id: sourceId, label: source.data('label'), depth, risk });
+                findDependents(sourceId, depth + 1);
+            }
+        });
+    }
+
+    findDependents(selectedNode.id(), 0);
+
+    if (affected.length === 0) {
+        resultContainer.innerHTML = `
+            <div style="padding: 0.5rem; background: rgba(34, 197, 94, 0.1); border-radius: 0.375rem; color: var(--accent-green);">
+                ✓ No modules depend on ${selectedNode.data('label')}
             </div>
         `;
-    }).join('');
-}
-
-function clearClusterColors() {
-    cy.nodes().forEach(node => {
-        const health = node.data('health');
-        let color;
-        if (health === 'critical') color = '#ef4444';
-        else if (health === 'needs_review') color = '#eab308';
-        else if (health === 'acceptable') color = '#4ade80';
-        else color = '#22c55e';
-        node.style('background-color', color);
-    });
-
-    const container = document.getElementById('cluster-info');
-    if (container) {
-        container.innerHTML = '';
-    }
-}
-
-// =====================
-// Resizable Sidebar
-// =====================
-
-function setupResizableSidebar() {
-    const sidebar = document.querySelector('.sidebar');
-    const main = document.querySelector('.main');
-    if (!sidebar || !main) return;
-
-    // Create resize handle
-    const handle = document.createElement('div');
-    handle.className = 'resize-handle';
-    handle.title = 'Drag to resize, double-click to reset';
-    sidebar.insertBefore(handle, sidebar.firstChild);
-
-    // Restore saved width
-    const savedWidth = localStorage.getItem('sidebar-width');
-    if (savedWidth) {
-        const width = parseInt(savedWidth, 10);
-        if (width >= 280 && width <= 800) {
-            sidebar.style.width = width + 'px';
-        }
+        return;
     }
 
-    let isResizing = false;
-    let startX = 0;
-    let startWidth = 0;
+    const riskOrder = { high: 0, medium: 1, low: 2 };
+    affected.sort((a, b) => riskOrder[a.risk] - riskOrder[b.risk]);
 
-    const startResize = (e) => {
-        isResizing = true;
-        startX = e.clientX || e.touches?.[0]?.clientX || 0;
-        startWidth = sidebar.offsetWidth;
-        handle.classList.add('active');
-        sidebar.classList.add('resizing');
-        document.body.classList.add('resizing-sidebar');
-        e.preventDefault();
-    };
+    const highRisk = affected.filter(a => a.risk === 'high').length;
+    const mediumRisk = affected.filter(a => a.risk === 'medium').length;
 
-    const doResize = (e) => {
-        if (!isResizing) return;
+    resultContainer.innerHTML = `
+        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+            Changing <strong>${selectedNode.data('label')}</strong> may affect:
+        </div>
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem; font-size: 0.75rem;">
+            ${highRisk > 0 ? `<span style="color: var(--accent-red);">⚠️ ${highRisk} high</span>` : ''}
+            ${mediumRisk > 0 ? `<span style="color: var(--accent-yellow);">⚡ ${mediumRisk} medium</span>` : ''}
+            <span style="color: var(--text-secondary);">${affected.length} total</span>
+        </div>
+        <div class="breaks-list">
+            ${affected.slice(0, 10).map(m => `
+                <div class="breaks-item" data-node-id="${m.id}">
+                    <span class="risk ${m.risk}">${m.risk}</span>
+                    <span style="flex: 1;">${m.label}</span>
+                    <span style="font-size: 0.6875rem; color: var(--text-secondary);">${m.depth === 0 ? 'direct' : `${m.depth} hops`}</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
 
-        const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
-        const deltaX = startX - clientX;
-        let newWidth = startWidth + deltaX;
-
-        // Clamp to min/max
-        newWidth = Math.max(280, Math.min(800, newWidth));
-
-        sidebar.style.width = newWidth + 'px';
-
-        // Resize graph in real-time
-        if (cy) {
-            cy.resize();
-        }
-    };
-
-    const stopResize = () => {
-        if (isResizing) {
-            isResizing = false;
-            handle.classList.remove('active');
-            sidebar.classList.remove('resizing');
-            document.body.classList.remove('resizing-sidebar');
-
-            // Save width
-            localStorage.setItem('sidebar-width', sidebar.offsetWidth);
-
-            // Final graph resize
-            if (cy) {
-                cy.resize();
-                cy.fit(undefined, 50);
-            }
-        }
-    };
-
-    // Mouse events
-    handle.addEventListener('mousedown', startResize);
-    document.addEventListener('mousemove', doResize);
-    document.addEventListener('mouseup', stopResize);
-
-    // Touch events for mobile
-    handle.addEventListener('touchstart', startResize, { passive: false });
-    document.addEventListener('touchmove', doResize, { passive: false });
-    document.addEventListener('touchend', stopResize);
-
-    // Double-click to reset
-    handle.addEventListener('dblclick', () => {
-        sidebar.style.width = '360px';
-        localStorage.setItem('sidebar-width', '360');
-        if (cy) {
-            cy.resize();
-            cy.fit(undefined, 50);
-        }
+    // Highlight
+    clearHighlights();
+    cy.elements().addClass('dimmed');
+    selectedNode.removeClass('dimmed').addClass('dependency-source');
+    affected.forEach(m => {
+        const node = cy.getElementById(m.id);
+        node.removeClass('dimmed');
+        if (m.risk === 'high') node.addClass('dependency-target');
+        else node.addClass('highlighted');
     });
+
+    attachNodeClickHandlers(resultContainer, '.breaks-item');
 }
 
-// =====================
-// JTBD: Job-focused Features
-// =====================
-
-// Populate hotspots panel (Refactoring prioritization)
+// Hotspots & Module Rankings
 function populateHotspots() {
     const container = document.getElementById('hotspot-list');
     if (!container || !graphData) return;
 
-    // Calculate hotspot scores for each module
     const hotspots = graphData.nodes.map(node => {
-        // Score based on: issues count, coupling count, and health
         let score = 0;
-        const nodeId = node.id;
-
-        // Count issues related to this node
-        const relatedIssues = graphData.edges.filter(edge =>
-            (edge.source === nodeId || edge.target === nodeId) && edge.issue
-        ).length;
+        const relatedIssues = graphData.edges.filter(e => (e.source === node.id || e.target === node.id) && e.issue).length;
         score += relatedIssues * 30;
-
-        // Add coupling count
-        const couplingCount = (node.metrics?.couplings_out || 0) + (node.metrics?.couplings_in || 0);
-        score += couplingCount * 5;
-
-        // Add health penalty
+        score += ((node.metrics?.couplings_out || 0) + (node.metrics?.couplings_in || 0)) * 5;
         if (node.metrics?.health === 'critical') score += 50;
         else if (node.metrics?.health === 'needs_review') score += 20;
-
-        // Add cycle penalty
         if (node.in_cycle) score += 40;
-
-        return {
-            id: nodeId,
-            label: node.label,
-            score,
-            issues: relatedIssues,
-            couplings: couplingCount,
-            health: node.metrics?.health || 'unknown',
-            inCycle: node.in_cycle
-        };
-    }).filter(h => h.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
-
-    if (hotspots.length === 0) {
-        container.innerHTML = '<p class="placeholder" style="color: var(--accent-green);">No hotspots detected</p>';
-        return;
-    }
-
-    container.innerHTML = hotspots.map((h, idx) => {
-        const severityClass = h.health === 'critical' ? 'critical' : h.health === 'needs_review' ? 'warning' : '';
-        return `
-            <div class="hotspot-item ${severityClass}" data-node-id="${h.id}">
-                <div class="hotspot-rank">${idx + 1}</div>
-                <div class="hotspot-info">
-                    <div class="hotspot-name">${h.label}</div>
-                    <div class="hotspot-score">
-                        ${h.issues} issues · ${h.couplings} couplings
-                        ${h.inCycle ? ' · <span style="color: var(--accent-red);">cycle</span>' : ''}
-                    </div>
-                </div>
-            </div>
-        `;
-    }).join('');
-
-    // Add click handlers
-    container.querySelectorAll('.hotspot-item').forEach(item => {
-        item.addEventListener('click', () => {
-            const nodeId = item.dataset.nodeId;
-            const node = cy.getElementById(nodeId);
-            if (node.length > 0) {
-                selectedNode = node;
-                highlightNeighbors(node);
-                centerOnNode(node);
-                showNodeDetails(node.data());
-                enableAnalysisButtons(true);
-            }
-        });
-    });
-}
-
-// Populate module rankings (Architecture overview)
-function populateModuleRankings(sortBy = 'connections') {
-    const container = document.getElementById('module-rankings');
-    if (!container || !graphData) return;
-
-    let modules = graphData.nodes.map(node => {
-        const couplings = (node.metrics?.couplings_out || 0) + (node.metrics?.couplings_in || 0);
-        const issues = graphData.edges.filter(edge =>
-            (edge.source === node.id || edge.target === node.id) && edge.issue
-        ).length;
-        const balanceScore = node.metrics?.balance_score || 0.5;
 
         return {
             id: node.id,
             label: node.label,
-            connections: couplings,
-            issues,
-            health: balanceScore,
-            healthLabel: node.metrics?.health || 'unknown'
+            score,
+            issues: relatedIssues,
+            health: node.metrics?.health || 'unknown',
+            inCycle: node.in_cycle
         };
-    });
+    }).filter(h => h.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
 
-    // Sort based on selected criteria
-    switch (sortBy) {
-        case 'connections':
-            modules.sort((a, b) => b.connections - a.connections);
-            break;
-        case 'issues':
-            modules.sort((a, b) => b.issues - a.issues);
-            break;
-        case 'health':
-            modules.sort((a, b) => a.health - b.health); // Lower health first (worse first)
-            break;
+    if (hotspots.length === 0) {
+        container.innerHTML = '<p class="placeholder" style="color: var(--accent-green);">No hotspots</p>';
+        return;
     }
 
-    // Take top 8
+    container.innerHTML = hotspots.map((h, idx) => `
+        <div class="hotspot-item ${h.health === 'critical' ? 'critical' : h.health === 'needs_review' ? 'warning' : ''}" data-node-id="${h.id}">
+            <div class="hotspot-rank">${idx + 1}</div>
+            <div class="hotspot-info">
+                <div class="hotspot-name">${h.label}</div>
+                <div class="hotspot-score">${h.issues} issues${h.inCycle ? ' · <span style="color: var(--accent-red);">cycle</span>' : ''}</div>
+            </div>
+        </div>
+    `).join('');
+
+    attachNodeClickHandlers(container, '.hotspot-item');
+}
+
+function populateModuleRankings(sortBy = 'connections') {
+    const container = document.getElementById('module-rankings');
+    if (!container || !graphData) return;
+
+    let modules = graphData.nodes.map(node => ({
+        id: node.id,
+        label: node.label,
+        connections: (node.metrics?.couplings_out || 0) + (node.metrics?.couplings_in || 0),
+        issues: graphData.edges.filter(e => (e.source === node.id || e.target === node.id) && e.issue).length,
+        health: node.metrics?.balance_score || 0.5
+    }));
+
+    if (sortBy === 'connections') modules.sort((a, b) => b.connections - a.connections);
+    else if (sortBy === 'issues') modules.sort((a, b) => b.issues - a.issues);
+    else modules.sort((a, b) => a.health - b.health);
+
     const topModules = modules.slice(0, 8);
-    const maxValue = Math.max(...topModules.map(m => {
-        switch (sortBy) {
-            case 'connections': return m.connections;
-            case 'issues': return m.issues;
-            case 'health': return 1 - m.health;
-            default: return 1;
-        }
-    }), 1);
+    const maxValue = Math.max(...topModules.map(m =>
+        sortBy === 'connections' ? m.connections : sortBy === 'issues' ? m.issues : 1 - m.health
+    ), 1);
 
     container.innerHTML = topModules.map(m => {
-        let value, displayValue;
-        switch (sortBy) {
-            case 'connections':
-                value = m.connections;
-                displayValue = `${m.connections} connections`;
-                break;
-            case 'issues':
-                value = m.issues;
-                displayValue = `${m.issues} issues`;
-                break;
-            case 'health':
-                value = 1 - m.health;
-                displayValue = `${(m.health * 100).toFixed(0)}% health`;
-                break;
-        }
-        const percent = maxValue > 0 ? (value / maxValue) * 100 : 0;
+        const value = sortBy === 'connections' ? m.connections : sortBy === 'issues' ? m.issues : 1 - m.health;
+        const display = sortBy === 'connections' ? `${m.connections} conn` :
+                        sortBy === 'issues' ? `${m.issues} issues` : `${(m.health * 100).toFixed(0)}%`;
+        const percent = (value / maxValue) * 100;
 
         return `
             <div class="module-rank-item" data-node-id="${m.id}">
-                <span style="width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.8125rem;">${m.label}</span>
-                <div class="module-rank-bar">
-                    <div class="module-rank-fill" style="width: ${percent}%"></div>
-                </div>
-                <span style="font-size: 0.6875rem; color: var(--text-secondary); min-width: 60px; text-align: right;">${displayValue}</span>
+                <span style="width: 80px; overflow: hidden; text-overflow: ellipsis; font-size: 0.8125rem;">${m.label}</span>
+                <div class="module-rank-bar"><div class="module-rank-fill" style="width: ${percent}%"></div></div>
+                <span style="font-size: 0.6875rem; color: var(--text-secondary); min-width: 50px; text-align: right;">${display}</span>
             </div>
         `;
     }).join('');
 
-    // Add click handlers
-    container.querySelectorAll('.module-rank-item').forEach(item => {
-        item.addEventListener('click', () => {
-            const nodeId = item.dataset.nodeId;
-            const node = cy.getElementById(nodeId);
-            if (node.length > 0) {
-                selectedNode = node;
-                highlightNeighbors(node);
-                centerOnNode(node);
-                showNodeDetails(node.data());
-                enableAnalysisButtons(true);
-            }
-        });
-    });
+    attachNodeClickHandlers(container, '.module-rank-item');
 }
 
-// Setup module ranking sorting buttons
 function setupModuleRankingSorting() {
-    const buttons = document.querySelectorAll('.quick-action[data-sort]');
-    buttons.forEach(btn => {
+    document.querySelectorAll('.quick-action[data-sort]').forEach(btn => {
         btn.addEventListener('click', () => {
-            buttons.forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.quick-action[data-sort]').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             populateModuleRankings(btn.dataset.sort);
         });
     });
 }
 
-// Show blast radius stats (Change Impact)
+// Blast Radius
 function showBlastRadius(node) {
     const container = document.getElementById('blast-radius');
     const indicator = document.getElementById('analysis-mode-indicator');
     if (!container) return;
 
-    // Calculate blast radius
     const directDeps = node.neighborhood('node').length;
     const allConnected = new Set([node.id()]);
     const allEdges = new Set();
@@ -1684,69 +1096,294 @@ function showBlastRadius(node) {
     }
     traverse(node, 0);
 
-    const totalNodes = graphData.nodes.length;
-    const impactPercent = Math.round((allConnected.size / totalNodes) * 100);
+    const impactPercent = Math.round((allConnected.size / graphData.nodes.length) * 100);
+    const riskClass = impactPercent > 50 ? 'high' : impactPercent > 25 ? 'medium' : 'low';
+    const riskLabel = impactPercent > 50 ? 'High Risk' : impactPercent > 25 ? 'Medium Risk' : 'Low Risk';
 
-    // Determine risk level
-    let riskClass = 'low';
-    let riskLabel = 'Low Risk';
-    if (impactPercent > 50) {
-        riskClass = 'high';
-        riskLabel = 'High Risk';
-    } else if (impactPercent > 25) {
-        riskClass = 'medium';
-        riskLabel = 'Medium Risk';
-    }
-
-    // Show analysis mode indicator
     if (indicator) {
         indicator.innerHTML = `
-            <div class="analysis-mode">
-                <span class="icon">🎯</span>
-                Analyzing: <strong>${node.data('label')}</strong>
-            </div>
-            <div class="risk-score ${riskClass}">
-                ${riskLabel}: ${impactPercent}% of codebase
-            </div>
+            <div class="analysis-mode"><span class="icon">🎯</span> Analyzing: <strong>${node.data('label')}</strong></div>
+            <div class="risk-score ${riskClass}">${riskLabel}: ${impactPercent}% of codebase</div>
         `;
     }
 
-    // Show blast radius stats
     container.style.display = 'block';
     container.innerHTML = `
         <div class="blast-stats count-animated">
-            <div class="blast-stat">
-                <span class="blast-stat-value">${directDeps}</span>
-                <span class="blast-stat-label">Direct Deps</span>
-            </div>
-            <div class="blast-stat">
-                <span class="blast-stat-value">${allConnected.size}</span>
-                <span class="blast-stat-label">Total Impact</span>
-            </div>
-            <div class="blast-stat">
-                <span class="blast-stat-value">${allEdges.size}</span>
-                <span class="blast-stat-label">Connections</span>
-            </div>
-            <div class="blast-stat">
-                <span class="blast-stat-value">${impactPercent}%</span>
-                <span class="blast-stat-label">Blast Radius</span>
-            </div>
+            <div class="blast-stat"><span class="blast-stat-value">${directDeps}</span><span class="blast-stat-label">Direct</span></div>
+            <div class="blast-stat"><span class="blast-stat-value">${allConnected.size}</span><span class="blast-stat-label">Total</span></div>
+            <div class="blast-stat"><span class="blast-stat-value">${allEdges.size}</span><span class="blast-stat-label">Edges</span></div>
+            <div class="blast-stat"><span class="blast-stat-value">${impactPercent}%</span><span class="blast-stat-label">Blast</span></div>
         </div>
     `;
 }
 
-// Clear blast radius display
 function clearBlastRadius() {
     const container = document.getElementById('blast-radius');
     const indicator = document.getElementById('analysis-mode-indicator');
-    if (container) {
-        container.style.display = 'none';
-        container.innerHTML = '';
+    if (container) { container.style.display = 'none'; container.innerHTML = ''; }
+    if (indicator) { indicator.innerHTML = ''; }
+}
+
+// =====================================================
+// 9. Auto-hide UI & Sidebar Resize
+// =====================================================
+
+function setupAutoHideTriggers() {
+    const header = document.getElementById('header');
+    const footer = document.getElementById('footer');
+    const sidebar = document.getElementById('sidebar');
+    const headerTrigger = document.getElementById('header-trigger');
+    const footerTrigger = document.getElementById('footer-trigger');
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+
+    // Header trigger zone
+    if (headerTrigger && header) {
+        headerTrigger.addEventListener('mouseenter', () => header.classList.add('visible'));
+        header.addEventListener('mouseleave', () => header.classList.remove('visible'));
     }
-    if (indicator) {
-        indicator.innerHTML = '';
+
+    // Footer trigger zone
+    if (footerTrigger && footer) {
+        footerTrigger.addEventListener('mouseenter', () => footer.classList.add('visible'));
+        footer.addEventListener('mouseleave', () => footer.classList.remove('visible'));
+    }
+
+    // Sidebar toggle button
+    if (sidebarToggle && sidebar) {
+        // Load saved state
+        const savedState = localStorage.getItem('sidebar-visible');
+        if (savedState === 'true') {
+            sidebar.classList.add('visible');
+        }
+
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('visible');
+            localStorage.setItem('sidebar-visible', sidebar.classList.contains('visible'));
+
+            // Resize graph when sidebar toggles
+            if (cy) {
+                setTimeout(() => {
+                    cy.resize();
+                    cy.fit(undefined, 50);
+                }, 350);
+            }
+        });
     }
 }
 
-// Start the app
+function setupResizableSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar) return;
+
+    const handle = document.createElement('div');
+    handle.className = 'resize-handle';
+    handle.title = 'Drag to resize';
+    sidebar.insertBefore(handle, sidebar.firstChild);
+
+    const savedWidth = localStorage.getItem('sidebar-width');
+    if (savedWidth) {
+        const width = parseInt(savedWidth, 10);
+        if (width >= 280 && width <= 800) sidebar.style.width = width + 'px';
+    }
+
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+    let resizeTimeout = null;
+
+    const startResize = (e) => {
+        isResizing = true;
+        startX = e.clientX || e.touches?.[0]?.clientX || 0;
+        startWidth = sidebar.offsetWidth;
+        handle.classList.add('active');
+        sidebar.classList.add('resizing');
+        document.body.classList.add('resizing-sidebar');
+        e.preventDefault();
+    };
+
+    const doResize = (e) => {
+        if (!isResizing) return;
+        const clientX = e.clientX || e.touches?.[0]?.clientX || 0;
+        const newWidth = Math.max(280, Math.min(800, startWidth + (startX - clientX)));
+        sidebar.style.width = newWidth + 'px';
+
+        if (cy) {
+            cy.resize();
+            if (resizeTimeout) clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => cy.fit(undefined, 30), 100);
+        }
+    };
+
+    const stopResize = () => {
+        if (!isResizing) return;
+        isResizing = false;
+        handle.classList.remove('active');
+        sidebar.classList.remove('resizing');
+        document.body.classList.remove('resizing-sidebar');
+        if (resizeTimeout) { clearTimeout(resizeTimeout); resizeTimeout = null; }
+        localStorage.setItem('sidebar-width', sidebar.offsetWidth);
+        if (cy) requestAnimationFrame(() => { cy.resize(); cy.fit(undefined, 50); });
+    };
+
+    handle.addEventListener('mousedown', startResize);
+    document.addEventListener('mousemove', doResize);
+    document.addEventListener('mouseup', stopResize);
+    handle.addEventListener('touchstart', startResize, { passive: false });
+    document.addEventListener('touchmove', doResize, { passive: false });
+    document.addEventListener('touchend', stopResize);
+
+    handle.addEventListener('dblclick', () => {
+        sidebar.style.width = '360px';
+        localStorage.setItem('sidebar-width', '360');
+        if (cy) { cy.resize(); cy.fit(undefined, 50); }
+    });
+}
+
+// =====================================================
+// 10. Utilities
+// =====================================================
+
+function showNodeDetails(data) {
+    const container = document.getElementById('details-content');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="detail-section">
+            <h4>Module</h4>
+            <div class="detail-row"><span class="detail-label">Name</span><span class="detail-value">${data.label}</span></div>
+            ${data.file_path ? `<div class="detail-row"><span class="detail-label">File</span><span class="detail-value file-path">${data.file_path}</span></div>` : ''}
+        </div>
+        <div class="detail-section">
+            <h4>Metrics</h4>
+            <div class="detail-row"><span class="detail-label">Outgoing</span><span class="detail-value">${data.couplings_out || 0}</span></div>
+            <div class="detail-row"><span class="detail-label">Incoming</span><span class="detail-value">${data.couplings_in || 0}</span></div>
+            <div class="detail-row"><span class="detail-label">Balance</span><span class="detail-value ${getHealthClass(data.balance_score)}">${((data.balance_score || 0) * 100).toFixed(0)}%</span></div>
+            <div class="detail-row"><span class="detail-label">Health</span><span class="detail-value ${getHealthClass(data.balance_score)}">${data.health || 'unknown'}</span></div>
+        </div>
+        ${data.file_path ? `<button class="btn-view-code" onclick="loadSourceCode('${data.file_path}', 1, 'details-content')"><span class="icon">📄</span> View Source</button>` : ''}
+    `;
+}
+
+function showEdgeDetails(data) {
+    const container = document.getElementById('details-content');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="detail-section">
+            <h4>Dependency</h4>
+            <div class="detail-row"><span class="detail-label">From</span><span class="detail-value">${data.source}</span></div>
+            <div class="detail-row"><span class="detail-label">To</span><span class="detail-value">${data.target}</span></div>
+        </div>
+        <div class="detail-section">
+            <h4>Coupling</h4>
+            <div class="detail-row"><span class="detail-label">Strength</span><span class="detail-value">${getStrengthName(data.strength)}</span></div>
+            <div class="detail-row"><span class="detail-label">Distance</span><span class="detail-value">${data.distance}</span></div>
+            <div class="detail-row"><span class="detail-label">Balance</span><span class="detail-value ${getHealthClass(data.balance)}">${((data.balance || 0) * 100).toFixed(0)}%</span></div>
+        </div>
+        ${data.issue ? `<div class="issue-badge ${data.issue.severity?.toLowerCase()}">${formatIssueType(data.issue.issue_type)}</div>` : ''}
+    `;
+}
+
+function clearDetails() {
+    const container = document.getElementById('details-content');
+    if (container) container.innerHTML = '<p class="placeholder">Click a node or edge</p>';
+}
+
+async function loadSourceCode(filePath, line, containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    try {
+        const response = await fetch(`/api/source?path=${encodeURIComponent(filePath)}&line=${line}&context=10`);
+        if (!response.ok) throw new Error('Failed to load');
+
+        const data = await response.json();
+        const sourceHtml = data.lines.map(l => `
+            <div class="source-line ${l.line === line ? 'highlight' : ''}">
+                <span class="line-number">${l.line}</span>
+                <span class="line-content">${escapeHtml(l.content)}</span>
+            </div>
+        `).join('');
+
+        container.innerHTML += `
+            <div class="source-code-container">
+                <div class="source-code-header">
+                    <div class="file-info"><span class="file-icon">📄</span><span class="file-name">${data.file_name}</span></div>
+                </div>
+                <div class="source-code-content">${sourceHtml}</div>
+            </div>
+        `;
+    } catch (e) {
+        console.error('Failed to load source:', e);
+    }
+}
+
+function attachNodeClickHandlers(container, selector) {
+    container.querySelectorAll(selector).forEach(item => {
+        item.addEventListener('click', () => {
+            const node = cy.getElementById(item.dataset.nodeId);
+            if (node.length > 0) selectNode(node);
+        });
+    });
+}
+
+// Helper functions
+function getStrengthValue(name) {
+    const map = { Intrusive: 1, Functional: 0.75, Model: 0.5, Contract: 0.25 };
+    return map[name] || 0.5;
+}
+
+function getStrengthName(value) {
+    if (value >= 0.9) return 'Intrusive';
+    if (value >= 0.6) return 'Functional';
+    if (value >= 0.4) return 'Model';
+    return 'Contract';
+}
+
+function getHealthColor(health) {
+    const colors = { good: '#22c55e', needs_review: '#eab308', critical: '#ef4444' };
+    return colors[health] || '#64748b';
+}
+
+function getBalanceColor(balance) {
+    if (balance >= 0.8) return '#22c55e';
+    if (balance >= 0.4) return '#eab308';
+    return '#ef4444';
+}
+
+function getDistanceStyle(distance) {
+    if (distance === 'SameModule' || distance === 'SameFunction') return 'solid';
+    if (distance === 'DifferentModule') return 'dashed';
+    return 'dotted';
+}
+
+function getHealthClass(score) {
+    if (score >= 0.8) return 'good';
+    if (score >= 0.4) return 'warning';
+    return 'critical';
+}
+
+function getSeverityOrder(severity) {
+    const order = { critical: 0, high: 1, medium: 2, low: 3 };
+    return order[severity?.toLowerCase()] ?? 4;
+}
+
+function formatIssueType(type) {
+    return type?.replace(/([A-Z])/g, ' $1').trim() || 'Issue';
+}
+
+function getCheckedValues(containerId) {
+    return Array.from(document.querySelectorAll(`#${containerId} input:checked`)).map(cb => cb.value);
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// =====================================================
+// Start Application
+// =====================================================
 document.addEventListener('DOMContentLoaded', init);
