@@ -54,7 +54,7 @@ cargo coupling --ai ./src
 Copy the output and use this prompt with Claude, Copilot, or any AI coding assistant:
 
 ```
-Analyze the coupling issues above from `cargo coupling --ai`.
+The following is the output of `cargo coupling --ai`, which analyzes coupling issues in a Rust project.
 For each issue, suggest specific code changes to reduce coupling.
 Focus on introducing traits, moving code closer, or breaking circular dependencies.
 ```
@@ -117,6 +117,10 @@ cargo coupling --hotspots --verbose ./src
 # Analyze change impact for a specific module
 cargo coupling --impact main ./src
 cargo coupling --impact analyzer ./src
+
+# Trace dependencies for a specific function or type
+cargo coupling --trace analyze_file ./src
+cargo coupling --trace BalanceScore ./src
 
 # CI/CD quality gate (exits with code 1 on failure)
 cargo coupling --check ./src
@@ -406,6 +410,7 @@ Options:
       --japanese, --jp          Japanese output with explanations (日本語)
       --git-months <MONTHS>     Git history period [default: 6]
       --no-git                  Skip Git analysis
+  -c, --config <CONFIG>         Config file path (default: .coupling.toml)
   -v, --verbose                 Verbose output with explanations
       --timing                  Show timing information
   -j, --jobs <N>                Number of threads (default: auto)
@@ -416,10 +421,12 @@ Web Visualization:
       --web                     Start interactive web UI
       --port <PORT>             Web server port [default: 3000]
       --no-open                 Don't auto-open browser
+      --api-endpoint <URL>      API endpoint URL (for separate deployments)
 
 Job-Focused Commands:
       --hotspots[=<N>]          Show top N refactoring targets [default: 5]
       --impact <MODULE>         Analyze change impact for a module
+      --trace <ITEM>            Trace dependencies for a function/type
       --check                   CI/CD quality gate (exit code 1 on failure)
       --min-grade <GRADE>       Minimum grade for --check (A/B/C/D/F)
       --max-critical <N>        Max critical issues for --check
