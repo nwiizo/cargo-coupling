@@ -199,154 +199,154 @@ cargo coupling --no-git ./src
 - **Markdown Reports**: Generates detailed analysis reports
 - **Cargo Integration**: Works as a cargo subcommand
 
-## Khononovのカップリングバランス
+## Khononov's Coupling Balance
 
-Vlad Khononovが提唱する**カップリングバランス**は、モジュール間の結合度を3つの次元で評価し、設計判断を導くフレームワークです。
+**Coupling Balance** is a framework proposed by Vlad Khononov that evaluates coupling between modules across three dimensions to guide design decisions.
 
-### 基本原則
+### Core Principle
 
-結合（カップリング）は必ずしも悪ではありません。重要なのは**結合の強さ、距離、変動性のバランス**です。
+Coupling is not inherently bad. What matters is **the balance between coupling strength, distance, and volatility**.
 
-## 3つの次元
+## The Three Dimensions
 
-### 1. Strength（結合強度）
+### 1. Strength (Integration Strength)
 
-コンポーネント間の依存がどれだけ密かを表します。
+Represents how tightly components depend on each other.
 
-| レベル | 説明 | 例（Rust） | Score |
-|--------|------|------------|-------|
-| **Intrusive**（侵入的） | 内部実装に直接依存 | `struct.field` への直接アクセス | 1.00 (強) |
-| **Functional**（機能的） | 振る舞いに依存 | 具象型のメソッド呼び出し | 0.75 |
-| **Model**（モデル） | データ構造に依存 | 型定義の共有 | 0.50 |
-| **Contract**（契約） | インターフェースのみに依存 | `trait` 経由のアクセス | 0.25 (弱) |
+| Level | Description | Rust Example | Score |
+|-------|-------------|--------------|-------|
+| **Intrusive** | Direct dependency on internal implementation | Direct access to `struct.field` | 1.00 (strong) |
+| **Functional** | Dependency on behavior | Method calls on concrete types | 0.75 |
+| **Model** | Dependency on data structures | Sharing type definitions | 0.50 |
+| **Contract** | Dependency on interfaces only | Access via `trait` | 0.25 (weak) |
 
-→ 下にいくほど結合が**弱い**（望ましい）
+→ Lower in the table = **weaker** coupling (preferred)
 
-### 2. Distance（距離）
+### 2. Distance
 
-依存関係にあるコンポーネント間の物理的・論理的な距離です。
+The physical or logical distance between dependent components.
 
-| レベル | 説明 | Score |
-|--------|------|-------|
-| **Same Module** | 同一モジュール内 | 0.25 (近) |
-| **Different Module** | 同一クレート内の別モジュール | 0.50 |
-| **External Crate** | 外部クレートへの依存 | 1.00 (遠) |
+| Level | Description | Score |
+|-------|-------------|-------|
+| **Same Module** | Within the same module | 0.25 (close) |
+| **Different Module** | Different module in the same crate | 0.50 |
+| **External Crate** | Dependency on external crate | 1.00 (far) |
 
-→ 下にいくほど距離が**遠い**
+→ Lower in the table = **farther** distance
 
-### 3. Volatility（変動性）
+### 3. Volatility
 
-そのコンポーネントがどれくらい頻繁に変更されるかを表します（Git履歴から自動計算）。
+How frequently a component changes (automatically calculated from Git history).
 
-| レベル | 説明 | 変更回数（6ヶ月） | Score |
-|--------|------|-------------------|-------|
-| **Low** | 安定しており、ほとんど変更されない | 0-2回 | 0.00 |
-| **Medium** | 時々変更される | 3-10回 | 0.50 |
-| **High** | 頻繁に変更される | 11回以上 | 1.00 |
+| Level | Description | Changes (6 months) | Score |
+|-------|-------------|-------------------|-------|
+| **Low** | Stable, rarely changes | 0-2 times | 0.00 |
+| **Medium** | Occasionally changes | 3-10 times | 0.50 |
+| **High** | Frequently changes | 11+ times | 1.00 |
 
 > **Note**: Volatility requires Git history. Use `cargo coupling ./src` (not `--no-git`) to enable volatility analysis.
 
-## バランスの法則
+## The Balance Law
 
-良い設計は以下の原則に従います：
+Good design follows this principle:
 
 ```
-強い結合が許容されるのは、距離が近いか、変動性が低い場合のみ
+Strong coupling is only acceptable when distance is close OR volatility is low
 ```
 
-論理式で表現すると：
+Expressed as a logical formula:
 
 ```
 BALANCED = (STRENGTH ≤ threshold) OR (DISTANCE = near) OR (VOLATILITY = low)
 ```
 
-または、Khononovの式：
+Or Khononov's formula:
 
 ```
 BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
 ```
 
-- **STRENGTH XOR DISTANCE**: 強結合×近距離 or 弱結合×遠距離 = Good
-- **OR NOT VOLATILITY**: 上記を満たさなくても、変動性が低ければOK
+- **STRENGTH XOR DISTANCE**: Strong coupling × close distance OR weak coupling × far distance = Good
+- **OR NOT VOLATILITY**: Even if the above isn't satisfied, low volatility makes it acceptable
 
-## 設計判断マトリクス
+## Design Decision Matrix
 
-| 結合強度 | 距離 | 変動性 | 判断 | 理由 |
-|----------|------|--------|------|------|
-| 強 | 近 | 低〜中 | ✅ OK | 凝集性（cohesion）が高く、変更も局所化される |
-| 弱 | 遠 | 任意 | ✅ OK | 疎結合で健全な依存関係 |
-| 強 | 遠 | 任意 | ⚠️ 要改善 | 変更の影響範囲が広がる（グローバル複雑性） |
-| 強 | 任意 | 高 | ⚠️ 要改善 | 変更が連鎖的に波及する |
-| 弱 | 近 | 低 | 🤔 検討 | 統合の余地あり（過度な分割かも） |
+| Strength | Distance | Volatility | Decision | Reason |
+|----------|----------|------------|----------|--------|
+| Strong | Close | Low-Medium | ✅ OK | High cohesion, changes are localized |
+| Weak | Far | Any | ✅ OK | Loose coupling with healthy dependencies |
+| Strong | Far | Any | ⚠️ Needs improvement | Change impact spreads widely (global complexity) |
+| Strong | Any | High | ⚠️ Needs improvement | Changes cascade through the system |
+| Weak | Close | Low | 🤔 Consider | Opportunity for integration (possibly over-modularized) |
 
-## 改善パターン
+## Improvement Patterns
 
-### パターン1: 抽象化による結合強度の低減
+### Pattern 1: Reducing Coupling Strength via Abstraction
 
-**問題**: 強結合 + 遠距離
+**Problem**: Strong coupling + far distance
 
 ```
 ┌─────────────┐         ┌─────────────┐
 │  Module A   │ ──────▶ │  Module B   │
-│             │  強結合  │  (実装詳細)  │
+│             │  strong  │  (impl)     │
 └─────────────┘         └─────────────┘
-       遠距離（別モジュール）
+       far distance (different module)
 ```
 
-**解決策**: Contract（trait）を導入
+**Solution**: Introduce a Contract (trait)
 
 ```
 ┌─────────────┐         ┌─────────────┐
 │  Module A   │ ──────▶ │   trait T   │
-│             │  弱結合  │  (契約)     │
+│             │   weak   │ (contract)  │
 └─────────────┘         └─────────────┘
                               ▲
-                              │ 実装
+                              │ implements
                         ┌─────────────┐
                         │  Module B   │
-                        │  (実装詳細)  │
+                        │   (impl)    │
                         └─────────────┘
 ```
 
-### パターン2: 変動性の隔離
+### Pattern 2: Isolating Volatility
 
-**問題**: 強結合 + 高変動性
+**Problem**: Strong coupling + high volatility
 
-**解決策**: 安定したインターフェース層を挟む
+**Solution**: Insert a stable interface layer
 
-## 具体例（Rust）
+## Concrete Example (Rust)
 
-### Before: 問題のあるコード
+### Before: Problematic Code
 
 ```rust
 // module_a.rs
 fn process_user(user: &User) {
-    // 構造体の内部フィールドに直接アクセス（Intrusive）
-    let name = &user.name;           // ← 強結合
-    let age = user.age;              // ← 強結合
-    let email = &user.email_address; // ← フィールド名変更で壊れる
+    // Direct access to struct internal fields (Intrusive)
+    let name = &user.name;           // ← strong coupling
+    let age = user.age;              // ← strong coupling
+    let email = &user.email_address; // ← breaks if field name changes
     // ...
 }
 ```
 
 ```rust
-// module_b.rs（頻繁に変更される）
+// module_b.rs (frequently modified)
 pub struct User {
     pub name: String,
     pub age: u32,
-    pub email_address: String,  // ← email から変更された
+    pub email_address: String,  // ← renamed from email
 }
 ```
 
-**問題点**:
-- 結合強度: Intrusive（フィールド直接アクセス）
-- 距離: Different Module（別モジュール）
-- 変動性: High（User構造体は頻繁に変更）
+**Issues**:
+- Coupling strength: Intrusive (direct field access)
+- Distance: Different Module
+- Volatility: High (User struct changes frequently)
 
-### After: 改善されたコード
+### After: Improved Code
 
 ```rust
-// contracts.rs（安定層）
+// contracts.rs (stable layer)
 pub trait UserInfo {
     fn display_name(&self) -> &str;
     fn age(&self) -> u32;
@@ -355,9 +355,9 @@ pub trait UserInfo {
 ```
 
 ```rust
-// module_b.rs（実装詳細を隠蔽）
+// module_b.rs (implementation details hidden)
 pub struct User {
-    name: String,        // private に変更
+    name: String,        // changed to private
     age: u32,
     email_address: String,
 }
@@ -370,29 +370,29 @@ impl UserInfo for User {
 ```
 
 ```rust
-// module_a.rs（trait経由でアクセス）
+// module_a.rs (access via trait)
 fn process_user(user: &impl UserInfo) {
-    let name = user.display_name();    // ← Contract結合
-    let age = user.age();              // ← Contract結合
-    let email = user.contact_email();  // ← 内部変更の影響を受けない
+    let name = user.display_name();    // ← Contract coupling
+    let age = user.age();              // ← Contract coupling
+    let email = user.contact_email();  // ← unaffected by internal changes
     // ...
 }
 ```
 
-**改善点**:
-- 結合強度: Contract（trait経由）に低減
-- 変更が `User` 構造体内に閉じ込められる
-- `module_a` は `User` の内部構造を知らなくてよい
+**Improvements**:
+- Coupling strength: Reduced to Contract (via trait)
+- Changes are contained within the `User` struct
+- `module_a` no longer needs to know `User`'s internal structure
 
-## カップリングバランスまとめ
+## Coupling Balance Summary
 
-| 観点 | 指針 |
-|------|------|
-| 強い結合は… | 近くに置くか、変動性を下げる |
-| 遠い依存は… | 弱い結合（Contract）にする |
-| 変動が激しいものは… | 安定した抽象層で隔離する |
+| Perspective | Guideline |
+|-------------|-----------|
+| Strong coupling... | Keep components close, or reduce volatility |
+| Far dependencies... | Use weak coupling (Contract) |
+| Highly volatile components... | Isolate with stable abstraction layers |
 
-カップリングバランスは「結合を無くす」のではなく「適切な場所に適切な強さの結合を配置する」ための考え方です。
+Coupling balance is not about "eliminating coupling" but about "placing the right strength of coupling in the right place."
 
 ## Numeric Implementation
 

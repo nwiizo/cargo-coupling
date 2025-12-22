@@ -20,7 +20,14 @@ docker compose up web
 # Release
 cargo fmt --all && cargo clippy -- -D warnings && cargo test
 git tag -a vX.Y.Z -m "Release vX.Y.Z" && git push origin vX.Y.Z
-# → GitHub Actions auto-publishes to crates.io & ghcr.io
+# → GitHub Actions auto-publishes to crates.io
+
+# Docker Release (manual)
+gh auth refresh -h github.com -s write:packages
+gh auth token | docker login ghcr.io -u nwiizo --password-stdin
+docker build -t ghcr.io/nwiizo/cargo-coupling:vX.Y.Z -t ghcr.io/nwiizo/cargo-coupling:latest .
+docker push ghcr.io/nwiizo/cargo-coupling:vX.Y.Z
+docker push ghcr.io/nwiizo/cargo-coupling:latest
 ```
 
 ## Key Files
@@ -45,15 +52,8 @@ git tag -a vX.Y.Z -m "Release vX.Y.Z" && git push origin vX.Y.Z
 **Edition 2024**: `if let` chains require nightly (< Rust 1.85)
 
 **Docker**:
-- cargo-chef: 依存キャッシュで 5-10x 高速化
-- distroless: 非root、CVE最小
-- ARG: `FROM` 後に再宣言必要
-- Git なし → `Dockerfile.full` 使用
-
-**ghcr.io push**:
-```bash
-gh auth refresh -h github.com -s write:packages
-gh auth token | docker login ghcr.io -u nwiizo --password-stdin
-```
-
-**Docker 実行**: `cargo-coupling coupling ...` (not `cargo coupling`)
+- cargo-chef: dependency cache for 5-10x faster builds
+- distroless: non-root, minimal CVE surface
+- ARG: must redeclare after FROM
+- No Git → use `Dockerfile.full`
+- Run command: `cargo-coupling coupling ...` (not `cargo coupling`)
