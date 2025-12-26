@@ -1122,32 +1122,35 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
         writeln!(writer)?;
     }
 
-    writeln!(
-        writer,
-        "────────────────────────────────────────────────────────────"
-    )?;
-    writeln!(writer)?;
+    // only show ai refactor advice if there is something to refactor
+    if !report.issues.is_empty() || circular.total_cycles > 0 {
+        writeln!(
+            writer,
+            "────────────────────────────────────────────────────────────"
+        )?;
+        writeln!(writer)?;
 
-    // AI prompt suggestion
-    writeln!(
-        writer,
-        "💡 To refactor with AI, copy this output and use this prompt:"
-    )?;
-    writeln!(writer)?;
-    writeln!(writer, "```")?;
-    writeln!(
-        writer,
-        "Analyze the coupling issues above from `cargo coupling --ai`. "
-    )?;
-    writeln!(
-        writer,
-        "For each issue, suggest specific code changes to reduce coupling."
-    )?;
-    writeln!(
-        writer,
-        "Focus on introducing traits, moving code closer, or breaking circular dependencies."
-    )?;
-    writeln!(writer, "```")?;
+        // AI prompt suggestion
+        writeln!(
+            writer,
+            "💡 To refactor with AI, copy this output and use this prompt:"
+        )?;
+        writeln!(writer)?;
+        writeln!(writer, "```")?;
+        writeln!(
+            writer,
+            "Analyze the coupling issues above from `cargo coupling --ai`. "
+        )?;
+        writeln!(
+            writer,
+            "For each issue, suggest specific code changes to reduce coupling."
+        )?;
+        writeln!(
+            writer,
+            "Focus on introducing traits, moving code closer, or breaking circular dependencies."
+        )?;
+        writeln!(writer, "```")?;
+    }
 
     Ok(())
 }
