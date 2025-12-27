@@ -968,6 +968,26 @@ pub fn analyze_project(path: &Path) -> Result<ProjectMetrics, AnalyzerError> {
     analyze_project_parallel(path)
 }
 
+/// Get an iterator over all non-hidden rust files in `dir`
+fn rs_files(dir: &Path) -> impl Iterator<Item = PathBuf> {
+    WalkDir::new(dir)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(move |entry| {
+            let file_path = entry.path();
+            // strip parent dir to avoid false positives for `target` and hidden checks
+            let file_path = file_path.strip_prefix(dir).unwrap_or(file_path);
+
+            // Skip target directory and hidden directories
+            !file_path.components().any(|c| {
+                let s = c.as_os_str().to_string_lossy();
+                s == "target" || s.starts_with('.')
+            }) && file_path.extension() == Some(OsStr::new("rs"))
+        })
+        .map(|e| e.path().to_path_buf())
+}
+
 /// Analyze a project using parallel processing with Rayon
 ///
 /// Automatically scales to available CPU cores. The parallel processing
@@ -978,20 +998,7 @@ pub fn analyze_project_parallel(path: &Path) -> Result<ProjectMetrics, AnalyzerE
     }
 
     // Collect all .rs file paths first (sequential, but fast)
-    let file_paths: Vec<PathBuf> = WalkDir::new(path)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|entry| {
-            let file_path = entry.path();
-            // Skip target directory and hidden directories
-            !file_path.components().any(|c| {
-                let s = c.as_os_str().to_string_lossy();
-                s == "target" || s.starts_with('.')
-            }) && file_path.extension() == Some(OsStr::new("rs"))
-        })
-        .map(|e| e.path().to_path_buf())
-        .collect();
+    let file_paths: Vec<PathBuf> = rs_files(path).collect();
 
     // Calculate optimal chunk size based on file count and available parallelism
     // Smaller chunks = better load balancing, but more overhead
@@ -1155,25 +1162,8 @@ fn analyze_with_workspace(
                 continue;
             }
 
-            for entry in WalkDir::new(&crate_info.src_path)
-                .follow_links(true)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let file_path = entry.path();
-
-                // Skip target directory and hidden directories
-                if file_path.components().any(|c| {
-                    let s = c.as_os_str().to_string_lossy();
-                    s == "target" || s.starts_with('.')
-                }) {
-                    continue;
-                }
-
-                // Only process .rs files
-                if file_path.extension() == Some(OsStr::new("rs")) {
-                    file_crate_pairs.push((file_path.to_path_buf(), member_name.clone()));
-                }
+            for file_path in rs_files(&crate_info.src_path) {
+                file_crate_pairs.push((file_path.to_path_buf(), member_name.clone()));
             }
         }
     }
