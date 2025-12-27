@@ -79,7 +79,7 @@ pub fn api_routes() -> Router<Arc<AppState>> {
 pub fn static_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(index_html))
-        .route("/*path", get(static_handler))
+        .route("/{*path}", get(static_handler))
 }
 
 /// GET /api/graph - Returns the complete coupling graph
