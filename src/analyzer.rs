@@ -968,7 +968,11 @@ pub fn analyze_project(path: &Path) -> Result<ProjectMetrics, AnalyzerError> {
     analyze_project_parallel(path)
 }
 
-/// Get an iterator over all non-hidden rust files in `dir`
+/// Get an iterator over all Rust source files in `dir`, excluding hidden directories and `target/`.
+///
+/// Uses relative paths for filtering to avoid false positives when the project
+/// is located in a path containing hidden directories (e.g., `/home/user/.local/projects/`).
+/// See: https://github.com/nwiizo/cargo-coupling/issues/7
 fn rs_files(dir: &Path) -> impl Iterator<Item = PathBuf> {
     WalkDir::new(dir)
         .follow_links(true)
@@ -976,7 +980,10 @@ fn rs_files(dir: &Path) -> impl Iterator<Item = PathBuf> {
         .filter_map(|e| e.ok())
         .filter(move |entry| {
             let file_path = entry.path();
-            // strip parent dir to avoid false positives for `target` and hidden checks
+            // Use relative path from the search root to check for hidden/target directories.
+            // This prevents false positives when parent directories contain `.` or `target`.
+            // Example: `/home/user/.config/myproject/src/lib.rs` should not be skipped
+            // just because `.config` is in the parent path.
             let file_path = file_path.strip_prefix(dir).unwrap_or(file_path);
 
             // Skip target directory and hidden directories
@@ -1707,5 +1714,107 @@ mod tests {
             UsageContext::TraitBound.to_strength(),
             IntegrationStrength::Contract
         );
+    }
+
+    /// Test that rs_files correctly handles paths with hidden parent directories.
+    /// Regression test for https://github.com/nwiizo/cargo-coupling/issues/7
+    #[test]
+    fn test_rs_files_with_hidden_parent_directory() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        // Create a temporary directory structure that simulates a project
+        // inside a hidden parent directory (e.g., /home/user/.local/projects/myproject)
+        let temp = TempDir::new().unwrap();
+        let hidden_parent = temp.path().join(".hidden-parent");
+        let project_dir = hidden_parent.join("myproject").join("src");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        // Create some Rust files
+        fs::write(project_dir.join("lib.rs"), "pub fn hello() {}").unwrap();
+        fs::write(project_dir.join("main.rs"), "fn main() {}").unwrap();
+
+        // rs_files should find both files even though there's a hidden parent
+        let files: Vec<_> = rs_files(&project_dir).collect();
+        assert_eq!(
+            files.len(),
+            2,
+            "Should find 2 .rs files in hidden parent path"
+        );
+
+        // Verify the files are the ones we created
+        let file_names: Vec<_> = files
+            .iter()
+            .filter_map(|p| p.file_name())
+            .filter_map(|n| n.to_str())
+            .collect();
+        assert!(file_names.contains(&"lib.rs"));
+        assert!(file_names.contains(&"main.rs"));
+    }
+
+    /// Test that rs_files correctly excludes hidden directories within the project.
+    #[test]
+    fn test_rs_files_excludes_hidden_dirs_in_project() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let project_dir = temp.path().join("myproject").join("src");
+        let hidden_dir = project_dir.join(".hidden");
+        fs::create_dir_all(&hidden_dir).unwrap();
+
+        // Create files in both regular and hidden directories
+        fs::write(project_dir.join("lib.rs"), "pub fn hello() {}").unwrap();
+        fs::write(hidden_dir.join("secret.rs"), "fn secret() {}").unwrap();
+
+        // rs_files should only find lib.rs, not the file in .hidden
+        let files: Vec<_> = rs_files(&project_dir).collect();
+        assert_eq!(
+            files.len(),
+            1,
+            "Should find only 1 .rs file (excluding .hidden/)"
+        );
+
+        let file_names: Vec<_> = files
+            .iter()
+            .filter_map(|p| p.file_name())
+            .filter_map(|n| n.to_str())
+            .collect();
+        assert!(file_names.contains(&"lib.rs"));
+        assert!(!file_names.contains(&"secret.rs"));
+    }
+
+    /// Test that rs_files correctly excludes the target directory.
+    #[test]
+    fn test_rs_files_excludes_target_directory() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let project_dir = temp.path().join("myproject");
+        let src_dir = project_dir.join("src");
+        let target_dir = project_dir.join("target").join("debug");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&target_dir).unwrap();
+
+        // Create files in both src and target directories
+        fs::write(src_dir.join("lib.rs"), "pub fn hello() {}").unwrap();
+        fs::write(target_dir.join("generated.rs"), "// generated").unwrap();
+
+        // rs_files should only find lib.rs, not the file in target/
+        let files: Vec<_> = rs_files(&project_dir).collect();
+        assert_eq!(
+            files.len(),
+            1,
+            "Should find only 1 .rs file (excluding target/)"
+        );
+
+        let file_names: Vec<_> = files
+            .iter()
+            .filter_map(|p| p.file_name())
+            .filter_map(|n| n.to_str())
+            .collect();
+        assert!(file_names.contains(&"lib.rs"));
+        assert!(!file_names.contains(&"generated.rs"));
     }
 }

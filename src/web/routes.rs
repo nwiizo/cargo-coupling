@@ -79,6 +79,7 @@ pub fn api_routes() -> Router<Arc<AppState>> {
 pub fn static_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(index_html))
+        // Note: axum 0.8+ requires `{*path}` syntax for wildcard routes (was `*path` in 0.7)
         .route("/{*path}", get(static_handler))
 }
 
