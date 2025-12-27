@@ -8,6 +8,17 @@
 //! ```toml
 //! # .coupling.toml
 //!
+//! [analysis]
+//! # Exclude test code (#[test], #[cfg(test)], mod tests) from analysis
+//! exclude_tests = true
+//!
+//! # "Prelude-like" modules that are expected to be used by many other modules.
+//! # These modules will not trigger "High Afferent Coupling" warnings.
+//! prelude_modules = ["src/lib.rs", "src/prelude.rs", "src/core/*"]
+//!
+//! # Modules to completely exclude from analysis
+//! exclude = ["src/generated/*", "src/test_utils/*"]
+//!
 //! [volatility]
 //! # Modules expected to change frequently (High volatility)
 //! high = ["src/business_rules/*", "src/pricing/*"]
@@ -15,7 +26,7 @@
 //! # Stable modules (Low volatility)
 //! low = ["src/core/*", "src/contracts/*"]
 //!
-//! # Paths to ignore from analysis
+//! # Paths to ignore from analysis (deprecated: use [analysis].exclude instead)
 //! ignore = ["src/generated/*", "tests/*"]
 //!
 //! [thresholds]
@@ -46,6 +57,23 @@ pub enum ConfigError {
 
     #[error("Invalid glob pattern: {0}")]
     PatternError(String),
+}
+
+/// Analysis configuration section
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AnalysisConfig {
+    /// Exclude test code from analysis (#[test], #[cfg(test)], mod tests)
+    #[serde(default)]
+    pub exclude_tests: bool,
+
+    /// "Prelude-like" modules that are expected to be depended on by many modules.
+    /// These modules will not trigger "High Afferent Coupling" warnings.
+    #[serde(default)]
+    pub prelude_modules: Vec<String>,
+
+    /// Modules to completely exclude from analysis
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 /// Volatility configuration section
@@ -100,6 +128,10 @@ impl Default for ThresholdsConfig {
 /// Root configuration structure
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct CouplingConfig {
+    /// Analysis configuration (test exclusion, prelude modules, etc.)
+    #[serde(default)]
+    pub analysis: AnalysisConfig,
+
     /// Volatility override configuration
     #[serde(default)]
     pub volatility: VolatilityConfig,
@@ -112,16 +144,29 @@ pub struct CouplingConfig {
 /// Compiled configuration with glob patterns
 #[derive(Debug)]
 pub struct CompiledConfig {
+    // === Analysis settings ===
+    /// Whether to exclude test code from analysis
+    pub exclude_tests: bool,
+    /// Patterns for prelude-like modules (exempt from afferent coupling warnings)
+    prelude_patterns: Vec<Pattern>,
+    /// Patterns for modules to completely exclude from analysis
+    exclude_patterns: Vec<Pattern>,
+
+    // === Volatility settings ===
     /// Patterns for high volatility paths
     high_patterns: Vec<Pattern>,
     /// Patterns for medium volatility paths
     medium_patterns: Vec<Pattern>,
     /// Patterns for low volatility paths
     low_patterns: Vec<Pattern>,
-    /// Patterns for ignored paths
+    /// Patterns for ignored paths (deprecated, use exclude_patterns)
     ignore_patterns: Vec<Pattern>,
+
+    // === Thresholds ===
     /// Threshold configuration
     pub thresholds: ThresholdsConfig,
+
+    // === Cache ===
     /// Cache of path -> volatility mappings
     cache: HashMap<String, Option<Volatility>>,
 }
@@ -139,10 +184,16 @@ impl CompiledConfig {
         };
 
         Ok(Self {
+            // Analysis settings
+            exclude_tests: config.analysis.exclude_tests,
+            prelude_patterns: compile_patterns(&config.analysis.prelude_modules)?,
+            exclude_patterns: compile_patterns(&config.analysis.exclude)?,
+            // Volatility settings
             high_patterns: compile_patterns(&config.volatility.high)?,
             medium_patterns: compile_patterns(&config.volatility.medium)?,
             low_patterns: compile_patterns(&config.volatility.low)?,
             ignore_patterns: compile_patterns(&config.volatility.ignore)?,
+            // Thresholds
             thresholds: config.thresholds,
             cache: HashMap::new(),
         })
@@ -151,6 +202,9 @@ impl CompiledConfig {
     /// Create an empty config (no overrides)
     pub fn empty() -> Self {
         Self {
+            exclude_tests: false,
+            prelude_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
             high_patterns: Vec::new(),
             medium_patterns: Vec::new(),
             low_patterns: Vec::new(),
@@ -160,9 +214,30 @@ impl CompiledConfig {
         }
     }
 
-    /// Check if a path should be ignored
+    /// Set exclude_tests flag (used by CLI --exclude-tests option)
+    pub fn set_exclude_tests(&mut self, exclude: bool) {
+        self.exclude_tests = exclude;
+    }
+
+    /// Check if a module is marked as "prelude-like" (exempt from afferent coupling warnings)
+    pub fn is_prelude_module(&self, path: &str) -> bool {
+        self.prelude_patterns.iter().any(|p| p.matches(path))
+    }
+
+    /// Check if a path should be completely excluded from analysis
+    pub fn should_exclude(&self, path: &str) -> bool {
+        self.exclude_patterns.iter().any(|p| p.matches(path))
+    }
+
+    /// Check if a path should be ignored (deprecated: use should_exclude)
     pub fn should_ignore(&self, path: &str) -> bool {
         self.ignore_patterns.iter().any(|p| p.matches(path))
+            || self.exclude_patterns.iter().any(|p| p.matches(path))
+    }
+
+    /// Get the list of prelude module patterns (for reporting)
+    pub fn prelude_module_count(&self) -> usize {
+        self.prelude_patterns.len()
     }
 
     /// Get overridden volatility for a path, if any

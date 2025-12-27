@@ -68,6 +68,10 @@ struct Args {
     #[arg(long)]
     no_git: bool,
 
+    /// Exclude test code from analysis (#[test], #[cfg(test)], mod tests)
+    #[arg(long)]
+    exclude_tests: bool,
+
     /// Config file path (default: search for .coupling.toml)
     #[arg(short, long)]
     config: Option<PathBuf>,
@@ -208,6 +212,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Apply CLI flags to config (CLI takes precedence over config file)
+    if args.exclude_tests {
+        config.set_exclude_tests(true);
+    }
+
+    if args.verbose && config.exclude_tests {
+        eprintln!("Test code will be excluded from analysis");
+    }
+
+    if args.verbose && config.prelude_module_count() > 0 {
+        eprintln!(
+            "Prelude modules configured: {} pattern(s)",
+            config.prelude_module_count()
+        );
+    }
+
     // Print analysis header
     eprintln!("Analyzing project at '{}'...", args.path.display());
 
@@ -288,6 +308,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(config.thresholds.max_dependents),
         strict_mode: !args.all, // Default is strict (hide Low), --all shows everything
         japanese: args.japanese,
+        exclude_tests: config.exclude_tests,
+        prelude_module_count: config.prelude_module_count(),
         ..IssueThresholds::default()
     };
 

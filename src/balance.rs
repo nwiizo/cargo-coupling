@@ -387,6 +387,10 @@ pub struct IssueThresholds {
     pub strict_mode: bool,
     /// Show explanations in Japanese
     pub japanese: bool,
+    /// Exclude test code from function counts
+    pub exclude_tests: bool,
+    /// Prelude module patterns (for reporting purposes)
+    pub prelude_module_count: usize,
 }
 
 impl Default for IssueThresholds {
@@ -403,6 +407,8 @@ impl Default for IssueThresholds {
             min_primitive_params: 3, // 3+ primitive params = Primitive Obsession
             strict_mode: true,       // Show only important issues by default
             japanese: false,         // English by default
+            exclude_tests: false,    // Include test code by default
+            prelude_module_count: 0, // No prelude modules configured
         }
     }
 }
@@ -792,15 +798,23 @@ fn analyze_rust_patterns(
 
     // God Module detection
     for (module_name, module) in &metrics.modules {
-        if module.is_god_module(
-            thresholds.max_functions,
-            thresholds.max_types,
-            thresholds.max_impls,
-        ) {
-            let func_count = module.function_count();
-            let type_count = module.type_definitions.len();
-            let impl_count = module.trait_impl_count + module.inherent_impl_count;
+        // Calculate function count, excluding test functions if configured
+        let func_count = if thresholds.exclude_tests {
+            module
+                .function_count()
+                .saturating_sub(module.test_function_count)
+        } else {
+            module.function_count()
+        };
+        let type_count = module.type_definitions.len();
+        let impl_count = module.trait_impl_count + module.inherent_impl_count;
 
+        // Check if module exceeds thresholds (with test exclusion applied)
+        let is_god_module = func_count > thresholds.max_functions
+            || type_count > thresholds.max_types
+            || impl_count > thresholds.max_impls;
+
+        if is_god_module {
             issues.push(CouplingIssue {
                 issue_type: IssueType::GodModule,
                 severity: if func_count > thresholds.max_functions * 2

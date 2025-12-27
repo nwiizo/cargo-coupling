@@ -570,6 +570,10 @@ pub struct ModuleMetrics {
     pub function_definitions: HashMap<String, FunctionDefinition>,
     /// Item-level dependencies (function → function, function → type, etc.)
     pub item_dependencies: Vec<ItemDependency>,
+    /// Whether this module is a test module (mod tests or #[cfg(test)])
+    pub is_test_module: bool,
+    /// Number of test functions (#[test])
+    pub test_function_count: usize,
 }
 
 impl ModuleMetrics {

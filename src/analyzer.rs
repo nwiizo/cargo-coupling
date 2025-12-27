@@ -49,6 +49,30 @@ fn convert_visibility(vis: &syn::Visibility) -> Visibility {
     }
 }
 
+/// Check if an item has the #[test] attribute
+fn has_test_attribute(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| attr.path().is_ident("test"))
+}
+
+/// Check if an item has #[cfg(test)] attribute
+fn has_cfg_test_attribute(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        if attr.path().is_ident("cfg") {
+            // Try to parse the attribute content
+            if let Ok(meta) = attr.meta.require_list() {
+                let tokens = meta.tokens.to_string();
+                return tokens.contains("test");
+            }
+        }
+        false
+    })
+}
+
+/// Check if a module is a test module (named "tests" or has #[cfg(test)])
+fn is_test_module(item: &ItemMod) -> bool {
+    item.ident == "tests" || has_cfg_test_attribute(&item.attrs)
+}
+
 /// Errors that can occur during analysis
 #[derive(Error, Debug)]
 pub enum AnalyzerError {
@@ -564,6 +588,11 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
         let visibility = convert_visibility(&node.vis);
         self.defined_functions.insert(fn_name.clone(), visibility);
 
+        // Check if this is a test function
+        if has_test_attribute(&node.attrs) {
+            self.metrics.test_function_count += 1;
+        }
+
         // Analyze parameters for primitive obsession detection
         let mut param_count = 0;
         let mut primitive_param_count = 0;
@@ -774,6 +803,11 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
     }
 
     fn visit_item_mod(&mut self, node: &'ast ItemMod) {
+        // Check if this is a test module (named "tests" or has #[cfg(test)])
+        if is_test_module(node) {
+            self.metrics.is_test_module = true;
+        }
+
         if node.content.is_some() {
             self.metrics.internal_deps.push(node.ident.to_string());
         }

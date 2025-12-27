@@ -57,8 +57,8 @@ pub use balance::{
     analyze_project_balance_with_thresholds, calculate_project_score,
 };
 pub use config::{
-    CompiledConfig, ConfigError, CouplingConfig, ThresholdsConfig, VolatilityConfig,
-    load_compiled_config, load_config,
+    AnalysisConfig, CompiledConfig, ConfigError, CouplingConfig, ThresholdsConfig,
+    VolatilityConfig, load_compiled_config, load_config,
 };
 pub use metrics::{
     BalanceClassification, BalanceCounts, CircularDependencySummary, CouplingMetrics,
