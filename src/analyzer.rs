@@ -1113,12 +1113,26 @@ pub fn analyze_project_parallel(path: &Path) -> Result<ProjectMetrics, AnalyzerE
                     Ok(result) => {
                         // Use full module path instead of just file stem (Issue #14)
                         let module_path = file_path_to_module_path(file_path, path);
+                        let old_name = result.metrics.name.clone();
                         let module_name = if module_path.is_empty() {
                             // Crate root (lib.rs/main.rs) - use the original name
-                            result.metrics.name.clone()
+                            old_name.clone()
                         } else {
                             module_path
                         };
+
+                        // Update target_module in item_dependencies if it referenced the old name
+                        let item_dependencies = result
+                            .item_dependencies
+                            .into_iter()
+                            .map(|mut dep| {
+                                if dep.target_module.as_ref() == Some(&old_name) {
+                                    dep.target_module = Some(module_name.clone());
+                                }
+                                dep
+                            })
+                            .collect();
+
                         Some(AnalyzedFile {
                             module_name: module_name.clone(),
                             file_path: file_path.clone(),
@@ -1129,7 +1143,7 @@ pub fn analyze_project_parallel(path: &Path) -> Result<ProjectMetrics, AnalyzerE
                             },
                             dependencies: result.dependencies,
                             type_visibility: result.type_visibility,
-                            item_dependencies: result.item_dependencies,
+                            item_dependencies,
                         })
                     }
                     Err(e) => {
@@ -1295,12 +1309,26 @@ fn analyze_with_workspace(
                         Ok(result) => {
                             // Use full module path instead of just file stem (Issue #14)
                             let module_path = file_path_to_module_path(file_path, src_root);
+                            let old_name = result.metrics.name.clone();
                             let module_name = if module_path.is_empty() {
                                 // Crate root (lib.rs/main.rs) - use the original name
-                                result.metrics.name.clone()
+                                old_name.clone()
                             } else {
                                 module_path
                             };
+
+                            // Update target_module in item_dependencies if it referenced the old name
+                            let item_dependencies = result
+                                .item_dependencies
+                                .into_iter()
+                                .map(|mut dep| {
+                                    if dep.target_module.as_ref() == Some(&old_name) {
+                                        dep.target_module = Some(module_name.clone());
+                                    }
+                                    dep
+                                })
+                                .collect();
+
                             Some(AnalyzedFileWithCrate {
                                 module_name: module_name.clone(),
                                 crate_name: crate_name.clone(),
@@ -1311,7 +1339,7 @@ fn analyze_with_workspace(
                                     m
                                 },
                                 dependencies: result.dependencies,
-                                item_dependencies: result.item_dependencies,
+                                item_dependencies,
                             })
                         }
                         Err(e) => {
@@ -1930,5 +1958,84 @@ mod tests {
             .collect();
         assert!(file_names.contains(&"lib.rs"));
         assert!(!file_names.contains(&"generated.rs"));
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_nested() {
+        // Test: src/level/enemy/spawner.rs -> level::enemy::spawner
+        let src_root = Path::new("/project/src");
+        let file_path = Path::new("/project/src/level/enemy/spawner.rs");
+        assert_eq!(
+            file_path_to_module_path(file_path, src_root),
+            "level::enemy::spawner"
+        );
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_lib() {
+        // Test: src/lib.rs -> "" (crate root)
+        let src_root = Path::new("/project/src");
+        let file_path = Path::new("/project/src/lib.rs");
+        assert_eq!(file_path_to_module_path(file_path, src_root), "");
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_main() {
+        // Test: src/main.rs -> "" (crate root)
+        let src_root = Path::new("/project/src");
+        let file_path = Path::new("/project/src/main.rs");
+        assert_eq!(file_path_to_module_path(file_path, src_root), "");
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_mod() {
+        // Test: src/level/mod.rs -> level
+        let src_root = Path::new("/project/src");
+        let file_path = Path::new("/project/src/level/mod.rs");
+        assert_eq!(file_path_to_module_path(file_path, src_root), "level");
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_deeply_nested_mod() {
+        // Test: src/a/b/c/mod.rs -> a::b::c
+        let src_root = Path::new("/project/src");
+        let file_path = Path::new("/project/src/a/b/c/mod.rs");
+        assert_eq!(file_path_to_module_path(file_path, src_root), "a::b::c");
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_simple() {
+        // Test: src/utils.rs -> utils
+        let src_root = Path::new("/project/src");
+        let file_path = Path::new("/project/src/utils.rs");
+        assert_eq!(file_path_to_module_path(file_path, src_root), "utils");
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_two_levels() {
+        // Test: src/foo/bar.rs -> foo::bar
+        let src_root = Path::new("/project/src");
+        let file_path = Path::new("/project/src/foo/bar.rs");
+        assert_eq!(file_path_to_module_path(file_path, src_root), "foo::bar");
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_bin() {
+        // Test: src/bin/cli.rs -> bin::cli
+        let src_root = Path::new("/project/src");
+        let file_path = Path::new("/project/src/bin/cli.rs");
+        assert_eq!(file_path_to_module_path(file_path, src_root), "bin::cli");
+    }
+
+    #[test]
+    fn test_file_path_to_module_path_mismatched_root() {
+        // When strip_prefix fails, we fall back to using the full path
+        // This handles edge cases where src_root doesn't match
+        let src_root = Path::new("/other/src");
+        let file_path = Path::new("/project/src/utils.rs");
+        // Falls back to full path processing
+        let result = file_path_to_module_path(file_path, src_root);
+        // Should still produce something reasonable
+        assert!(result.contains("utils"));
     }
 }
