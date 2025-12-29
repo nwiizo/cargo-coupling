@@ -73,6 +73,52 @@ fn is_test_module(item: &ItemMod) -> bool {
     item.ident == "tests" || has_cfg_test_attribute(&item.attrs)
 }
 
+/// Convert file path to module path relative to the source root.
+///
+/// Examples:
+/// - `src/level/enemy/spawner.rs` with root `src` → `level::enemy::spawner`
+/// - `src/lib.rs` with root `src` → `` (empty, crate root)
+/// - `src/main.rs` with root `src` → `` (empty, crate root)
+/// - `src/level/mod.rs` with root `src` → `level`
+/// - `src/utils.rs` with root `src` → `utils`
+///
+/// See: https://github.com/nwiizo/cargo-coupling/issues/14
+fn file_path_to_module_path(file_path: &Path, src_root: &Path) -> String {
+    // Get the relative path from src root
+    let relative = file_path.strip_prefix(src_root).unwrap_or(file_path);
+
+    let mut parts: Vec<String> = Vec::new();
+
+    for component in relative.components() {
+        if let Some(s) = component.as_os_str().to_str() {
+            parts.push(s.to_string());
+        }
+    }
+
+    // Handle the last component (filename)
+    if let Some(last) = parts.last().cloned() {
+        parts.pop();
+        match last.as_str() {
+            "lib.rs" | "main.rs" => {
+                // Crate root - don't add anything
+            }
+            "mod.rs" => {
+                // mod.rs represents its parent directory, already in parts
+            }
+            _ => {
+                // Regular file - remove .rs extension and add to path
+                if let Some(stem) = last.strip_suffix(".rs") {
+                    parts.push(stem.to_string());
+                } else {
+                    parts.push(last);
+                }
+            }
+        }
+    }
+
+    parts.join("::")
+}
+
 /// Errors that can occur during analysis
 #[derive(Error, Debug)]
 pub enum AnalyzerError {
@@ -1064,14 +1110,28 @@ pub fn analyze_project_parallel(path: &Path) -> Result<ProjectMetrics, AnalyzerE
             chunk
                 .iter()
                 .filter_map(|file_path| match analyze_rust_file_full(file_path) {
-                    Ok(result) => Some(AnalyzedFile {
-                        module_name: result.metrics.name.clone(),
-                        file_path: file_path.clone(),
-                        metrics: result.metrics,
-                        dependencies: result.dependencies,
-                        type_visibility: result.type_visibility,
-                        item_dependencies: result.item_dependencies,
-                    }),
+                    Ok(result) => {
+                        // Use full module path instead of just file stem (Issue #14)
+                        let module_path = file_path_to_module_path(file_path, path);
+                        let module_name = if module_path.is_empty() {
+                            // Crate root (lib.rs/main.rs) - use the original name
+                            result.metrics.name.clone()
+                        } else {
+                            module_path
+                        };
+                        Some(AnalyzedFile {
+                            module_name: module_name.clone(),
+                            file_path: file_path.clone(),
+                            metrics: {
+                                let mut m = result.metrics;
+                                m.name = module_name;
+                                m
+                            },
+                            dependencies: result.dependencies,
+                            type_visibility: result.type_visibility,
+                            item_dependencies: result.item_dependencies,
+                        })
+                    }
                     Err(e) => {
                         eprintln!("Warning: Failed to analyze {}: {}", file_path.display(), e);
                         None
@@ -1194,8 +1254,9 @@ fn analyze_with_workspace(
     );
     project.workspace_members = workspace.members.clone();
 
-    // Collect all file paths with their crate names (sequential, fast)
-    let mut file_crate_pairs: Vec<(PathBuf, String)> = Vec::new();
+    // Collect all file paths with their crate names and src roots (sequential, fast)
+    // Tuple: (file_path, crate_name, src_root)
+    let mut file_crate_pairs: Vec<(PathBuf, String, PathBuf)> = Vec::new();
 
     for member_name in &workspace.members {
         if let Some(crate_info) = workspace.get_crate(member_name) {
@@ -1203,8 +1264,13 @@ fn analyze_with_workspace(
                 continue;
             }
 
+            let src_root = crate_info.src_path.clone();
             for file_path in rs_files(&crate_info.src_path) {
-                file_crate_pairs.push((file_path.to_path_buf(), member_name.clone()));
+                file_crate_pairs.push((
+                    file_path.to_path_buf(),
+                    member_name.clone(),
+                    src_root.clone(),
+                ));
             }
         }
     }
@@ -1224,22 +1290,36 @@ fn analyze_with_workspace(
         .flat_map(|chunk| {
             chunk
                 .iter()
-                .filter_map(
-                    |(file_path, crate_name)| match analyze_rust_file_full(file_path) {
-                        Ok(result) => Some(AnalyzedFileWithCrate {
-                            module_name: result.metrics.name.clone(),
-                            crate_name: crate_name.clone(),
-                            file_path: file_path.clone(),
-                            metrics: result.metrics,
-                            dependencies: result.dependencies,
-                            item_dependencies: result.item_dependencies,
-                        }),
+                .filter_map(|(file_path, crate_name, src_root)| {
+                    match analyze_rust_file_full(file_path) {
+                        Ok(result) => {
+                            // Use full module path instead of just file stem (Issue #14)
+                            let module_path = file_path_to_module_path(file_path, src_root);
+                            let module_name = if module_path.is_empty() {
+                                // Crate root (lib.rs/main.rs) - use the original name
+                                result.metrics.name.clone()
+                            } else {
+                                module_path
+                            };
+                            Some(AnalyzedFileWithCrate {
+                                module_name: module_name.clone(),
+                                crate_name: crate_name.clone(),
+                                file_path: file_path.clone(),
+                                metrics: {
+                                    let mut m = result.metrics;
+                                    m.name = module_name;
+                                    m
+                                },
+                                dependencies: result.dependencies,
+                                item_dependencies: result.item_dependencies,
+                            })
+                        }
                         Err(e) => {
                             eprintln!("Warning: Failed to analyze {}: {}", file_path.display(), e);
                             None
                         }
-                    },
-                )
+                    }
+                })
                 .collect::<Vec<_>>()
         })
         .collect();
