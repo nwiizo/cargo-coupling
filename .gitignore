@@ -20,3 +20,7 @@ coverage/
 # Generated files
 *.bak
 *.tmp
+
+# Mutation testing output
+mutants.out/
+mutants.out.old/

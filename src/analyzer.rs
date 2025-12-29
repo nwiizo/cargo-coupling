@@ -2038,4 +2038,112 @@ mod tests {
         // Should still produce something reasonable
         assert!(result.contains("utils"));
     }
+
+    #[test]
+    fn test_has_test_attribute_with_test() {
+        let code = r#"
+            #[test]
+            fn my_test() {}
+        "#;
+        let syntax: syn::File = syn::parse_str(code).unwrap();
+        if let syn::Item::Fn(func) = &syntax.items[0] {
+            assert!(has_test_attribute(&func.attrs));
+        } else {
+            panic!("Expected function");
+        }
+    }
+
+    #[test]
+    fn test_has_test_attribute_without_test() {
+        let code = r#"
+            fn regular_fn() {}
+        "#;
+        let syntax: syn::File = syn::parse_str(code).unwrap();
+        if let syn::Item::Fn(func) = &syntax.items[0] {
+            assert!(!has_test_attribute(&func.attrs));
+        } else {
+            panic!("Expected function");
+        }
+    }
+
+    #[test]
+    fn test_has_cfg_test_attribute_with_cfg_test() {
+        let code = r#"
+            #[cfg(test)]
+            mod tests {}
+        "#;
+        let syntax: syn::File = syn::parse_str(code).unwrap();
+        if let syn::Item::Mod(module) = &syntax.items[0] {
+            assert!(has_cfg_test_attribute(&module.attrs));
+        } else {
+            panic!("Expected module");
+        }
+    }
+
+    #[test]
+    fn test_has_cfg_test_attribute_without_cfg_test() {
+        let code = r#"
+            mod regular_mod {}
+        "#;
+        let syntax: syn::File = syn::parse_str(code).unwrap();
+        if let syn::Item::Mod(module) = &syntax.items[0] {
+            assert!(!has_cfg_test_attribute(&module.attrs));
+        } else {
+            panic!("Expected module");
+        }
+    }
+
+    #[test]
+    fn test_has_cfg_test_attribute_with_other_cfg() {
+        let code = r#"
+            #[cfg(feature = "foo")]
+            mod feature_mod {}
+        "#;
+        let syntax: syn::File = syn::parse_str(code).unwrap();
+        if let syn::Item::Mod(module) = &syntax.items[0] {
+            assert!(!has_cfg_test_attribute(&module.attrs));
+        } else {
+            panic!("Expected module");
+        }
+    }
+
+    #[test]
+    fn test_is_test_module_named_tests() {
+        let code = r#"
+            mod tests {}
+        "#;
+        let syntax: syn::File = syn::parse_str(code).unwrap();
+        if let syn::Item::Mod(module) = &syntax.items[0] {
+            assert!(is_test_module(module));
+        } else {
+            panic!("Expected module");
+        }
+    }
+
+    #[test]
+    fn test_is_test_module_with_cfg_test() {
+        let code = r#"
+            #[cfg(test)]
+            mod my_tests {}
+        "#;
+        let syntax: syn::File = syn::parse_str(code).unwrap();
+        if let syn::Item::Mod(module) = &syntax.items[0] {
+            assert!(is_test_module(module));
+        } else {
+            panic!("Expected module");
+        }
+    }
+
+    #[test]
+    fn test_is_test_module_regular_module() {
+        let code = r#"
+            mod utils {}
+        "#;
+        let syntax: syn::File = syn::parse_str(code).unwrap();
+        if let syn::Item::Mod(module) = &syntax.items[0] {
+            assert!(!is_test_module(module));
+        } else {
+            panic!("Expected module");
+        }
+    }
 }
