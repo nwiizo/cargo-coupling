@@ -253,6 +253,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
 
+                // Analyze temporal coupling (co-change patterns)
+                match volatility.analyze_temporal_coupling(&args.path) {
+                    Ok(temporal) => {
+                        if args.verbose && !temporal.is_empty() {
+                            eprintln!(
+                                "Temporal coupling: {} co-changing file pairs detected",
+                                temporal.len()
+                            );
+                        }
+                        metrics.temporal_couplings = temporal;
+                    }
+                    Err(e) => {
+                        if args.verbose {
+                            eprintln!("Warning: Temporal coupling analysis failed: {}", e);
+                        }
+                    }
+                }
+
                 // Copy file changes to project metrics (must be after statistics())
                 metrics.file_changes = volatility.file_changes;
 
@@ -267,8 +285,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Apply volatility overrides from config
-    if config.has_volatility_overrides() {
+    // Apply volatility overrides from config (includes subdomain classification)
+    if config.has_subdomain_config() && args.verbose {
+        eprintln!("DDD subdomain classification configured (affects volatility)");
+    }
+    if config.has_volatility_overrides() || config.has_subdomain_config() {
         let mut override_count = 0;
         for coupling in &mut metrics.couplings {
             // Use the target path for volatility lookup

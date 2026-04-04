@@ -1,6 +1,17 @@
-# Refactor Skill
+---
+name: refactor
+description: Generate concrete refactoring proposals with Before/After code based on coupling analysis results.
+argument-hint: [path] [issue-type: global-complexity|cascading-change|inappropriate-intimacy|high-efferent|high-afferent|all]
+---
 
-Concrete refactoring proposals based on analysis.
+# Refactor - Refactoring Proposals
+
+## Execution Steps
+
+1. Run `cargo run -- coupling $ARGUMENTS` to analyze
+2. Identify specified issue type (default: all)
+3. Propose refactoring steps with Before/After code examples
+4. Present priority table and phased migration plan
 
 ## Issue Types
 
@@ -11,32 +22,7 @@ Concrete refactoring proposals based on analysis.
 | `inappropriate-intimacy` | Internal access across boundaries |
 | `high-efferent` | Too many outgoing dependencies |
 | `high-afferent` | Too many incoming dependencies |
-
-## Common Patterns
-
-### Global Complexity Fix
-
-```rust
-// Before: Direct dependency on distant module
-use crate::deep::nested::InternalType;
-
-// After: Trait abstraction
-use crate::traits::Processable;
-fn process(p: &impl Processable) { ... }
-```
-
-### High Efferent Fix
-
-```rust
-// Before: Many dependencies
-use crate::a::A;
-use crate::b::B;
-use crate::c::C;
-// ... 15+ imports
-
-// After: Facade pattern
-use crate::facade::ServiceFacade;
-```
+| `all` | All issue types (default) |
 
 ## Verification
 
@@ -56,3 +42,5 @@ diff before.txt after.txt
 - Split large changes into small commits
 - Verify tests pass at each step
 - Document change intent for reviewers
+
+Code pattern examples: [patterns.md](patterns.md)

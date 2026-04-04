@@ -1,34 +1,31 @@
-# Mutation Testing - ミューテーションテスト (project)
+---
+name: mutants
+description: Run mutation testing with cargo-mutants to evaluate test quality. Identifies untested code paths.
+argument-hint: [--file FILE] [-F FUNCTION] [--timeout SEC]
+---
 
-Run mutation testing using cargo-mutants to analyze test quality.
+# Mutation Testing
 
-## Basic Commands
+## Commands
 
 ```bash
 # Run all mutations
 cargo mutants --timeout 60
 
-# Run on specific file
+# Specific file
 cargo mutants --file src/analyzer.rs --timeout 60
 
-# Run on specific function
+# Specific function
 cargo mutants --file src/analyzer.rs -F "function_name" --timeout 60
-```
 
-## Analysis Commands
-
-```bash
-# Quick check (specific functions)
-cargo mutants -F "file_path_to_module_path" --timeout 60
-
-# Full analysis (takes longer)
+# Full analysis (longer)
 cargo mutants --timeout 120
 
 # Exclude expensive tests
 cargo mutants --timeout 60 -E "integration"
 ```
 
-## Options Reference
+## Options
 
 | Option | Description |
 |--------|-------------|
@@ -38,12 +35,12 @@ cargo mutants --timeout 60 -E "integration"
 | `--timeout <SEC>` | Timeout per mutant |
 | `--jobs <N>` | Parallel jobs |
 
-## Interpreting Results
+## Result Interpretation
 
 | Result | Meaning |
 |--------|---------|
-| **caught** | Tests detected the mutation (good!) |
-| **missed** | Tests didn't detect the mutation (needs more tests) |
+| **caught** | Tests detected the mutation (good) |
+| **missed** | Tests didn't detect it (needs more tests) |
 | **unviable** | Mutation caused compile error (ignore) |
 | **timeout** | Test took too long (may need optimization) |
 
@@ -57,17 +54,9 @@ cargo mutants --timeout 60
 cat mutants.out/missed.txt
 
 # 3. Add tests for missed mutants
-# Edit tests...
 
 # 4. Verify improvement
 cargo mutants -F "specific_function" --timeout 60
-```
-
-## CI Integration
-
-```bash
-# Fail if too many missed mutants
-cargo mutants --timeout 60 2>&1 | grep -E "^[0-9]+ mutants tested"
 ```
 
 ## Notes

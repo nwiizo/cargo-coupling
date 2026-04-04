@@ -216,6 +216,40 @@ export function populateHotspots() {
 }
 
 // =====================================================
+// Temporal Coupling Panel
+// =====================================================
+
+export function populateTemporalCouplings() {
+    const panel = document.getElementById('temporal-coupling-panel');
+    const container = document.getElementById('temporal-coupling-list');
+    if (!container || !state.graphData) return;
+
+    const temporalData = state.graphData.temporal_couplings || [];
+    if (temporalData.length === 0) {
+        if (panel) panel.style.display = 'none';
+        return;
+    }
+
+    if (panel) panel.style.display = '';
+
+    container.innerHTML = temporalData.slice(0, 10).map(tc => {
+        const ratio = Math.round(tc.coupling_ratio * 100);
+        const marker = tc.is_strong ? '🔴' : '🟡';
+        const fileA = tc.file_a.replace(/.*\//, '');
+        const fileB = tc.file_b.replace(/.*\//, '');
+        return `
+            <div class="hotspot-item temporal-item" title="${escapeHtml(tc.file_a)} ↔ ${escapeHtml(tc.file_b)}">
+                <div class="hotspot-name">${marker} ${escapeHtml(fileA)} ↔ ${escapeHtml(fileB)}</div>
+                <div class="hotspot-stats">
+                    <span class="hotspot-score">${tc.co_change_count}x co-changes</span>
+                    <span class="hotspot-issues">${ratio}%</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// =====================================================
 // Module Rankings
 // =====================================================
 

@@ -193,7 +193,9 @@ cargo coupling --no-git ./src
 - **Circular Dependency Detection**: Detects and reports dependency cycles
 - **Visibility Tracking**: Analyzes Rust visibility modifiers (pub, pub(crate), etc.)
 - **Git Integration**: Analyzes change frequency from Git history for volatility scoring
-- **Configuration File**: Supports `.coupling.toml` for volatility overrides
+- **DDD Subdomain Classification**: Configure core/supporting/generic subdomains for business-driven volatility assessment
+- **Temporal Coupling Detection**: Detects files that frequently co-change in git history (implicit coupling)
+- **Configuration File**: Supports `.coupling.toml` for volatility overrides and subdomain classification
 - **Parallel Processing**: Uses Rayon for fast analysis of large codebases
 - **Configurable Thresholds**: Customize dependency limits via CLI or config
 - **Markdown Reports**: Generates detailed analysis reports
@@ -245,6 +247,19 @@ How frequently a component changes (automatically calculated from Git history).
 | **High** | Frequently changes | 11+ times | 1.00 |
 
 > **Note**: Volatility requires Git history. Use `cargo coupling ./src` (not `--no-git`) to enable volatility analysis.
+
+#### Subdomain-Based Volatility (DDD)
+
+Beyond git history, volatility can be assessed from business domain classification using `.coupling.toml`:
+
+```toml
+[subdomains]
+core = ["src/pricing/*", "src/matching/*"]         # High volatility (competitive advantage)
+supporting = ["src/reporting/*", "src/admin/*"]     # Low volatility (stable business logic)
+generic = ["src/auth/*", "src/config/*"]            # Low volatility (solved problems)
+```
+
+Explicit `[volatility]` overrides take priority over subdomain classification.
 
 ## The Balance Law
 

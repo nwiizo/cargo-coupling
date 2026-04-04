@@ -441,6 +441,9 @@ pub fn generate_report_with_thresholds<W: Write>(
     // Volatility section
     write_volatility_section(metrics, writer)?;
 
+    // Temporal coupling section
+    write_temporal_coupling_section(metrics, writer)?;
+
     // Circular dependency section
     write_circular_dependencies_section(metrics, writer)?;
 
@@ -925,6 +928,77 @@ fn write_volatility_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) 
     Ok(())
 }
 
+fn write_temporal_coupling_section<W: Write>(
+    metrics: &ProjectMetrics,
+    writer: &mut W,
+) -> io::Result<()> {
+    if metrics.temporal_couplings.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(writer, "## Temporal Coupling (Co-Change Analysis)\n")?;
+    writeln!(
+        writer,
+        "Files that frequently change together in git commits, indicating implicit coupling"
+    )?;
+    writeln!(writer, "beyond what code structure reveals.\n")?;
+
+    let strong: Vec<_> = metrics
+        .temporal_couplings
+        .iter()
+        .filter(|tc| tc.is_strong())
+        .collect();
+
+    if !strong.is_empty() {
+        writeln!(
+            writer,
+            "### Strong Temporal Coupling (>50% co-change ratio)\n"
+        )?;
+        writeln!(
+            writer,
+            "⚠️ These pairs may share implicit knowledge (business logic, assumptions, data formats).\n"
+        )?;
+        writeln!(writer, "| File A | File B | Co-changes | Ratio |")?;
+        writeln!(writer, "|--------|--------|------------|-------|")?;
+        for tc in strong.iter().take(10) {
+            writeln!(
+                writer,
+                "| `{}` | `{}` | {} | {:.0}% |",
+                tc.file_a,
+                tc.file_b,
+                tc.co_change_count,
+                tc.coupling_ratio * 100.0
+            )?;
+        }
+        writeln!(writer)?;
+    }
+
+    let moderate: Vec<_> = metrics
+        .temporal_couplings
+        .iter()
+        .filter(|tc| !tc.is_strong())
+        .collect();
+
+    if !moderate.is_empty() {
+        writeln!(writer, "### Moderate Temporal Coupling\n")?;
+        writeln!(writer, "| File A | File B | Co-changes | Ratio |")?;
+        writeln!(writer, "|--------|--------|------------|-------|")?;
+        for tc in moderate.iter().take(10) {
+            writeln!(
+                writer,
+                "| `{}` | `{}` | {} | {:.0}% |",
+                tc.file_a,
+                tc.file_b,
+                tc.co_change_count,
+                tc.coupling_ratio * 100.0
+            )?;
+        }
+        writeln!(writer)?;
+    }
+
+    Ok(())
+}
+
 fn write_circular_dependencies_section<W: Write>(
     metrics: &ProjectMetrics,
     writer: &mut W,
@@ -1117,6 +1191,27 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
                 "  {} → {}",
                 cycle.join(" → "),
                 cycle.first().unwrap_or(&"?".to_string())
+            )?;
+        }
+        writeln!(writer)?;
+    }
+
+    // Temporal coupling (important for AI to understand implicit dependencies)
+    let strong_temporal: Vec<_> = metrics
+        .temporal_couplings
+        .iter()
+        .filter(|tc| tc.is_strong())
+        .collect();
+    if !strong_temporal.is_empty() {
+        writeln!(writer, "Temporal Coupling (implicit dependencies):")?;
+        for tc in strong_temporal.iter().take(5) {
+            writeln!(
+                writer,
+                "  {} ↔ {} ({} co-changes, {:.0}% ratio)",
+                tc.file_a,
+                tc.file_b,
+                tc.co_change_count,
+                tc.coupling_ratio * 100.0
             )?;
         }
         writeln!(writer)?;

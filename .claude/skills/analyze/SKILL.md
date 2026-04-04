@@ -1,8 +1,18 @@
-# Coupling Analysis Skill
+---
+name: analyze
+description: Run coupling analysis and interpret results. Use when analyzing Rust project coupling patterns and generating improvement proposals.
+argument-hint: [path] [--summary|--verbose|--no-git]
+---
 
-Run coupling analysis on Rust projects.
+# Analyze - Coupling Analysis
 
-## Basic Commands
+## Execution Steps
+
+1. Run `cargo run -- coupling $ARGUMENTS` (default: `./src`)
+2. Interpret results as Balance Advisor
+3. Present concrete improvement proposals
+
+## Commands
 
 ```bash
 # Basic analysis (strict mode, hides Low severity)
@@ -14,42 +24,41 @@ cargo run -- coupling --summary ./src
 # Japanese output
 cargo run -- coupling --summary --japanese ./src
 
-# Show all issues
-cargo run -- coupling --summary --all ./src
-
 # AI-friendly output
 cargo run -- coupling --ai ./src
-```
 
-## Job-Focused Commands
+# Show all issues including Low
+cargo run -- coupling --all ./src
 
-```bash
-# Hotspots: Top refactoring targets
+# JSON output
+cargo run -- coupling --json ./src
+
+# Hotspots
 cargo run -- coupling --hotspots ./src
-cargo run -- coupling --hotspots=10 ./src
 
 # Impact analysis
 cargo run -- coupling --impact <module> ./src
 
 # CI/CD quality gate
-cargo run -- coupling --check ./src
 cargo run -- coupling --check --min-grade=B ./src
-
-# JSON output
-cargo run -- coupling --json ./src
 ```
 
-## Web Visualization
+## Options
 
-```bash
-# Start web UI
-cargo run -- coupling --web ./src
-
-# Custom port
-cargo run -- coupling --web --port 8080 ./src
-```
+| Option | Description |
+|--------|-------------|
+| `--summary, -s` | Summary only |
+| `--ai` | AI-friendly output |
+| `--json` | JSON format |
+| `--all` | Show all issues including Low |
+| `--no-git` | Skip Git history analysis |
+| `--max-deps N` | Dependency count threshold |
+| `--max-dependents N` | Dependent count threshold |
+| `--verbose` | Detailed output |
 
 ## Interpretation
 
 See `.claude/docs/khononov-framework.md` for grade meanings.
 See `.claude/docs/issue-types.md` for issue severity.
+
+Output template: [output-template.md](output-template.md)

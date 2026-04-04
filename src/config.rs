@@ -29,6 +29,14 @@
 //! # Paths to ignore from analysis (deprecated: use [analysis].exclude instead)
 //! ignore = ["src/generated/*", "tests/*"]
 //!
+//! [subdomains]
+//! # DDD subdomain classification (Khononov's Balanced Coupling model)
+//! # Volatility is derived from business domain, not just git history.
+//! # Explicit [volatility] overrides take priority over subdomain classification.
+//! core = ["src/analyzer.rs", "src/balance.rs", "src/metrics.rs"]
+//! supporting = ["src/report.rs", "src/cli_output.rs"]
+//! generic = ["src/web/*", "src/config.rs"]
+//!
 //! [thresholds]
 //! # Maximum dependencies before flagging High Efferent Coupling
 //! max_dependencies = 15
@@ -96,6 +104,28 @@ pub struct VolatilityConfig {
     pub ignore: Vec<String>,
 }
 
+/// DDD subdomain classification for volatility assessment
+///
+/// Based on Khononov's Balanced Coupling model: volatility should be determined
+/// by business domain classification, not just git history.
+/// - Core subdomains = High volatility (competitive advantage, constantly optimized)
+/// - Supporting subdomains = Low volatility (boring CRUD/ETL, rarely changes)
+/// - Generic subdomains = Low volatility (solved problems, stable implementations)
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SubdomainConfig {
+    /// Core subdomain modules (high volatility - competitive advantage)
+    #[serde(default)]
+    pub core: Vec<String>,
+
+    /// Supporting subdomain modules (low volatility - stable business logic)
+    #[serde(default)]
+    pub supporting: Vec<String>,
+
+    /// Generic subdomain modules (low volatility - solved problems)
+    #[serde(default)]
+    pub generic: Vec<String>,
+}
+
 /// Threshold configuration section
 #[derive(Debug, Clone, Deserialize)]
 pub struct ThresholdsConfig {
@@ -136,9 +166,45 @@ pub struct CouplingConfig {
     #[serde(default)]
     pub volatility: VolatilityConfig,
 
+    /// DDD subdomain classification (affects volatility assessment)
+    #[serde(default)]
+    pub subdomains: SubdomainConfig,
+
     /// Threshold configuration
     #[serde(default)]
     pub thresholds: ThresholdsConfig,
+}
+
+/// DDD subdomain type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subdomain {
+    /// Core subdomain - competitive advantage, high volatility
+    Core,
+    /// Supporting subdomain - stable business logic, low volatility
+    Supporting,
+    /// Generic subdomain - solved problems, low volatility
+    Generic,
+}
+
+impl Subdomain {
+    /// Map subdomain to expected volatility level
+    pub fn expected_volatility(&self) -> Volatility {
+        match self {
+            Subdomain::Core => Volatility::High,
+            Subdomain::Supporting => Volatility::Low,
+            Subdomain::Generic => Volatility::Low,
+        }
+    }
+}
+
+impl std::fmt::Display for Subdomain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Subdomain::Core => write!(f, "Core"),
+            Subdomain::Supporting => write!(f, "Supporting"),
+            Subdomain::Generic => write!(f, "Generic"),
+        }
+    }
 }
 
 /// Compiled configuration with glob patterns
@@ -161,6 +227,14 @@ pub struct CompiledConfig {
     low_patterns: Vec<Pattern>,
     /// Patterns for ignored paths (deprecated, use exclude_patterns)
     ignore_patterns: Vec<Pattern>,
+
+    // === Subdomain settings ===
+    /// Patterns for core subdomain (high volatility)
+    core_patterns: Vec<Pattern>,
+    /// Patterns for supporting subdomain (low volatility)
+    supporting_patterns: Vec<Pattern>,
+    /// Patterns for generic subdomain (low volatility)
+    generic_patterns: Vec<Pattern>,
 
     // === Thresholds ===
     /// Threshold configuration
@@ -193,6 +267,10 @@ impl CompiledConfig {
             medium_patterns: compile_patterns(&config.volatility.medium)?,
             low_patterns: compile_patterns(&config.volatility.low)?,
             ignore_patterns: compile_patterns(&config.volatility.ignore)?,
+            // Subdomain settings
+            core_patterns: compile_patterns(&config.subdomains.core)?,
+            supporting_patterns: compile_patterns(&config.subdomains.supporting)?,
+            generic_patterns: compile_patterns(&config.subdomains.generic)?,
             // Thresholds
             thresholds: config.thresholds,
             cache: HashMap::new(),
@@ -209,6 +287,9 @@ impl CompiledConfig {
             medium_patterns: Vec::new(),
             low_patterns: Vec::new(),
             ignore_patterns: Vec::new(),
+            core_patterns: Vec::new(),
+            supporting_patterns: Vec::new(),
+            generic_patterns: Vec::new(),
             thresholds: ThresholdsConfig::default(),
             cache: HashMap::new(),
         }
@@ -240,14 +321,36 @@ impl CompiledConfig {
         self.prelude_patterns.len()
     }
 
+    /// Get the DDD subdomain classification for a path, if any
+    pub fn get_subdomain(&self, path: &str) -> Option<Subdomain> {
+        if self.core_patterns.iter().any(|p| p.matches(path)) {
+            Some(Subdomain::Core)
+        } else if self.supporting_patterns.iter().any(|p| p.matches(path)) {
+            Some(Subdomain::Supporting)
+        } else if self.generic_patterns.iter().any(|p| p.matches(path)) {
+            Some(Subdomain::Generic)
+        } else {
+            None
+        }
+    }
+
+    /// Check if config has any subdomain classifications
+    pub fn has_subdomain_config(&self) -> bool {
+        !self.core_patterns.is_empty()
+            || !self.supporting_patterns.is_empty()
+            || !self.generic_patterns.is_empty()
+    }
+
     /// Get overridden volatility for a path, if any
+    ///
+    /// Priority: explicit volatility override > subdomain classification
     pub fn get_volatility_override(&mut self, path: &str) -> Option<Volatility> {
         // Check cache first
         if let Some(cached) = self.cache.get(path) {
             return *cached;
         }
 
-        // Check patterns in order of specificity (high > medium > low)
+        // Check explicit volatility patterns first (highest priority)
         let result = if self.high_patterns.iter().any(|p| p.matches(path)) {
             Some(Volatility::High)
         } else if self.medium_patterns.iter().any(|p| p.matches(path)) {
@@ -255,7 +358,8 @@ impl CompiledConfig {
         } else if self.low_patterns.iter().any(|p| p.matches(path)) {
             Some(Volatility::Low)
         } else {
-            None
+            // Fall back to subdomain-based volatility
+            self.get_subdomain(path).map(|sd| sd.expected_volatility())
         };
 
         // Cache the result
@@ -419,6 +523,73 @@ mod tests {
         assert_eq!(
             compiled.get_volatility("src/other/file.rs", Volatility::Medium),
             Volatility::Medium
+        );
+    }
+
+    #[test]
+    fn test_subdomain_config() {
+        let toml = r#"
+            [subdomains]
+            core = ["src/analyzer.rs", "src/balance.rs"]
+            supporting = ["src/report.rs", "src/cli_output.rs"]
+            generic = ["src/web/*", "src/config.rs"]
+        "#;
+
+        let config: CouplingConfig = toml::from_str(toml).unwrap();
+        let mut compiled = CompiledConfig::from_config(config).unwrap();
+
+        // Core → High volatility
+        assert_eq!(
+            compiled.get_subdomain("src/analyzer.rs"),
+            Some(Subdomain::Core)
+        );
+        assert_eq!(
+            compiled.get_volatility_override("src/analyzer.rs"),
+            Some(Volatility::High)
+        );
+
+        // Supporting → Low volatility
+        assert_eq!(
+            compiled.get_subdomain("src/report.rs"),
+            Some(Subdomain::Supporting)
+        );
+        assert_eq!(
+            compiled.get_volatility_override("src/report.rs"),
+            Some(Volatility::Low)
+        );
+
+        // Generic → Low volatility
+        assert_eq!(
+            compiled.get_subdomain("src/web/server.rs"),
+            Some(Subdomain::Generic)
+        );
+        assert_eq!(
+            compiled.get_volatility_override("src/web/server.rs"),
+            Some(Volatility::Low)
+        );
+
+        // Unclassified → None
+        assert_eq!(compiled.get_subdomain("src/other.rs"), None);
+        assert_eq!(compiled.get_volatility_override("src/other.rs"), None);
+    }
+
+    #[test]
+    fn test_volatility_override_beats_subdomain() {
+        let toml = r#"
+            [volatility]
+            low = ["src/analyzer.rs"]
+
+            [subdomains]
+            core = ["src/analyzer.rs"]
+        "#;
+
+        let config: CouplingConfig = toml::from_str(toml).unwrap();
+        let mut compiled = CompiledConfig::from_config(config).unwrap();
+
+        // Explicit volatility override wins over subdomain classification
+        assert_eq!(
+            compiled.get_volatility_override("src/analyzer.rs"),
+            Some(Volatility::Low)
         );
     }
 }

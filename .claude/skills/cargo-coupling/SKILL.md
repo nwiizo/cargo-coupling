@@ -1,83 +1,34 @@
-# cargo-coupling - カップリング分析ツール (project)
+---
+name: cargo-coupling
+description: General CLI reference for cargo-coupling. All commands, options, config, and health grades.
+user-invocable: false
+---
 
-Rust プロジェクトのカップリング分析を実行します。
+# cargo-coupling CLI Reference
 
-## 基本コマンド
-
-```bash
-# 基本分析
-cargo run -- coupling ./src
-
-# サマリーのみ
-cargo run -- coupling --summary ./src
-
-# 日本語出力
-cargo run -- coupling --summary --japanese ./src
-
-# AI フレンドリー出力
-cargo run -- coupling --ai ./src
-```
-
-## 分析オプション
+## Commands
 
 ```bash
-# テストコードを除外
-cargo run -- coupling --exclude-tests ./src
-
-# 全ての問題を表示（Low 含む）
-cargo run -- coupling --all ./src
-
-# Git 履歴分析をスキップ
-cargo run -- coupling --no-git ./src
-
-# 閾値を変更
-cargo run -- coupling --max-deps 20 --max-dependents 25 ./src
+cargo run -- coupling ./src                          # Basic analysis
+cargo run -- coupling --summary ./src                # Summary only
+cargo run -- coupling --summary --japanese ./src     # Japanese
+cargo run -- coupling --ai ./src                     # AI-friendly
+cargo run -- coupling --json ./src                   # JSON output
+cargo run -- coupling -o report.md ./src             # File output
+cargo run -- coupling --all ./src                    # Include Low severity
+cargo run -- coupling --exclude-tests ./src          # Exclude test code
+cargo run -- coupling --no-git ./src                 # Skip Git analysis
+cargo run -- coupling --hotspots ./src               # Refactoring hotspots
+cargo run -- coupling --hotspots=10 ./src            # Top N hotspots
+cargo run -- coupling --impact <module> ./src        # Impact analysis
+cargo run -- coupling --trace <function> ./src       # Dependency trace
+cargo run -- coupling --check --min-grade B ./src    # CI quality gate
+cargo run -- coupling --web ./src                    # Web UI
+cargo run -- coupling --web --port 8080 ./src        # Custom port
+cargo run -- coupling --max-deps 20 --max-dependents 25 ./src  # Custom thresholds
 ```
 
-## 特定用途コマンド
-
-```bash
-# ホットスポット（リファクタリング優先度）
-cargo run -- coupling --hotspots ./src
-cargo run -- coupling --hotspots=10 ./src
-
-# 影響分析
-cargo run -- coupling --impact <module> ./src
-
-# 依存関係トレース
-cargo run -- coupling --trace <function> ./src
-
-# CI/CD 品質ゲート
-cargo run -- coupling --check ./src
-cargo run -- coupling --check --min-grade B ./src
-```
-
-## 出力形式
-
-```bash
-# JSON 形式
-cargo run -- coupling --json ./src
-
-# ファイル出力
-cargo run -- coupling -o report.md ./src
-```
-
-## Web 可視化
-
-```bash
-# Web UI 起動
-cargo run -- coupling --web ./src
-
-# カスタムポート
-cargo run -- coupling --web --port 8080 ./src
-
-# ブラウザ自動起動なし
-cargo run -- coupling --web --no-open ./src
-```
-
-## 設定ファイル
-
-`.coupling.toml` で設定をカスタマイズ:
+## Config File (.coupling.toml)
 
 ```toml
 [thresholds]
@@ -90,29 +41,12 @@ prelude_modules = ["prelude", "ext"]
 exclude = ["generated/*"]
 ```
 
-## オプション一覧
+## Health Grades
 
-| オプション | 説明 |
-|-----------|------|
-| `--summary, -s` | サマリーのみ表示 |
-| `--ai` | AI フレンドリー出力 |
-| `--exclude-tests` | テストコード除外 |
-| `--json` | JSON 形式出力 |
-| `--web` | Web UI 起動 |
-| `--hotspots[=N]` | ホットスポット表示 |
-| `--impact <MODULE>` | 影響分析 |
-| `--trace <ITEM>` | 依存トレース |
-| `--check` | 品質ゲートチェック |
-| `--japanese, --jp` | 日本語出力 |
-| `--all` | Low 含む全問題表示 |
-| `--no-git` | Git 分析スキップ |
-
-## ヘルスグレード
-
-| グレード | 意味 |
-|---------|------|
-| A | Well-balanced（優良） |
-| B | Healthy（健全） |
-| C | Needs Attention（要注意） |
-| D | At Risk（リスクあり） |
-| F | Critical（要対応） |
+| Grade | Score | Meaning |
+|-------|-------|---------|
+| A | 0.90-1.00 | Well-balanced |
+| B | 0.80-0.89 | Healthy |
+| C | 0.60-0.79 | Needs Attention |
+| D | 0.40-0.59 | At Risk |
+| F | 0.00-0.39 | Critical |

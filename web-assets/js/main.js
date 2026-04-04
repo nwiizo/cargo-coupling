@@ -28,6 +28,7 @@ import { showItemGraph, hideItemGraph } from './item-graph.js';
 import {
     populateCriticalIssues,
     populateHotspots,
+    populateTemporalCouplings,
     populateModuleRankings,
     setupModuleRankingSorting,
     populateIssueList,
@@ -256,6 +257,7 @@ function initUI(data) {
 function initJobFeatures() {
     populateCriticalIssues();
     populateHotspots();
+    populateTemporalCouplings();
     populateModuleRankings();
     setupModuleRankingSorting();
     setupJobButtons();

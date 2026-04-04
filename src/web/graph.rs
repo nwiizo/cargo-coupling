@@ -10,6 +10,16 @@ use crate::analyzer::ItemDepType;
 use crate::balance::{BalanceScore, IssueThresholds, analyze_project_balance};
 use crate::metrics::{BalanceClassification, CouplingMetrics, ProjectMetrics};
 
+/// Temporal coupling data for visualization
+#[derive(Debug, Clone, Serialize)]
+pub struct TemporalCouplingData {
+    pub file_a: String,
+    pub file_b: String,
+    pub co_change_count: usize,
+    pub coupling_ratio: f64,
+    pub is_strong: bool,
+}
+
 /// Complete graph data for visualization
 #[derive(Debug, Clone, Serialize)]
 pub struct GraphData {
@@ -17,6 +27,7 @@ pub struct GraphData {
     pub edges: Vec<Edge>,
     pub summary: Summary,
     pub circular_dependencies: Vec<Vec<String>>,
+    pub temporal_couplings: Vec<TemporalCouplingData>,
 }
 
 /// A node in the coupling graph (represents a module)
@@ -512,6 +523,18 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
             },
         },
         circular_dependencies: circular_deps,
+        temporal_couplings: metrics
+            .temporal_couplings
+            .iter()
+            .take(20)
+            .map(|tc| TemporalCouplingData {
+                file_a: tc.file_a.clone(),
+                file_b: tc.file_b.clone(),
+                co_change_count: tc.co_change_count,
+                coupling_ratio: tc.coupling_ratio,
+                is_strong: tc.is_strong(),
+            })
+            .collect(),
     }
 }
 

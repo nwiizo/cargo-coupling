@@ -1,46 +1,56 @@
-# Hotspots Skill
+---
+name: hotspots
+description: Identify high-priority refactoring targets using hotspot scoring. Ranks modules by issue severity and coupling count.
+argument-hint: [path]
+---
 
-Identify modules needing refactoring attention.
+# Hotspots - Refactoring Priority
 
-## Command
+## Execution Steps
+
+1. Run `cargo run --release -- coupling --ai $ARGUMENTS` (default: `./src`)
+2. Calculate hotspot score for each module
+3. Display ranked list with recommendations
+
+## Commands
 
 ```bash
-# Show top 5 hotspots (default)
+# Default (top 5)
 cargo run -- coupling --hotspots ./src
 
-# Show top 10 hotspots
+# Top 10
 cargo run -- coupling --hotspots=10 ./src
 
 # With explanations
 cargo run -- coupling --hotspots --verbose ./src
 ```
 
-## Scoring Factors
+## Scoring Formula
 
 | Factor | Weight | Description |
 |--------|--------|-------------|
-| Issue count | ×30 | Related coupling issues |
-| Coupling count | ×5 | In/out dependencies |
+| Issue count | x30 | Number of coupling issues |
+| Coupling count | x5 | In/out dependency count |
 | Health: Critical | +50 | Critical health status |
-| Health: Needs Review | +20 | Review needed |
+| Health: Needs Review | +20 | Needs review status |
 | Circular dependency | +40 | Part of a cycle |
 
-## Analysis Focus
+## Output Format
 
-1. **Why problematic**
-   - Issue types detected
-   - Coupling patterns
+```markdown
+## Refactoring Hotspots
 
-2. **Priority**
-   - Blast radius
-   - Difficulty
-   - Expected benefit
+### 1. [Module] (Score: XX)
+- **Issues**: [Types and count]
+- **Coupling**: In X / Out Y
+- **Recommended action**: [Specific improvement]
+```
 
-3. **Refactoring suggestions**
-   - Interface separation
-   - Dependency inversion
-   - Module splitting
-   - Facade pattern
+## Analysis Dimensions
+
+1. **Why problematic** — Issue types, coupling patterns
+2. **Priority** — Blast radius, difficulty, expected benefit
+3. **Refactoring proposals** — Interface separation, dependency inversion, module splitting, facade
 
 ## Notes
 

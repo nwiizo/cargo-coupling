@@ -781,6 +781,8 @@ pub struct ProjectMetrics {
     pub crate_dependencies: HashMap<String, Vec<String>>,
     /// Global type registry: type name -> (module name, visibility)
     pub type_registry: HashMap<String, (String, Visibility)>,
+    /// Temporal coupling data (files that co-change frequently)
+    pub temporal_couplings: Vec<crate::volatility::TemporalCoupling>,
 }
 
 impl ProjectMetrics {

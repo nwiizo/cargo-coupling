@@ -1,55 +1,42 @@
-# Full Review Skill
+---
+name: full-review
+description: Comprehensive architecture review with 3 expert perspectives. Use before releases or for architecture evaluation.
+argument-hint: [path]
+---
 
-Comprehensive architecture review with expert perspectives.
+# Full Review - Architecture Review
 
 ## Execution Flow
 
 ### Phase 1: Automated Analysis
 
 ```bash
-# Coupling analysis
-cargo run -- coupling ./src
-
-# Lint check
+cargo run -- coupling $ARGUMENTS  # default: ./src
 cargo clippy -- -D warnings
-
-# Test
 cargo test
 ```
 
-### Phase 2: Expert Review
+### Phase 2: Expert Review (parallel)
 
-Three perspectives:
+Uses personas from `.claude/agents/`:
 
-1. **Balance Advisor (Vlad Khononov)**
-   - 3D analysis: Strength, Distance, Volatility
-   - Coupling balance evaluation
-
-2. **Architecture Critic**
-   - Architecture risk assessment
-   - Technical debt estimation
-
-3. **Rust Idiomatic Expert**
-   - Rust idiom evaluation
-   - Code quality review
+1. **Balance Advisor (Vlad Khononov)** — 3D coupling balance analysis
+2. **Architecture Critic** — Architecture risk and technical debt assessment
+3. **Rust Idiomatic Expert** — Rust idioms and code quality review
 
 ### Phase 3: Integrated Report
 
-- Prioritized improvement suggestions
+- Prioritized improvements (Critical/High/Medium)
 - Good design decisions to maintain
 - Action plan (immediate/weekly/long-term)
 
 ## Output Sections
 
-1. Executive Summary
-2. Automated Analysis Results
-3. Expert Reviews
-4. Integrated Improvement Plan
-5. Next Steps
+1. Executive Summary (overall score table)
+2. Phase 1 automated analysis results
+3. Phase 2 expert reviews
+4. Integrated improvement proposals
+5. Next steps
+6. Review team messages
 
-## Time Estimate
-
-- Phase 1: 1-3 minutes
-- Phase 2: 5-10 minutes
-- Phase 3: 1-2 minutes
-- **Total**: ~10-15 minutes
+Detailed output template: [output-template.md](output-template.md)

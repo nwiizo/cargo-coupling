@@ -908,6 +908,16 @@ pub fn generate_check_output<W: Write>(
 // JSON Output
 // ============================================================================
 
+/// Temporal coupling in JSON format
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonTemporalCoupling {
+    pub file_a: String,
+    pub file_b: String,
+    pub co_change_count: usize,
+    pub coupling_ratio: f64,
+    pub is_strong: bool,
+}
+
 /// Complete analysis in JSON format
 #[derive(Debug, Clone, Serialize)]
 pub struct JsonOutput {
@@ -915,6 +925,7 @@ pub struct JsonOutput {
     pub hotspots: Vec<Hotspot>,
     pub issues: Vec<JsonIssue>,
     pub circular_dependencies: Vec<Vec<String>>,
+    pub temporal_couplings: Vec<JsonTemporalCoupling>,
     pub modules: Vec<JsonModule>,
 }
 
@@ -997,6 +1008,19 @@ pub fn generate_json_output<W: Write>(
         .get(&Severity::Medium)
         .unwrap_or(&0);
 
+    let temporal_couplings: Vec<JsonTemporalCoupling> = metrics
+        .temporal_couplings
+        .iter()
+        .take(20)
+        .map(|tc| JsonTemporalCoupling {
+            file_a: tc.file_a.clone(),
+            file_b: tc.file_b.clone(),
+            co_change_count: tc.co_change_count,
+            coupling_ratio: tc.coupling_ratio,
+            is_strong: tc.is_strong(),
+        })
+        .collect();
+
     let output = JsonOutput {
         summary: JsonSummary {
             health_grade: format!("{:?}", report.health_grade),
@@ -1024,6 +1048,7 @@ pub fn generate_json_output<W: Write>(
             })
             .collect(),
         circular_dependencies: circular_deps,
+        temporal_couplings,
         modules: metrics
             .modules
             .iter()

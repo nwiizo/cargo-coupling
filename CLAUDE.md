@@ -44,8 +44,7 @@ docker push ghcr.io/nwiizo/cargo-coupling:latest
 
 - `.claude/docs/` - Khononov framework, issue types, learnings
 - `.claude/rules/` - Rust, Web UI rules
-- `.claude/skills/` - analyze, release skills
-- `.claude/commands/` - Slash commands
+- `.claude/skills/` - All slash commands and references (analyze, balanced-coupling, check-balance, e2e-test, explain-issue, full-review, hotspots, mutants, refactor, release, review, similarity, web)
 
 ## Notes
 

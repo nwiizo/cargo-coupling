@@ -121,6 +121,109 @@ impl VolatilityAnalyzer {
             .collect()
     }
 
+    /// Analyze temporal coupling (co-change patterns) from git history
+    ///
+    /// Detects files that frequently change together in the same commit,
+    /// indicating implicit coupling that AST analysis cannot detect.
+    /// Based on Khononov's modularity model: co-changing files suggest
+    /// shared knowledge even without explicit code dependencies.
+    pub fn analyze_temporal_coupling(
+        &self,
+        repo_path: &Path,
+    ) -> Result<Vec<TemporalCoupling>, VolatilityError> {
+        // Get commit-grouped file changes
+        let mut child = Command::new("git")
+            .args([
+                "log",
+                "--pretty=format:__COMMIT__",
+                "--name-only",
+                "--diff-filter=AMRC",
+                &format!("--since={} months ago", self.period_months),
+                "--",
+                "*.rs",
+            ])
+            .current_dir(repo_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+
+        let mut commits: Vec<Vec<String>> = Vec::new();
+        let mut current_files: Vec<String> = Vec::new();
+
+        if let Some(stdout) = child.stdout.take() {
+            let reader = BufReader::with_capacity(64 * 1024, stdout);
+            for line in reader.lines() {
+                let line = match line {
+                    Ok(l) => l,
+                    Err(_) => continue,
+                };
+                let trimmed = line.trim();
+                if trimmed == "__COMMIT__" {
+                    if current_files.len() >= 2 {
+                        commits.push(std::mem::take(&mut current_files));
+                    } else {
+                        current_files.clear();
+                    }
+                } else if !trimmed.is_empty() && trimmed.ends_with(".rs") {
+                    current_files.push(trimmed.to_string());
+                }
+            }
+            // Don't forget the last commit
+            if current_files.len() >= 2 {
+                commits.push(current_files);
+            }
+        }
+
+        let _ = child.wait();
+
+        // Count co-change frequency for each file pair
+        // Skip commits with too many files (e.g., formatter runs, merge commits)
+        // as they produce O(n²) noise rather than meaningful coupling signal
+        const MAX_FILES_PER_COMMIT: usize = 50;
+        let mut pair_counts: HashMap<(String, String), usize> = HashMap::new();
+        for files in &commits {
+            if files.len() > MAX_FILES_PER_COMMIT {
+                continue;
+            }
+            for i in 0..files.len() {
+                for j in (i + 1)..files.len() {
+                    let (a, b) = if files[i] < files[j] {
+                        (files[i].clone(), files[j].clone())
+                    } else {
+                        (files[j].clone(), files[i].clone())
+                    };
+                    *pair_counts.entry((a, b)).or_default() += 1;
+                }
+            }
+        }
+
+        // Filter to significant co-changes (3+ times together)
+        let mut result: Vec<TemporalCoupling> = pair_counts
+            .into_iter()
+            .filter(|(_, count)| *count >= 3)
+            .map(|((file_a, file_b), count)| {
+                let total_a = self.file_changes.get(&file_a).copied().unwrap_or(1);
+                let total_b = self.file_changes.get(&file_b).copied().unwrap_or(1);
+                let coupling_ratio = count as f64 / total_a.min(total_b).max(1) as f64;
+                TemporalCoupling {
+                    file_a,
+                    file_b,
+                    co_change_count: count,
+                    coupling_ratio: coupling_ratio.min(1.0),
+                }
+            })
+            .collect();
+
+        result.sort_by(|a, b| {
+            b.co_change_count.cmp(&a.co_change_count).then(
+                b.coupling_ratio
+                    .partial_cmp(&a.coupling_ratio)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+        });
+        Ok(result)
+    }
+
     /// Get volatility statistics
     pub fn statistics(&self) -> VolatilityStats {
         if self.file_changes.is_empty() {
@@ -147,6 +250,29 @@ impl VolatilityAnalyzer {
             medium_volatility_count: medium_count,
             high_volatility_count: high_count,
         }
+    }
+}
+
+/// Temporal coupling between two files (co-change pattern)
+///
+/// Represents files that frequently change together in git commits,
+/// indicating implicit coupling beyond what code structure reveals.
+#[derive(Debug, Clone)]
+pub struct TemporalCoupling {
+    /// First file in the pair
+    pub file_a: String,
+    /// Second file in the pair
+    pub file_b: String,
+    /// Number of commits where both files changed together
+    pub co_change_count: usize,
+    /// Ratio of co-changes to total changes of the less-changed file (0.0-1.0)
+    pub coupling_ratio: f64,
+}
+
+impl TemporalCoupling {
+    /// Whether this represents strong temporal coupling (>50% co-change ratio)
+    pub fn is_strong(&self) -> bool {
+        self.coupling_ratio >= 0.5
     }
 }
 
