@@ -335,4 +335,31 @@ mod tests {
         assert_eq!(stats.medium_volatility_count, 1);
         assert_eq!(stats.high_volatility_count, 1);
     }
+
+    #[test]
+    fn test_temporal_coupling_is_strong() {
+        let strong = TemporalCoupling {
+            file_a: "a.rs".to_string(),
+            file_b: "b.rs".to_string(),
+            co_change_count: 10,
+            coupling_ratio: 0.8,
+        };
+        assert!(strong.is_strong());
+
+        let exactly_threshold = TemporalCoupling {
+            file_a: "a.rs".to_string(),
+            file_b: "b.rs".to_string(),
+            co_change_count: 5,
+            coupling_ratio: 0.5,
+        };
+        assert!(exactly_threshold.is_strong());
+
+        let weak = TemporalCoupling {
+            file_a: "a.rs".to_string(),
+            file_b: "b.rs".to_string(),
+            co_change_count: 3,
+            coupling_ratio: 0.3,
+        };
+        assert!(!weak.is_strong());
+    }
 }

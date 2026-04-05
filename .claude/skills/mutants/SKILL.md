@@ -1,66 +1,62 @@
 ---
 name: mutants
 description: Run mutation testing with cargo-mutants to evaluate test quality. Identifies untested code paths.
-argument-hint: [--file FILE] [-F FUNCTION] [--timeout SEC]
+argument-hint: [--file FILE] [-F FUNCTION]
+user-invocable: true
+allowed-tools: Bash, Read, Grep, Glob, Edit
 ---
 
 # Mutation Testing
 
+Run cargo-mutants, analyze missed mutants, write tests for new code, verify fixes.
+
+## Workflow
+
+1. **Run**: Scope to changed files or specified targets
+2. **Analyze**: Focus on new/changed code missed mutants (ignore pre-existing)
+3. **Fix**: Add tests for missed mutants in new code
+4. **Verify**: Re-run on fixed functions to confirm 0 missed
+
 ## Commands
 
 ```bash
-# Run all mutations
-cargo mutants --timeout 60
+# Scoped to specific files (recommended for incremental work)
+cargo mutants --no-shuffle -j4 -f src/config.rs -f src/volatility.rs
 
-# Specific file
-cargo mutants --file src/analyzer.rs --timeout 60
+# Scoped to specific functions
+cargo mutants --no-shuffle -j4 -F "function_name"
 
-# Specific function
-cargo mutants --file src/analyzer.rs -F "function_name" --timeout 60
+# Full run (slow, 1000+ mutants)
+cargo mutants --no-shuffle -j4 -- --lib
 
-# Full analysis (longer)
-cargo mutants --timeout 120
-
-# Exclude expensive tests
-cargo mutants --timeout 60 -E "integration"
+# Check results
+cat mutants.out/missed.txt | grep "target_file.rs"
+cat mutants.out/caught.txt | wc -l
 ```
 
 ## Options
 
 | Option | Description |
 |--------|-------------|
-| `--file <FILE>` | Limit to specific file |
-| `-F <PATTERN>` | Filter by function name |
+| `-f <FILE>` | Limit to specific source file |
+| `-F <PATTERN>` | Filter by function name pattern |
 | `-E <PATTERN>` | Exclude by function name |
-| `--timeout <SEC>` | Timeout per mutant |
-| `--jobs <N>` | Parallel jobs |
+| `-j <N>` | Parallel jobs (default: auto) |
+| `--no-shuffle` | Deterministic ordering |
+| `-- --lib` | Only run library tests |
 
 ## Result Interpretation
 
-| Result | Meaning |
-|--------|---------|
-| **caught** | Tests detected the mutation (good) |
-| **missed** | Tests didn't detect it (needs more tests) |
-| **unviable** | Mutation caused compile error (ignore) |
-| **timeout** | Test took too long (may need optimization) |
+| Result | Meaning | Action |
+|--------|---------|--------|
+| **caught** | Test detected mutation | None (good) |
+| **missed** | Test didn't detect | Add/improve test |
+| **unviable** | Compile error from mutation | Ignore |
+| **timeout** | Test too slow | Optimize or skip |
 
-## Workflow
+## Triage Strategy
 
-```bash
-# 1. Run mutation testing
-cargo mutants --timeout 60
-
-# 2. Check missed mutants
-cat mutants.out/missed.txt
-
-# 3. Add tests for missed mutants
-
-# 4. Verify improvement
-cargo mutants -F "specific_function" --timeout 60
-```
-
-## Notes
-
-- Higher caught ratio = better test quality
-- Focus on business-critical functions first
-- `mutants.out/` is gitignored
+- Pre-existing missed mutants in `main.rs` (CLI entry point): low priority, hard to unit test
+- Output formatting functions (`report.rs`, `cli_output.rs`): low priority unless logic-heavy
+- Business logic (`config.rs`, `balance.rs`, `analyzer.rs`): high priority
+- New code: always fix missed mutants before release

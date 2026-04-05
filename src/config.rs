@@ -574,6 +574,88 @@ mod tests {
     }
 
     #[test]
+    fn test_subdomain_display() {
+        assert_eq!(format!("{}", Subdomain::Core), "Core");
+        assert_eq!(format!("{}", Subdomain::Supporting), "Supporting");
+        assert_eq!(format!("{}", Subdomain::Generic), "Generic");
+    }
+
+    #[test]
+    fn test_subdomain_expected_volatility() {
+        assert_eq!(Subdomain::Core.expected_volatility(), Volatility::High);
+        assert_eq!(Subdomain::Supporting.expected_volatility(), Volatility::Low);
+        assert_eq!(Subdomain::Generic.expected_volatility(), Volatility::Low);
+    }
+
+    #[test]
+    fn test_has_subdomain_config() {
+        // Empty config → no subdomain config
+        let compiled = CompiledConfig::empty();
+        assert!(!compiled.has_subdomain_config());
+
+        // With core patterns → has subdomain config
+        let toml = r#"
+            [subdomains]
+            core = ["src/analyzer.rs"]
+        "#;
+        let config: CouplingConfig = toml::from_str(toml).unwrap();
+        let compiled = CompiledConfig::from_config(config).unwrap();
+        assert!(compiled.has_subdomain_config());
+
+        // With only supporting patterns → has subdomain config
+        let toml = r#"
+            [subdomains]
+            supporting = ["src/report.rs"]
+        "#;
+        let config: CouplingConfig = toml::from_str(toml).unwrap();
+        let compiled = CompiledConfig::from_config(config).unwrap();
+        assert!(compiled.has_subdomain_config());
+
+        // With only generic patterns → has subdomain config
+        let toml = r#"
+            [subdomains]
+            generic = ["src/web/*"]
+        "#;
+        let config: CouplingConfig = toml::from_str(toml).unwrap();
+        let compiled = CompiledConfig::from_config(config).unwrap();
+        assert!(compiled.has_subdomain_config());
+    }
+
+    #[test]
+    fn test_has_volatility_overrides() {
+        // Empty config → no overrides
+        let compiled = CompiledConfig::empty();
+        assert!(!compiled.has_volatility_overrides());
+
+        // With high volatility → has overrides
+        let toml = r#"
+            [volatility]
+            high = ["src/core.rs"]
+        "#;
+        let config: CouplingConfig = toml::from_str(toml).unwrap();
+        let compiled = CompiledConfig::from_config(config).unwrap();
+        assert!(compiled.has_volatility_overrides());
+
+        // With medium volatility → has overrides
+        let toml = r#"
+            [volatility]
+            medium = ["src/mid.rs"]
+        "#;
+        let config: CouplingConfig = toml::from_str(toml).unwrap();
+        let compiled = CompiledConfig::from_config(config).unwrap();
+        assert!(compiled.has_volatility_overrides());
+
+        // With low volatility → has overrides
+        let toml = r#"
+            [volatility]
+            low = ["src/stable.rs"]
+        "#;
+        let config: CouplingConfig = toml::from_str(toml).unwrap();
+        let compiled = CompiledConfig::from_config(config).unwrap();
+        assert!(compiled.has_volatility_overrides());
+    }
+
+    #[test]
     fn test_volatility_override_beats_subdomain() {
         let toml = r#"
             [volatility]
