@@ -58,9 +58,11 @@ mod tests {
 ```toml
 [analysis]
 exclude_tests = true
-prelude_modules = ["prelude", "ext"]
-exclude = ["generated/*"]
+prelude_modules = ["src/lib.rs", "src/prelude.rs"]
+exclude = ["src/generated/*", "src/generated/**"]
 ```
+
+`exclude` パターンは `.coupling.toml` を置いたディレクトリ基準で評価される。
 
 ### 2. 出力形式テスト
 

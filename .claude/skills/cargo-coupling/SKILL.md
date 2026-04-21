@@ -81,14 +81,16 @@ cargo run -- coupling --web --no-open ./src
 
 ```toml
 [thresholds]
-max_deps = 15
+max_dependencies = 15
 max_dependents = 20
 
 [analysis]
 exclude_tests = true
-prelude_modules = ["prelude", "ext"]
-exclude = ["generated/*"]
+prelude_modules = ["src/lib.rs", "src/prelude.rs"]
+exclude = ["src/generated/*", "src/generated/**"]
 ```
+
+`[analysis].exclude` は `.coupling.toml` が置かれたディレクトリ基準で評価される。
 
 ## オプション一覧
 

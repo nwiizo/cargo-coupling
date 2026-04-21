@@ -62,7 +62,7 @@ cargo run -- coupling --summary /tmp/e2e-test-cargo-coupling/src
 
 ```bash
 # Run all unit tests first
-cargo test
+cargo test --all-features
 
 # Then run E2E
 cargo run -- coupling ./src

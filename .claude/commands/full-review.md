@@ -25,12 +25,12 @@
 
 2. **cargo clippy実行**
    ```bash
-   cargo clippy -- -D warnings
+   cargo clippy --all-targets --all-features -- -D warnings
    ```
 
 3. **cargo test実行**
    ```bash
-   cargo test
+   cargo test --all-features
    ```
 
 ### Phase 2: 専門家レビュー（並列実行）
@@ -93,7 +93,7 @@
 
 [警告/エラー数と主要な内容]
 
-### cargo test
+### cargo test --all-features
 
 [テスト結果サマリー]
 

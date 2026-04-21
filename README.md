@@ -193,11 +193,34 @@ cargo coupling --no-git ./src
 - **Circular Dependency Detection**: Detects and reports dependency cycles
 - **Visibility Tracking**: Analyzes Rust visibility modifiers (pub, pub(crate), etc.)
 - **Git Integration**: Analyzes change frequency from Git history for volatility scoring
-- **Configuration File**: Supports `.coupling.toml` for volatility overrides
+- **Configuration File**: Supports `.coupling.toml` for analysis excludes, volatility overrides, and thresholds
 - **Parallel Processing**: Uses Rayon for fast analysis of large codebases
 - **Configurable Thresholds**: Customize dependency limits via CLI or config
 - **Markdown Reports**: Generates detailed analysis reports
 - **Cargo Integration**: Works as a cargo subcommand
+
+## Configuration
+
+Use `.coupling.toml` to customize analysis behavior:
+
+```toml
+[analysis]
+exclude_tests = true
+prelude_modules = ["src/lib.rs", "src/prelude.rs"]
+exclude = ["src/generated/*", "src/generated/**"]
+
+[volatility]
+high = ["src/application/*"]
+low = ["src/domain/*"]
+
+[thresholds]
+max_dependencies = 15
+max_dependents = 20
+```
+
+`cargo-coupling` searches for `.coupling.toml` (or `coupling.toml`) from the analysis path upward. `[analysis].exclude` patterns are evaluated relative to the directory that contains the config file, so when you analyze `./src`, write patterns like `src/generated/**`, not just `generated/**`.
+
+Use `--config <PATH>` when you want to load a specific config file instead of relying on auto-discovery.
 
 ## Khononov's Coupling Balance
 
@@ -420,12 +443,12 @@ Options:
       --japanese, --jp          Japanese output with explanations (日本語)
       --git-months <MONTHS>     Git history period [default: 6]
       --no-git                  Skip Git analysis
-  -c, --config <CONFIG>         Config file path (default: .coupling.toml)
+  -c, --config <CONFIG>         Config file path (default: search for .coupling.toml)
   -v, --verbose                 Verbose output with explanations
       --timing                  Show timing information
   -j, --jobs <N>                Number of threads (default: auto)
-      --max-deps <N>            Max outgoing dependencies [default: 20]
-      --max-dependents <N>      Max incoming dependencies [default: 30]
+      --max-deps <N>            Max outgoing dependencies
+      --max-dependents <N>      Max incoming dependencies
 
 Web Visualization:
       --web                     Start interactive web UI
@@ -459,8 +482,8 @@ The tool uses the following default thresholds for detecting coupling issues:
 | Strong Coupling | 0.75 | - | Minimum strength value considered "strong" (Intrusive level) |
 | Far Distance | 0.50 | - | Minimum distance value considered "far" (DifferentModule+) |
 | High Volatility | 0.75 | - | Minimum volatility value considered "high" |
-| Max Dependencies | 20 | `--max-deps` | Outgoing dependencies before flagging High Efferent Coupling |
-| Max Dependents | 30 | `--max-dependents` | Incoming dependencies before flagging High Afferent Coupling |
+| Max Dependencies | 15 | `--max-deps` | Outgoing dependencies before flagging High Efferent Coupling |
+| Max Dependents | 20 | `--max-dependents` | Incoming dependencies before flagging High Afferent Coupling |
 
 ### Health Grade Calculation
 
@@ -628,20 +651,24 @@ These optimizations provide **5x-47x speedup** compared to naive implementation 
 
 ```rust
 use cargo_coupling::{
-    analyze_workspace,
+    analyze_workspace_with_config,
     generate_report_with_thresholds,
     IssueThresholds,
-    VolatilityAnalyzer
+    VolatilityAnalyzer,
+    load_compiled_config,
 };
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Analyze project with workspace support
-    let mut metrics = analyze_workspace(Path::new("./src"))?;
+    let path = Path::new("./src");
+    let config = load_compiled_config(path)?;
+
+    // Analyze project with workspace support and config-aware excludes
+    let mut metrics = analyze_workspace_with_config(path, &config)?;
 
     // Add volatility from Git history
     let mut volatility = VolatilityAnalyzer::new(6);
-    if let Ok(()) = volatility.analyze(Path::new("./src")) {
+    if let Ok(()) = volatility.analyze(path) {
         metrics.file_changes = volatility.file_changes;
         metrics.update_volatility_from_git();
     }

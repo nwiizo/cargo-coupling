@@ -11,10 +11,10 @@ Comprehensive architecture review with expert perspectives.
 cargo run -- coupling ./src
 
 # Lint check
-cargo clippy -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 
 # Test
-cargo test
+cargo test --all-features
 ```
 
 ### Phase 2: Expert Review
