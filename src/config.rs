@@ -41,7 +41,7 @@ use glob::Pattern;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
 use crate::metrics::Volatility;
@@ -147,6 +147,8 @@ pub struct CompiledConfig {
     // === Analysis settings ===
     /// Whether to exclude test code from analysis
     pub exclude_tests: bool,
+    /// Directory containing the loaded config file, if any.
+    config_root: Option<PathBuf>,
     /// Patterns for prelude-like modules (exempt from afferent coupling warnings)
     prelude_patterns: Vec<Pattern>,
     /// Patterns for modules to completely exclude from analysis
@@ -174,6 +176,14 @@ pub struct CompiledConfig {
 impl CompiledConfig {
     /// Create a compiled config from raw config
     pub fn from_config(config: CouplingConfig) -> Result<Self, ConfigError> {
+        Self::from_config_with_root(config, None)
+    }
+
+    /// Create a compiled config from raw config and the directory containing that config file.
+    fn from_config_with_root(
+        config: CouplingConfig,
+        config_root: Option<&Path>,
+    ) -> Result<Self, ConfigError> {
         let compile_patterns = |patterns: &[String]| -> Result<Vec<Pattern>, ConfigError> {
             patterns
                 .iter()
@@ -186,6 +196,7 @@ impl CompiledConfig {
         Ok(Self {
             // Analysis settings
             exclude_tests: config.analysis.exclude_tests,
+            config_root: config_root.map(Path::to_path_buf),
             prelude_patterns: compile_patterns(&config.analysis.prelude_modules)?,
             exclude_patterns: compile_patterns(&config.analysis.exclude)?,
             // Volatility settings
@@ -203,6 +214,7 @@ impl CompiledConfig {
     pub fn empty() -> Self {
         Self {
             exclude_tests: false,
+            config_root: None,
             prelude_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
             high_patterns: Vec::new(),
@@ -217,6 +229,11 @@ impl CompiledConfig {
     /// Set exclude_tests flag (used by CLI --exclude-tests option)
     pub fn set_exclude_tests(&mut self, exclude: bool) {
         self.exclude_tests = exclude;
+    }
+
+    /// Get the directory the config was loaded from, if known.
+    pub fn config_root(&self) -> Option<&Path> {
+        self.config_root.as_deref()
     }
 
     /// Check if a module is marked as "prelude-like" (exempt from afferent coupling warnings)
@@ -324,8 +341,36 @@ fn find_config_file(start_path: &Path) -> Option<std::path::PathBuf> {
 
 /// Load and compile configuration
 pub fn load_compiled_config(project_path: &Path) -> Result<CompiledConfig, ConfigError> {
-    let config = load_config(project_path)?;
-    CompiledConfig::from_config(config)
+    match find_config_file(project_path) {
+        Some(path) => {
+            let content = fs::read_to_string(&path)?;
+            let config: CouplingConfig = toml::from_str(&content)?;
+            let absolute_path = absolute_normalized_path(&path)?;
+            CompiledConfig::from_config_with_root(config, absolute_path.parent())
+        }
+        None => Ok(CompiledConfig::empty()),
+    }
+}
+
+fn absolute_normalized_path(path: &Path) -> Result<PathBuf, std::io::Error> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+
+    Ok(normalized)
 }
 
 #[cfg(test)]
