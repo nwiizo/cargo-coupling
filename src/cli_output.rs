@@ -251,7 +251,7 @@ pub fn calculate_hotspots(
     }
 
     // Sort by score descending
-    hotspots.sort_by(|a, b| b.score.cmp(&a.score));
+    hotspots.sort_by_key(|h| std::cmp::Reverse(h.score));
     hotspots.truncate(limit);
 
     hotspots
@@ -456,7 +456,7 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
                 })
                 .collect();
             // Sort by count descending
-            strength_list.sort_by(|a, b| b.count.cmp(&a.count));
+            strength_list.sort_by_key(|s| std::cmp::Reverse(s.count));
             DependencyInfo {
                 module: mod_name,
                 distance,
@@ -477,7 +477,7 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
                     count: c,
                 })
                 .collect();
-            strength_list.sort_by(|a, b| b.count.cmp(&a.count));
+            strength_list.sort_by_key(|s| std::cmp::Reverse(s.count));
             DependencyInfo {
                 module: mod_name,
                 distance,
