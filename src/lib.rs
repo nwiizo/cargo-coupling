@@ -48,8 +48,8 @@ pub mod workspace;
 
 pub use analyzer::{
     AnalyzedFileResult, AnalyzerError, CouplingAnalyzer, Dependency, DependencyKind, ItemDepType,
-    ItemDependency, ItemKind, analyze_project, analyze_rust_file, analyze_rust_file_full,
-    analyze_workspace,
+    ItemDependency, ItemKind, analyze_project, analyze_project_parallel_with_config,
+    analyze_rust_file, analyze_rust_file_full, analyze_workspace, analyze_workspace_with_config,
 };
 pub use balance::{
     BalanceInterpretation, BalanceScore, CouplingIssue, HealthGrade, IssueThresholds, IssueType,
