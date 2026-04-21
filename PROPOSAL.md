@@ -112,6 +112,16 @@ ISSUES TO ADDRESS (by priority)
 ```toml
 # .coupling.toml
 
+[analysis]
+# Exclude test code from analysis
+exclude_tests = true
+
+# "Prelude-like" modules that are expected to be used broadly
+prelude_modules = ["src/lib.rs", "src/prelude.rs"]
+
+# Paths excluded from analysis (relative to the config file location)
+exclude = ["src/generated/*", "src/generated/**", "tests/*"]
+
 [volatility]
 # Modules expected to change frequently (High volatility)
 high = ["src/business_rules/*", "src/pricing/*"]
@@ -119,19 +129,12 @@ high = ["src/business_rules/*", "src/pricing/*"]
 # Stable modules (Low volatility)
 low = ["src/core/*", "src/contracts/*"]
 
-# Paths to ignore from analysis
-ignore = ["src/generated/*", "tests/*"]
-
 [thresholds]
 # Maximum dependencies before flagging High Efferent Coupling
 max_dependencies = 15
 
 # Maximum dependents before flagging High Afferent Coupling
 max_dependents = 20
-
-[aposd]
-# Enable A Philosophy of Software Design metrics
-enabled = true
 ```
 
 ## 4. CLI インターフェース
