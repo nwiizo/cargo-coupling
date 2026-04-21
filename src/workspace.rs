@@ -85,9 +85,10 @@ impl WorkspaceInfo {
         // Process all packages
         for package in &metadata.packages {
             let is_workspace_member = workspace_member_ids.contains(&package.id);
+            let package_name = package.name.to_string();
 
             if is_workspace_member {
-                members.push(package.name.clone());
+                members.push(package_name.clone());
             }
 
             // Get source directory
@@ -110,7 +111,7 @@ impl WorkspaceInfo {
 
                 // Build dependency graph
                 dependency_graph
-                    .entry(package.name.clone())
+                    .entry(package_name.clone())
                     .or_default()
                     .insert(dep.name.clone());
 
@@ -118,11 +119,11 @@ impl WorkspaceInfo {
                 reverse_deps
                     .entry(dep.name.clone())
                     .or_default()
-                    .insert(package.name.clone());
+                    .insert(package_name.clone());
             }
 
             let crate_info = CrateInfo {
-                name: package.name.clone(),
+                name: package_name.clone(),
                 id: package.id.clone(),
                 src_path,
                 manifest_path: package.manifest_path.as_std_path().to_path_buf(),
@@ -131,7 +132,7 @@ impl WorkspaceInfo {
                 is_workspace_member,
             };
 
-            crates.insert(package.name.clone(), crate_info);
+            crates.insert(package_name, crate_info);
         }
 
         Ok(Self {
