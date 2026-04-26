@@ -149,7 +149,7 @@ Vlad Khononovの「Balancing Coupling in Software Design」に基づき、カッ
 | Health Score | Web UI ヘッダー | 0-100%のスコア表示 |
 | /check-balance | スラッシュコマンド | 素早いバランス確認 |
 | --summary | CLI | サマリーのみ出力 |
-| .coupling.toml | 設定ファイル | 閾値をカスタマイズ可能 |
+| .coupling.toml | 設定ファイル | 閾値、分析除外、変更頻度の上書きをカスタマイズ可能 |
 
 ### Health Grade 基準
 | グレード | スコア | 状態 |

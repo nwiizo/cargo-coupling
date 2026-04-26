@@ -4,9 +4,9 @@
 
 Always run:
 ```bash
-cargo fmt --all
+cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo test --all-features
 ```
 
 ## Key Source Files

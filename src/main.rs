@@ -16,7 +16,7 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 
 use cargo_coupling::{
-    CompiledConfig, IssueThresholds, VolatilityAnalyzer, analyze_workspace,
+    CompiledConfig, IssueThresholds, VolatilityAnalyzer, analyze_workspace_with_config,
     cli_output::{
         CheckConfig, generate_check_output, generate_hotspots_output, generate_impact_output,
         generate_json_output, parse_grade, parse_severity,
@@ -233,7 +233,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Analyze the project (uses cargo metadata for better accuracy)
     let analysis_start = Instant::now();
-    let mut metrics = analyze_workspace(&args.path)?;
+    let mut metrics = analyze_workspace_with_config(&args.path, &config)?;
     let analysis_time = analysis_start.elapsed();
 
     // Analyze git history for volatility (if not disabled)

@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use rayon::prelude::*;
 use syn::visit::Visit;
@@ -18,6 +18,7 @@ use syn::{
 use thiserror::Error;
 use walkdir::WalkDir;
 
+use crate::config::CompiledConfig;
 use crate::metrics::{
     CouplingMetrics, Distance, IntegrationStrength, ModuleMetrics, ProjectMetrics, Visibility,
     Volatility,
@@ -1048,6 +1049,48 @@ pub fn analyze_project(path: &Path) -> Result<ProjectMetrics, AnalyzerError> {
     analyze_project_parallel(path)
 }
 
+/// Check whether a file path should be excluded according to `[analysis].exclude` patterns.
+///
+/// Patterns are evaluated relative to the directory that contained `.coupling.toml`
+/// when known; otherwise they fall back to the analysis root. Paths are normalized
+/// to forward slashes for consistent glob matching on Windows.
+fn is_path_excluded(file_path: &Path, exclude_base: &Path, config: &CompiledConfig) -> bool {
+    let normalized_file = normalize_exclude_path(file_path);
+    let normalized_base = normalize_exclude_path(exclude_base);
+    let relative = normalized_file
+        .strip_prefix(&normalized_base)
+        .unwrap_or(&normalized_file);
+    let relative_str = relative.to_string_lossy().replace('\\', "/");
+    config.should_exclude(&relative_str)
+}
+
+/// Normalize a path for exclude matching without resolving symlinks.
+///
+/// This keeps `./src`, `/tmp/foo`, and other caller-provided forms comparable
+/// by making them absolute and removing `.` / `..` components lexically.
+fn normalize_exclude_path(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+
+    normalized
+}
+
 /// Get an iterator over all Rust source files in `dir`, excluding hidden directories and `target/`.
 ///
 /// Uses relative paths for filtering to avoid false positives when the project
@@ -1080,12 +1123,24 @@ fn rs_files(dir: &Path) -> impl Iterator<Item = PathBuf> {
 /// Automatically scales to available CPU cores. The parallel processing
 /// uses work-stealing for optimal load balancing across cores.
 pub fn analyze_project_parallel(path: &Path) -> Result<ProjectMetrics, AnalyzerError> {
+    analyze_project_parallel_with_config(path, &CompiledConfig::empty())
+}
+
+/// Analyze a project in parallel, honoring `[analysis].exclude` patterns from config.
+pub fn analyze_project_parallel_with_config(
+    path: &Path,
+    config: &CompiledConfig,
+) -> Result<ProjectMetrics, AnalyzerError> {
     if !path.exists() {
         return Err(AnalyzerError::InvalidPath(path.display().to_string()));
     }
 
-    // Collect all .rs file paths first (sequential, but fast)
-    let file_paths: Vec<PathBuf> = rs_files(path).collect();
+    let exclude_base = config.config_root().unwrap_or(path);
+
+    // Collect all .rs file paths first (sequential, but fast), applying exclude patterns.
+    let file_paths: Vec<PathBuf> = rs_files(path)
+        .filter(|fp| !is_path_excluded(fp, exclude_base, config))
+        .collect();
 
     // Calculate optimal chunk size based on file count and available parallelism
     // Smaller chunks = better load balancing, but more overhead
@@ -1232,6 +1287,14 @@ pub fn analyze_project_parallel(path: &Path) -> Result<ProjectMetrics, AnalyzerE
 
 /// Analyze a workspace using cargo metadata for better accuracy
 pub fn analyze_workspace(path: &Path) -> Result<ProjectMetrics, AnalyzerError> {
+    analyze_workspace_with_config(path, &CompiledConfig::empty())
+}
+
+/// Analyze a workspace, honoring `[analysis].exclude` patterns from config.
+pub fn analyze_workspace_with_config(
+    path: &Path,
+    config: &CompiledConfig,
+) -> Result<ProjectMetrics, AnalyzerError> {
     // Try to get workspace info
     let workspace = match WorkspaceInfo::from_path(path) {
         Ok(ws) => Some(ws),
@@ -1243,18 +1306,23 @@ pub fn analyze_workspace(path: &Path) -> Result<ProjectMetrics, AnalyzerError> {
     };
 
     if let Some(ws) = workspace {
-        analyze_with_workspace(path, &ws)
+        analyze_with_workspace(path, &ws, config)
     } else {
         // Fall back to basic analysis
-        analyze_project(path)
+        analyze_project_parallel_with_config(path, config)
     }
 }
 
 /// Analyze project with workspace information (parallel version)
 fn analyze_with_workspace(
-    _path: &Path,
+    _project_root: &Path,
     workspace: &WorkspaceInfo,
+    config: &CompiledConfig,
 ) -> Result<ProjectMetrics, AnalyzerError> {
+    // Exclude patterns are rooted at the config file when known. Otherwise fall back
+    // to the workspace root returned by `cargo metadata`.
+    let exclude_base = config.config_root().unwrap_or(workspace.root.as_path());
+
     let mut project = ProjectMetrics::new();
 
     // Store workspace info for the report
@@ -1280,6 +1348,9 @@ fn analyze_with_workspace(
 
             let src_root = crate_info.src_path.clone();
             for file_path in rs_files(&crate_info.src_path) {
+                if is_path_excluded(&file_path, exclude_base, config) {
+                    continue;
+                }
                 file_crate_pairs.push((
                     file_path.to_path_buf(),
                     member_name.clone(),
@@ -2145,5 +2216,165 @@ mod tests {
         } else {
             panic!("Expected module");
         }
+    }
+
+    /// Regression test for Issue #39: `[analysis].exclude` patterns must be applied during analysis.
+    ///
+    /// We assert on module names (not just `total_files`) so the test distinguishes
+    /// "excluded by config" from "silently dropped due to parse failure".
+    /// Both `src/generated/*` and `src/generated/**` are kept to mirror the reporter's repro.
+    #[test]
+    fn test_analyze_project_parallel_applies_exclude_patterns() {
+        use crate::config::{CompiledConfig, CouplingConfig};
+
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let root = tmp.path();
+        let src = root.join("src");
+        let generated = src.join("generated");
+        std::fs::create_dir_all(&generated).expect("create generated dir");
+        std::fs::write(src.join("lib.rs"), "pub mod generated;\npub fn call() {}\n")
+            .expect("write lib.rs");
+        std::fs::write(generated.join("mod.rs"), "pub fn helper() {}\n")
+            .expect("write generated/mod.rs");
+
+        // Baseline: with empty config both files are analyzed, including the generated module.
+        let baseline = analyze_project_parallel_with_config(root, &CompiledConfig::empty())
+            .expect("baseline analysis");
+        assert_eq!(baseline.total_files, 2, "both files should be analyzed");
+        assert!(
+            baseline.modules.keys().any(|k| k.contains("generated")),
+            "baseline must include the generated module; saw {:?}",
+            baseline.modules.keys().collect::<Vec<_>>()
+        );
+
+        // With exclude patterns the generated file is filtered out by config.
+        let toml = r#"
+            [analysis]
+            exclude = ["src/generated/*", "src/generated/**"]
+        "#;
+        let config: CouplingConfig = toml::from_str(toml).expect("parse toml");
+        let compiled = CompiledConfig::from_config(config).expect("compile config");
+        let filtered =
+            analyze_project_parallel_with_config(root, &compiled).expect("filtered analysis");
+        assert_eq!(
+            filtered.total_files, 1,
+            "generated file should be excluded from analysis"
+        );
+        assert!(
+            !filtered.modules.keys().any(|k| k.contains("generated")),
+            "no generated module should remain; saw {:?}",
+            filtered.modules.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// Regression test for Issue #39 on the CLI/workspace path:
+    /// a relative `./src`-style path must still apply `[analysis].exclude`.
+    #[test]
+    fn test_analyze_workspace_applies_exclude_patterns_from_relative_src_path() {
+        use crate::config::{CompiledConfig, load_compiled_config};
+
+        let current_dir = std::env::current_dir().expect("get current dir");
+        let target_dir = current_dir.join("target");
+        let tmp = tempfile::Builder::new()
+            .prefix("issue39-workspace-")
+            .tempdir_in(&target_dir)
+            .expect("create tempdir in target");
+        let root = tmp.path();
+        let src = root.join("src");
+        let generated = src.join("generated");
+        std::fs::create_dir_all(&generated).expect("create generated dir");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "coupling-fixture-exclude"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .expect("write Cargo.toml");
+        std::fs::write(
+            root.join(".coupling.toml"),
+            "[analysis]\nexclude = [\"src/generated/*\", \"src/generated/**\"]\n",
+        )
+        .expect("write .coupling.toml");
+        std::fs::write(
+            src.join("lib.rs"),
+            "pub mod generated;\npub fn call() { generated::helper(); }\n",
+        )
+        .expect("write lib.rs");
+        std::fs::write(generated.join("mod.rs"), "pub fn helper() {}\n")
+            .expect("write generated/mod.rs");
+
+        let relative_src = src
+            .strip_prefix(&current_dir)
+            .expect("temp crate should be under current dir");
+
+        let baseline = analyze_workspace_with_config(relative_src, &CompiledConfig::empty())
+            .expect("baseline workspace analysis");
+        assert_eq!(baseline.total_files, 2, "both files should be analyzed");
+        assert!(
+            baseline.modules.keys().any(|k| k.contains("generated")),
+            "baseline must include the generated module; saw {:?}",
+            baseline.modules.keys().collect::<Vec<_>>()
+        );
+
+        let compiled = load_compiled_config(relative_src).expect("load compiled config");
+        let filtered = analyze_workspace_with_config(relative_src, &compiled)
+            .expect("filtered workspace analysis");
+        assert_eq!(
+            filtered.total_files, 1,
+            "generated file should be excluded from workspace analysis"
+        );
+        assert!(
+            !filtered.modules.keys().any(|k| k.contains("generated")),
+            "no generated module should remain; saw {:?}",
+            filtered.modules.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// Regression test for the non-workspace fallback path:
+    /// when analyzing `./src`, exclude patterns must still be rooted at the config file.
+    #[test]
+    fn test_basic_analysis_fallback_applies_exclude_patterns_from_config_root() {
+        use crate::config::{CompiledConfig, load_compiled_config};
+
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let root = tmp.path();
+        let src = root.join("src");
+        let generated = src.join("generated");
+        std::fs::create_dir_all(&generated).expect("create generated dir");
+        std::fs::write(
+            root.join(".coupling.toml"),
+            "[analysis]\nexclude = [\"src/generated/*\", \"src/generated/**\"]\n",
+        )
+        .expect("write .coupling.toml");
+        std::fs::write(
+            src.join("lib.rs"),
+            "pub mod generated;\npub fn call() { generated::helper(); }\n",
+        )
+        .expect("write lib.rs");
+        std::fs::write(generated.join("mod.rs"), "pub fn helper() {}\n")
+            .expect("write generated/mod.rs");
+
+        let baseline = analyze_workspace_with_config(&src, &CompiledConfig::empty())
+            .expect("baseline analysis");
+        assert_eq!(baseline.total_files, 2, "both files should be analyzed");
+        assert!(
+            baseline.modules.keys().any(|k| k.contains("generated")),
+            "baseline must include the generated module; saw {:?}",
+            baseline.modules.keys().collect::<Vec<_>>()
+        );
+
+        let compiled = load_compiled_config(&src).expect("load compiled config");
+        let filtered = analyze_workspace_with_config(&src, &compiled).expect("filtered analysis");
+        assert_eq!(
+            filtered.total_files, 1,
+            "generated file should be excluded from fallback analysis"
+        );
+        assert!(
+            !filtered.modules.keys().any(|k| k.contains("generated")),
+            "no generated module should remain; saw {:?}",
+            filtered.modules.keys().collect::<Vec<_>>()
+        );
     }
 }
