@@ -11,6 +11,8 @@ cargo build --release && cargo test --all-features && cargo fmt --all && cargo c
 # Run
 cargo run -- coupling ./src          # Analyze
 cargo run -- coupling --web ./src    # Web UI (:3000)
+cargo run -- coupling --history ./src        # Coupling health over git history (time-series)
+cargo run -- coupling --history=8 --json ./src  # Time-series as JSON (8 samples)
 
 # Docker
 docker build -t cargo-coupling .
@@ -44,6 +46,7 @@ docker push ghcr.io/nwiizo/cargo-coupling:latest
 |------|---------|
 | `src/analyzer.rs` | AST analysis (syn) |
 | `src/balance.rs` | Balance score calculation |
+| `src/history.rs` | Time-series: re-analyzes past git revisions via worktrees (`--history`) |
 | `src/config.rs` | `.coupling.toml` loading and pattern compilation |
 | `src/workspace.rs` | cargo metadata / workspace resolution |
 | `src/web/` | Web visualization server |
@@ -58,7 +61,9 @@ docker push ghcr.io/nwiizo/cargo-coupling:latest
 
 ## Notes
 
-**Edition 2024**: `if let` chains require nightly (< Rust 1.85)
+**Edition 2024**:
+- `if let` chains require nightly (< Rust 1.85)
+- nightly toolchainが壊れた場合: `rustup update nightly` で更新してからリトライ
 
 **Docker**:
 - cargo-chef: dependency cache for 5-10x faster builds
@@ -71,3 +76,9 @@ docker push ghcr.io/nwiizo/cargo-coupling:latest
 - `.coupling.toml` is searched from the analysis path upward
 - `[analysis].exclude` patterns are rooted at the directory containing the config file
 - When analyzing `./src`, prefer patterns like `src/generated/**`
+
+**History (`--history`)**:
+- Samples up to N commits (default 12) across the `--git-months` window and re-analyzes each in a disposable `git worktree` (auto-removed)
+- Per-revision analysis is **structural only** (AST + config overrides); git-churn volatility is skipped so points are comparable
+- Output is chronological (oldest first); supports `--json`. Revisions that fail to parse are reported under `skipped`
+- Needs a git repo with history; avoid extreme `--git-months` (git's approxidate misparses values like 1200 months)

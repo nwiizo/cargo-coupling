@@ -41,6 +41,7 @@ pub mod balance;
 pub mod cli_output;
 pub mod config;
 pub mod history;
+pub mod manifest;
 pub mod metrics;
 pub mod report;
 pub mod volatility;
@@ -64,6 +65,7 @@ pub use config::{
 pub use history::{
     HistoryError, HistoryPoint, HistoryReport, SkippedRevision, analyze_history, sample_evenly,
 };
+pub use manifest::{AnalysisManifest, BlindSpot, ManifestContext, build_manifest};
 pub use metrics::{
     BalanceClassification, BalanceCounts, CircularDependencySummary, CouplingMetrics,
     DimensionStats, Distance, DistanceCounts, FunctionDefinition, IntegrationStrength,
