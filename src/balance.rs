@@ -6,8 +6,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::config::Subdomain;
-use crate::metrics::{CouplingMetrics, Distance, IntegrationStrength, ProjectMetrics, Volatility};
+use crate::metrics::{
+    CouplingMetrics, Distance, IntegrationStrength, ProjectMetrics, Subdomain, Volatility,
+};
 
 // ===== Issue Model =====
 
