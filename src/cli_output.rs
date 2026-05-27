@@ -1086,6 +1086,8 @@ pub struct JsonIssue {
 pub struct JsonModule {
     pub name: String,
     pub file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subdomain: Option<String>,
     pub couplings_out: usize,
     pub couplings_in: usize,
     pub balance_score: f64,
@@ -1225,6 +1227,7 @@ fn generate_json_output_with_optional_diff<W: Write>(
                 JsonModule {
                     name: name.clone(),
                     file_path: Some(module.path.display().to_string()),
+                    subdomain: module.subdomain.map(|subdomain| subdomain.to_string()),
                     couplings_out: couplings_out.get(name).copied().unwrap_or(0),
                     couplings_in: couplings_in.get(name).copied().unwrap_or(0),
                     balance_score: avg_score,
@@ -1764,6 +1767,8 @@ fn describe_trend(from: f64, to: f64) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
     use crate::history::{HistoryPoint, HistoryReport};
     use crate::manifest::{ManifestContext, build_manifest};
 
@@ -1904,6 +1909,30 @@ mod tests {
         assert!(notes.iter().any(|note| {
             note.as_str()
                 .is_some_and(|note| note.contains("Test code was excluded"))
+        }));
+    }
+
+    #[test]
+    fn test_json_output_includes_module_subdomain_when_present() {
+        use crate::config::Subdomain;
+        use crate::metrics::ModuleMetrics;
+
+        let mut metrics = ProjectMetrics::new();
+        let mut module = ModuleMetrics::new(PathBuf::from("src/report.rs"), "report".to_string());
+        module.subdomain = Some(Subdomain::Supporting);
+        metrics.add_module(module);
+
+        let thresholds = IssueThresholds::default();
+        let manifest = build_manifest(&ManifestContext::default());
+        let mut buf = Vec::new();
+
+        generate_json_output(&metrics, &thresholds, &manifest, &mut buf).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let modules = parsed["modules"].as_array().unwrap();
+        assert!(modules.iter().any(|module| {
+            module["name"] == "report" && module["subdomain"].as_str() == Some("Supporting")
         }));
     }
 }

@@ -8,6 +8,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use crate::analyzer::ItemDependency;
+use crate::config::Subdomain;
 
 /// Visibility level of a Rust item
 ///
@@ -574,6 +575,8 @@ pub struct ModuleMetrics {
     pub is_test_module: bool,
     /// Number of test functions (#[test])
     pub test_function_count: usize,
+    /// DDD subdomain classification from config, if configured.
+    pub subdomain: Option<Subdomain>,
 }
 
 impl ModuleMetrics {

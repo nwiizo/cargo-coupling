@@ -49,8 +49,9 @@ const STRUCTURAL_BLIND_SPOTS: &[BlindSpot] = &[
     BlindSpot {
         area: "implicit-functional-coupling",
         description: "Duplicated business logic and connascence of meaning/algorithm with no \
-                      explicit call or import are not detected. Two modules can share knowledge \
-                      without any code dependency between them.",
+                      explicit call or import are only partially covered: strong temporal \
+                      co-change can reveal hidden coupling between files, but duplicated logic \
+                      that does not co-change remains invisible.",
     },
     BlindSpot {
         area: "distance-axes",

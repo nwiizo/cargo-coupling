@@ -1064,6 +1064,23 @@ fn is_path_excluded(file_path: &Path, exclude_base: &Path, config: &CompiledConf
     config.should_exclude(&relative_str)
 }
 
+/// Convert a source path into the same normalized, config-root-relative form used by glob config.
+fn path_for_config_matching(file_path: &Path, config: &CompiledConfig) -> String {
+    let normalized_file = normalize_exclude_path(file_path);
+    let path = config
+        .config_root()
+        .map(normalize_exclude_path)
+        .and_then(|base| {
+            normalized_file
+                .strip_prefix(base)
+                .ok()
+                .map(Path::to_path_buf)
+        })
+        .unwrap_or(normalized_file);
+
+    path.to_string_lossy().replace('\\', "/")
+}
+
 /// Normalize a path for exclude matching without resolving symlinks.
 ///
 /// This keeps `./src`, `/tmp/foo`, and other caller-provided forms comparable
@@ -1233,6 +1250,8 @@ pub fn analyze_project_parallel_with_config(
         // Clone metrics and add item_dependencies
         let mut metrics = analyzed.metrics.clone();
         metrics.item_dependencies = analyzed.item_dependencies.clone();
+        metrics.subdomain =
+            config.get_subdomain(&path_for_config_matching(&analyzed.file_path, config));
         project.add_module(metrics);
 
         for dep in &analyzed.dependencies {
@@ -1438,6 +1457,8 @@ fn analyze_with_workspace(
         // Clone metrics and add item_dependencies
         let mut metrics = analyzed.metrics.clone();
         metrics.item_dependencies = analyzed.item_dependencies.clone();
+        metrics.subdomain =
+            config.get_subdomain(&path_for_config_matching(&analyzed.file_path, config));
         project.add_module(metrics);
 
         for dep in &analyzed.dependencies {

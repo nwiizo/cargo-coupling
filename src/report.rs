@@ -363,6 +363,8 @@ fn issue_type_japanese(issue_type: crate::balance::IssueType) -> &'static str {
         IssueType::HighAfferentCoupling => "入力依存過多 (多くのモジュールから依存される)",
         IssueType::UnnecessaryAbstraction => "過剰な抽象化",
         IssueType::CircularDependency => "循環依存",
+        IssueType::HiddenCoupling => "隠れた結合 (共変更のみで発見)",
+        IssueType::AccidentalVolatility => "偶発的な変更頻度",
         IssueType::ShallowModule => "浅いモジュール",
         IssueType::PassThroughMethod => "パススルーメソッド",
         IssueType::HighCognitiveLoad => "高認知負荷",
@@ -861,14 +863,29 @@ fn write_module_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> i
 
     writeln!(writer, "## Module Statistics\n")?;
 
-    writeln!(
-        writer,
-        "| Module | Trait Impl | Inherent Impl | Internal Deps | External Deps |"
-    )?;
-    writeln!(
-        writer,
-        "|--------|------------|---------------|---------------|---------------|"
-    )?;
+    let show_subdomain = metrics
+        .modules
+        .values()
+        .any(|module| module.subdomain.is_some());
+    if show_subdomain {
+        writeln!(
+            writer,
+            "| Module | Subdomain | Trait Impl | Inherent Impl | Internal Deps | External Deps |"
+        )?;
+        writeln!(
+            writer,
+            "|--------|-----------|------------|---------------|---------------|---------------|"
+        )?;
+    } else {
+        writeln!(
+            writer,
+            "| Module | Trait Impl | Inherent Impl | Internal Deps | External Deps |"
+        )?;
+        writeln!(
+            writer,
+            "|--------|------------|---------------|---------------|---------------|"
+        )?;
+    }
 
     let mut modules: Vec<_> = metrics.modules.iter().collect();
     modules.sort_by(|a, b| {
@@ -878,15 +895,31 @@ fn write_module_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> i
     });
 
     for (name, module) in modules.iter().take(20) {
-        writeln!(
-            writer,
-            "| `{}` | {} | {} | {} | {} |",
-            truncate_path(name, 30),
-            module.trait_impl_count,
-            module.inherent_impl_count,
-            module.internal_deps.len(),
-            module.external_deps.len()
-        )?;
+        if show_subdomain {
+            writeln!(
+                writer,
+                "| `{}` | {} | {} | {} | {} | {} |",
+                truncate_path(name, 30),
+                module
+                    .subdomain
+                    .map(|subdomain| subdomain.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                module.trait_impl_count,
+                module.inherent_impl_count,
+                module.internal_deps.len(),
+                module.external_deps.len()
+            )?;
+        } else {
+            writeln!(
+                writer,
+                "| `{}` | {} | {} | {} | {} |",
+                truncate_path(name, 30),
+                module.trait_impl_count,
+                module.inherent_impl_count,
+                module.internal_deps.len(),
+                module.external_deps.len()
+            )?;
+        }
     }
 
     if modules.len() > 20 {
@@ -1428,6 +1461,24 @@ mod tests {
 
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("Module Statistics"));
+    }
+
+    #[test]
+    fn test_generate_report_surfaces_subdomain_when_present() {
+        use crate::config::Subdomain;
+        use crate::metrics::ModuleMetrics;
+
+        let mut metrics = ProjectMetrics::new();
+        let mut module = ModuleMetrics::new(PathBuf::from("src/report.rs"), "report".to_string());
+        module.subdomain = Some(Subdomain::Supporting);
+        metrics.add_module(module);
+
+        let mut output = Vec::new();
+        generate_report(&metrics, &mut output).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("| Module | Subdomain |"));
+        assert!(output_str.contains("| `report` | Supporting |"));
     }
 
     #[test]

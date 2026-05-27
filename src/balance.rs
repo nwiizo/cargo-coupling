@@ -9,8 +9,9 @@
 //! - Strong coupling + far distance = Bad (global complexity)
 //! - High volatility + strong coupling = Bad (cascading changes)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use crate::config::Subdomain;
 use crate::metrics::{CouplingMetrics, Distance, IntegrationStrength, ProjectMetrics, Volatility};
 
 /// Issue severity levels
@@ -54,6 +55,10 @@ pub enum IssueType {
     UnnecessaryAbstraction,
     /// Circular dependency detected
     CircularDependency,
+    /// Strong temporal co-change without an explicit code dependency
+    HiddenCoupling,
+    /// Supporting or generic module changing more often than expected
+    AccidentalVolatility,
 
     // === APOSD-inspired issues (A Philosophy of Software Design) ===
     /// Module with interface complexity close to implementation complexity
@@ -82,6 +87,8 @@ impl std::fmt::Display for IssueType {
             IssueType::HighAfferentCoupling => write!(f, "High Afferent Coupling"),
             IssueType::UnnecessaryAbstraction => write!(f, "Unnecessary Abstraction"),
             IssueType::CircularDependency => write!(f, "Circular Dependency"),
+            IssueType::HiddenCoupling => write!(f, "Hidden Coupling"),
+            IssueType::AccidentalVolatility => write!(f, "Accidental Volatility"),
             // APOSD-inspired
             IssueType::ShallowModule => write!(f, "Shallow Module"),
             IssueType::PassThroughMethod => write!(f, "Pass-Through Method"),
@@ -118,6 +125,12 @@ impl IssueType {
             }
             IssueType::CircularDependency => {
                 "Circular dependencies make it impossible to understand, test, or modify components in isolation."
+            }
+            IssueType::HiddenCoupling => {
+                "Files frequently change together without an explicit code dependency. This suggests implicit shared knowledge or a missing abstraction."
+            }
+            IssueType::AccidentalVolatility => {
+                "A supporting or generic subdomain changes frequently despite being expected to be stable. This suggests churn from design or ownership issues rather than essential business volatility."
             }
             // APOSD-inspired descriptions
             IssueType::ShallowModule => {
@@ -642,6 +655,12 @@ pub fn analyze_project_balance_with_thresholds(
     let rust_issues = analyze_rust_patterns(metrics, &thresholds);
     all_issues.extend(rust_issues);
 
+    // Analyze git-backed implicit coupling and volatility/subdomain mismatches.
+    let temporal_issues = analyze_hidden_temporal_coupling(metrics);
+    all_issues.extend(temporal_issues);
+    let accidental_volatility_issues = analyze_accidental_volatility(metrics);
+    all_issues.extend(accidental_volatility_issues);
+
     // Strict mode: filter out Low severity issues to reduce noise
     if thresholds.strict_mode {
         all_issues.retain(|issue| issue.severity >= Severity::Medium);
@@ -692,7 +711,7 @@ pub fn analyze_project_balance_with_thresholds(
     }
 
     // Determine overall health grade based on INTERNAL coupling issues
-    let health_grade = calculate_health_grade(&issues_by_severity, internal_couplings);
+    let health_grade = calculate_health_grade(&issues_by_severity, internal_couplings.max(1));
 
     ProjectBalanceReport {
         total_couplings,
@@ -707,6 +726,167 @@ pub fn analyze_project_balance_with_thresholds(
         top_priorities: Vec::new(), // Will be filled below
     }
     .with_top_priorities(5) // Increased from 3 to 5 for better actionability
+}
+
+/// Analyze temporal co-change pairs that have no explicit code dependency.
+fn analyze_hidden_temporal_coupling(metrics: &ProjectMetrics) -> Vec<CouplingIssue> {
+    let file_to_module = build_file_to_module_map(metrics);
+    let mut seen = HashSet::new();
+    let mut issues = Vec::new();
+
+    for temporal in metrics
+        .temporal_couplings
+        .iter()
+        .filter(|tc| tc.is_strong())
+    {
+        let Some(source) = module_for_file(&temporal.file_a, &file_to_module) else {
+            continue;
+        };
+        let Some(target) = module_for_file(&temporal.file_b, &file_to_module) else {
+            continue;
+        };
+
+        if source == target || has_code_coupling(metrics, &source, &target) {
+            continue;
+        }
+
+        let (stable_source, stable_target) = ordered_pair(&source, &target);
+        if !seen.insert((stable_source.clone(), stable_target.clone())) {
+            continue;
+        }
+
+        let ratio_pct = temporal.coupling_ratio * 100.0;
+        issues.push(CouplingIssue {
+            issue_type: IssueType::HiddenCoupling,
+            severity: if temporal.coupling_ratio >= 0.8 {
+                Severity::High
+            } else {
+                Severity::Medium
+            },
+            source: stable_source,
+            target: stable_target,
+            description: format!(
+                "Strong temporal co-change without code dependency ({:.0}% ratio, {} co-changes)",
+                ratio_pct, temporal.co_change_count
+            ),
+            refactoring: RefactoringAction::General {
+                action: "Extract a shared abstraction or make the dependency explicit".to_string(),
+            },
+            balance_score: 1.0 - temporal.coupling_ratio,
+        });
+    }
+
+    issues
+}
+
+/// Analyze modules whose git churn contradicts their expected subdomain volatility.
+fn analyze_accidental_volatility(metrics: &ProjectMetrics) -> Vec<CouplingIssue> {
+    if metrics.file_changes.is_empty() {
+        return Vec::new();
+    }
+
+    let threshold = top_quartile_change_threshold(&metrics.file_changes);
+    let mut issues = Vec::new();
+
+    for (module_name, module) in &metrics.modules {
+        let Some(subdomain @ (Subdomain::Supporting | Subdomain::Generic)) = module.subdomain
+        else {
+            continue;
+        };
+        let change_count = change_count_for_path(&module.path, &metrics.file_changes);
+        if change_count < threshold {
+            continue;
+        }
+
+        issues.push(CouplingIssue {
+            issue_type: IssueType::AccidentalVolatility,
+            severity: Severity::Medium,
+            source: module_name.clone(),
+            target: subdomain.to_string(),
+            description: format!(
+                "Accidental volatility: {} is {} but changed {} times (top-quartile threshold: {})",
+                module_name, subdomain, change_count, threshold
+            ),
+            refactoring: RefactoringAction::General {
+                action: "Separate volatile policy from stable supporting/generic implementation"
+                    .to_string(),
+            },
+            balance_score: 0.5,
+        });
+    }
+
+    issues
+}
+
+fn build_file_to_module_map(metrics: &ProjectMetrics) -> Vec<(String, String)> {
+    metrics
+        .modules
+        .iter()
+        .map(|(name, module)| (normalize_path_string(&module.path), name.clone()))
+        .collect()
+}
+
+fn module_for_file(file_path: &str, file_to_module: &[(String, String)]) -> Option<String> {
+    let normalized_file = normalize_path_str(file_path);
+    file_to_module
+        .iter()
+        .find(|(module_path, _)| paths_match(module_path, &normalized_file))
+        .map(|(_, module_name)| module_name.clone())
+}
+
+fn has_code_coupling(metrics: &ProjectMetrics, module_a: &str, module_b: &str) -> bool {
+    metrics.couplings.iter().any(|coupling| {
+        module_names_match(&coupling.source, module_a)
+            && module_names_match(&coupling.target, module_b)
+            || module_names_match(&coupling.source, module_b)
+                && module_names_match(&coupling.target, module_a)
+    })
+}
+
+fn module_names_match(coupling_module: &str, module_name: &str) -> bool {
+    coupling_module == module_name
+        || coupling_module
+            .strip_suffix(module_name)
+            .is_some_and(|prefix| prefix.ends_with("::"))
+}
+
+fn ordered_pair(a: &str, b: &str) -> (String, String) {
+    if a <= b {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
+    }
+}
+
+fn top_quartile_change_threshold(file_changes: &HashMap<String, usize>) -> usize {
+    let mut counts: Vec<_> = file_changes.values().copied().collect();
+    counts.sort_unstable();
+    let idx = counts.len() * 3 / 4;
+    counts[idx.min(counts.len() - 1)].max(3)
+}
+
+fn change_count_for_path(path: &std::path::Path, file_changes: &HashMap<String, usize>) -> usize {
+    let module_path = normalize_path_string(path);
+    file_changes
+        .iter()
+        .filter(|(file_path, _)| paths_match(&module_path, &normalize_path_str(file_path)))
+        .map(|(_, changes)| *changes)
+        .max()
+        .unwrap_or(0)
+}
+
+fn paths_match(module_path: &str, git_path: &str) -> bool {
+    module_path == git_path
+        || module_path.ends_with(&format!("/{git_path}"))
+        || git_path.ends_with(&format!("/{module_path}"))
+}
+
+fn normalize_path_string(path: &std::path::Path) -> String {
+    normalize_path_str(&path.to_string_lossy())
+}
+
+fn normalize_path_str(path: &str) -> String {
+    path.replace('\\', "/").trim_start_matches("./").to_string()
 }
 
 /// Analyze module-level coupling (hub detection)
@@ -1110,6 +1290,10 @@ pub fn volatility_label(volatility: Volatility) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    use crate::metrics::ModuleMetrics;
+    use crate::volatility::TemporalCoupling;
 
     fn make_coupling(
         strength: IntegrationStrength,
@@ -1266,6 +1450,100 @@ mod tests {
             issues.is_empty(),
             "Model coupling should not generate issues"
         );
+    }
+
+    #[test]
+    fn test_hidden_coupling_detected_without_code_dependency() {
+        let mut metrics = ProjectMetrics::new();
+        metrics.add_module(ModuleMetrics::new(
+            PathBuf::from("src/pricing.rs"),
+            "pricing".to_string(),
+        ));
+        metrics.add_module(ModuleMetrics::new(
+            PathBuf::from("src/invoicing.rs"),
+            "invoicing".to_string(),
+        ));
+        metrics.temporal_couplings.push(TemporalCoupling {
+            file_a: "src/pricing.rs".to_string(),
+            file_b: "src/invoicing.rs".to_string(),
+            co_change_count: 6,
+            coupling_ratio: 0.75,
+        });
+
+        let report = analyze_project_balance(&metrics);
+
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.issue_type == IssueType::HiddenCoupling)
+            .expect("strong co-change without code dependency should be a hidden coupling issue");
+        assert_eq!(issue.source, "invoicing");
+        assert_eq!(issue.target, "pricing");
+        assert_eq!(issue.severity, Severity::Medium);
+        assert!(issue.description.contains("75% ratio"));
+        assert!(issue.description.contains("6 co-changes"));
+    }
+
+    #[test]
+    fn test_hidden_coupling_skipped_when_code_dependency_exists() {
+        let mut metrics = ProjectMetrics::new();
+        metrics.add_module(ModuleMetrics::new(
+            PathBuf::from("src/pricing.rs"),
+            "pricing".to_string(),
+        ));
+        metrics.add_module(ModuleMetrics::new(
+            PathBuf::from("src/invoicing.rs"),
+            "invoicing".to_string(),
+        ));
+        metrics.add_coupling(CouplingMetrics::new(
+            "pricing".to_string(),
+            "invoicing".to_string(),
+            IntegrationStrength::Functional,
+            Distance::DifferentModule,
+            Volatility::Low,
+        ));
+        metrics.temporal_couplings.push(TemporalCoupling {
+            file_a: "src/pricing.rs".to_string(),
+            file_b: "src/invoicing.rs".to_string(),
+            co_change_count: 6,
+            coupling_ratio: 0.75,
+        });
+
+        let report = analyze_project_balance(&metrics);
+
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| issue.issue_type == IssueType::HiddenCoupling),
+            "explicit code dependency should suppress hidden coupling issue"
+        );
+    }
+
+    #[test]
+    fn test_accidental_volatility_detected_for_stable_subdomain_churn() {
+        let mut metrics = ProjectMetrics::new();
+        let mut report_module =
+            ModuleMetrics::new(PathBuf::from("src/report.rs"), "report".to_string());
+        report_module.subdomain = Some(Subdomain::Supporting);
+        metrics.add_module(report_module);
+        metrics.file_changes.insert("src/report.rs".to_string(), 12);
+        metrics
+            .file_changes
+            .insert("src/analyzer.rs".to_string(), 2);
+        metrics.file_changes.insert("src/lib.rs".to_string(), 3);
+        metrics.file_changes.insert("src/config.rs".to_string(), 4);
+
+        let report = analyze_project_balance(&metrics);
+
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.issue_type == IssueType::AccidentalVolatility)
+            .expect("supporting subdomain in top churn quartile should be flagged");
+        assert_eq!(issue.source, "report");
+        assert_eq!(issue.target, "Supporting");
+        assert_eq!(issue.severity, Severity::Medium);
     }
 
     #[test]
