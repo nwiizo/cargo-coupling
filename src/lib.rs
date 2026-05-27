@@ -76,8 +76,9 @@ pub use metrics::{
     VolatilityCounts,
 };
 pub use report::{
-    generate_ai_output, generate_ai_output_with_thresholds, generate_report,
-    generate_report_with_thresholds, generate_summary, generate_summary_with_thresholds,
+    TextReportOptions, generate_ai_output, generate_ai_output_with_thresholds, generate_report,
+    generate_report_with_options, generate_report_with_thresholds, generate_summary,
+    generate_summary_with_options, generate_summary_with_thresholds,
 };
 pub use volatility::{VolatilityAnalyzer, VolatilityError, VolatilityStats};
 pub use workspace::{CrateInfo, WorkspaceError, WorkspaceInfo};

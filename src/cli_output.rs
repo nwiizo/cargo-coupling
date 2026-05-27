@@ -1692,6 +1692,7 @@ pub fn history_report_to_json(report: &HistoryReport) -> JsonHistory {
 pub fn generate_history_output<W: Write>(
     report: &HistoryReport,
     json: bool,
+    requested_samples: usize,
     writer: &mut W,
 ) -> io::Result<()> {
     if json {
@@ -1740,6 +1741,15 @@ pub fn generate_history_output<W: Write>(
                 direction,
             )?;
         }
+    }
+
+    if report.points.len() < requested_samples {
+        writeln!(
+            writer,
+            "\nNote: {} of {} requested samples (history/window-limited).",
+            report.points.len(),
+            requested_samples
+        )?;
     }
 
     if !report.skipped.is_empty() {
@@ -1803,7 +1813,7 @@ mod tests {
             skipped: vec![],
         };
         let mut buf = Vec::new();
-        generate_history_output(&report, false, &mut buf).unwrap();
+        generate_history_output(&report, false, 2, &mut buf).unwrap();
         let text = String::from_utf8(buf).unwrap();
         assert!(text.contains("Coupling History (last 6 months, 2 sample(s))"));
         assert!(text.contains("Trend: grade C -> A"));
@@ -1818,7 +1828,7 @@ mod tests {
             skipped: vec![],
         };
         let mut buf = Vec::new();
-        generate_history_output(&report, true, &mut buf).unwrap();
+        generate_history_output(&report, true, 1, &mut buf).unwrap();
         let text = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(parsed["months"], 12);
@@ -1834,9 +1844,22 @@ mod tests {
             skipped: vec![],
         };
         let mut buf = Vec::new();
-        generate_history_output(&report, false, &mut buf).unwrap();
+        generate_history_output(&report, false, 0, &mut buf).unwrap();
         let text = String::from_utf8(buf).unwrap();
         assert!(text.contains("No analyzable revisions"));
+    }
+
+    #[test]
+    fn test_history_text_output_notes_when_requested_samples_are_limited() {
+        let report = HistoryReport {
+            months: 6,
+            points: vec![sample_point("2026-05-01", HealthGrade::B, 0.75)],
+            skipped: vec![],
+        };
+        let mut buf = Vec::new();
+        generate_history_output(&report, false, 3, &mut buf).unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("Note: 1 of 3 requested samples (history/window-limited)."));
     }
 
     #[test]

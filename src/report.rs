@@ -11,6 +11,17 @@ use crate::balance::{
 use crate::manifest::{AnalysisManifest, ManifestContext, build_manifest};
 use crate::metrics::{Distance, IntegrationStrength, ProjectMetrics};
 
+const DEFAULT_STRONG_TEMPORAL_LIMIT: usize = 5;
+
+/// Options for the default human-readable text report.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TextReportOptions {
+    /// Include the full structural blind-spot descriptions instead of a pointer.
+    pub show_structural_blind_spots: bool,
+    /// Include all temporal-coupling pairs instead of the concise default.
+    pub show_all_temporal_couplings: bool,
+}
+
 /// Generate a summary report to the given writer
 pub fn generate_summary<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
     let manifest = default_manifest();
@@ -22,6 +33,17 @@ pub fn generate_summary_with_thresholds<W: Write>(
     metrics: &ProjectMetrics,
     thresholds: &IssueThresholds,
     manifest: &AnalysisManifest,
+    writer: &mut W,
+) -> io::Result<()> {
+    generate_summary_with_options(metrics, thresholds, manifest, false, writer)
+}
+
+/// Generate a summary report with custom thresholds and blind-spot detail.
+pub fn generate_summary_with_options<W: Write>(
+    metrics: &ProjectMetrics,
+    thresholds: &IssueThresholds,
+    manifest: &AnalysisManifest,
+    show_structural_blind_spots: bool,
     writer: &mut W,
 ) -> io::Result<()> {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
@@ -168,14 +190,14 @@ pub fn generate_summary_with_thresholds<W: Write>(
             if jp {
                 writeln!(
                     writer,
-                    "  ❌ 要リファクタリング (強い結合 + 遠い距離 + 頻繁に変更): {} ({:.0}%)",
+                    "  ❌ ペインゾーン (強い結合 + 遠い距離 + 頻繁に変更): {} ({:.0}%)",
                     bc.pain,
                     bc.pain as f64 / total as f64 * 100.0
                 )?;
             } else {
                 writeln!(
                     writer,
-                    "  ❌ Needs Refactoring (strong+far+volatile): {} ({:.0}%)",
+                    "  ❌ Pain Zone (strong+far+volatile): {} ({:.0}%)",
                     bc.pain,
                     bc.pain as f64 / total as f64 * 100.0
                 )?;
@@ -347,7 +369,7 @@ pub fn generate_summary_with_thresholds<W: Write>(
         )?;
     }
 
-    write_manifest_summary_section(manifest, jp, writer)?;
+    write_manifest_summary_section(manifest, jp, show_structural_blind_spots, writer)?;
 
     Ok(())
 }
@@ -426,6 +448,23 @@ pub fn generate_report_with_thresholds<W: Write>(
     manifest: &AnalysisManifest,
     writer: &mut W,
 ) -> io::Result<()> {
+    generate_report_with_options(
+        metrics,
+        thresholds,
+        manifest,
+        TextReportOptions::default(),
+        writer,
+    )
+}
+
+/// Generate a full Markdown report with custom thresholds and text options.
+pub fn generate_report_with_options<W: Write>(
+    metrics: &ProjectMetrics,
+    thresholds: &IssueThresholds,
+    manifest: &AnalysisManifest,
+    options: TextReportOptions,
+    writer: &mut W,
+) -> io::Result<()> {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
 
     writeln!(writer, "# Coupling Analysis Report\n")?;
@@ -451,7 +490,7 @@ pub fn generate_report_with_thresholds<W: Write>(
     write_volatility_section(metrics, writer)?;
 
     // Temporal coupling section
-    write_temporal_coupling_section(metrics, writer)?;
+    write_temporal_coupling_section(metrics, options.show_all_temporal_couplings, writer)?;
 
     // Circular dependency section
     write_circular_dependencies_section(metrics, writer)?;
@@ -460,7 +499,7 @@ pub fn generate_report_with_thresholds<W: Write>(
     write_best_practices(writer)?;
 
     // Declared analysis blind spots
-    write_manifest_markdown_section(manifest, writer)?;
+    write_manifest_markdown_section(manifest, options.show_structural_blind_spots, writer)?;
 
     Ok(())
 }
@@ -508,11 +547,9 @@ fn write_executive_summary<W: Write>(
             100.0
         }
     )?;
-    writeln!(
-        writer,
-        "| Needs Refactoring | {} |",
-        report.needs_refactoring
-    )?;
+    // This headline count mirrors `report.issues`/JSON `issues`; balance buckets
+    // such as Pain Zone are separate coupling classifications, not surfaced issues.
+    writeln!(writer, "| Issues Surfaced | {} |", report.issues.len())?;
     writeln!(writer)?;
 
     // Issue counts
@@ -973,9 +1010,21 @@ fn write_volatility_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) 
 
 fn write_temporal_coupling_section<W: Write>(
     metrics: &ProjectMetrics,
+    show_all: bool,
     writer: &mut W,
 ) -> io::Result<()> {
     if metrics.temporal_couplings.is_empty() {
+        return Ok(());
+    }
+
+    let mut strong: Vec<_> = metrics
+        .temporal_couplings
+        .iter()
+        .filter(|tc| tc.is_strong())
+        .collect();
+    strong.sort_by(|a, b| b.coupling_ratio.partial_cmp(&a.coupling_ratio).unwrap());
+
+    if !show_all && strong.is_empty() {
         return Ok(());
     }
 
@@ -985,12 +1034,6 @@ fn write_temporal_coupling_section<W: Write>(
         "Files that frequently change together in git commits, indicating implicit coupling"
     )?;
     writeln!(writer, "beyond what code structure reveals.\n")?;
-
-    let strong: Vec<_> = metrics
-        .temporal_couplings
-        .iter()
-        .filter(|tc| tc.is_strong())
-        .collect();
 
     if !strong.is_empty() {
         writeln!(
@@ -1003,7 +1046,12 @@ fn write_temporal_coupling_section<W: Write>(
         )?;
         writeln!(writer, "| File A | File B | Co-changes | Ratio |")?;
         writeln!(writer, "|--------|--------|------------|-------|")?;
-        for tc in strong.iter().take(10) {
+        let strong_limit = if show_all {
+            strong.len()
+        } else {
+            DEFAULT_STRONG_TEMPORAL_LIMIT
+        };
+        for tc in strong.iter().take(strong_limit) {
             writeln!(
                 writer,
                 "| `{}` | `{}` | {} | {:.0}% |",
@@ -1013,7 +1061,18 @@ fn write_temporal_coupling_section<W: Write>(
                 tc.coupling_ratio * 100.0
             )?;
         }
+        if !show_all && strong.len() > strong_limit {
+            writeln!(
+                writer,
+                "\n*... and {} more (use --all)*",
+                strong.len() - strong_limit
+            )?;
+        }
         writeln!(writer)?;
+    }
+
+    if !show_all {
+        return Ok(());
     }
 
     let moderate: Vec<_> = metrics
@@ -1026,7 +1085,7 @@ fn write_temporal_coupling_section<W: Write>(
         writeln!(writer, "### Moderate Temporal Coupling\n")?;
         writeln!(writer, "| File A | File B | Co-changes | Ratio |")?;
         writeln!(writer, "|--------|--------|------------|-------|")?;
-        for tc in moderate.iter().take(10) {
+        for tc in moderate {
             writeln!(
                 writer,
                 "| `{}` | `{}` | {} | {:.0}% |",
@@ -1292,7 +1351,7 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
         writeln!(writer, "```")?;
     }
 
-    write_manifest_summary_section(manifest, false, writer)?;
+    write_manifest_summary_section(manifest, false, true, writer)?;
 
     Ok(())
 }
@@ -1307,24 +1366,40 @@ fn default_manifest() -> AnalysisManifest {
 
 fn write_manifest_markdown_section<W: Write>(
     manifest: &AnalysisManifest,
+    show_structural_blind_spots: bool,
     writer: &mut W,
 ) -> io::Result<()> {
     writeln!(writer, "## Not Analyzed (blind spots)\n")?;
 
-    for blind_spot in &manifest.blind_spots {
-        writeln!(
-            writer,
-            "- **{}**: {}",
-            blind_spot.area, blind_spot.description
-        )?;
+    if show_structural_blind_spots {
+        for blind_spot in &manifest.blind_spots {
+            writeln!(
+                writer,
+                "- **{}**: {}",
+                blind_spot.area, blind_spot.description
+            )?;
+        }
     }
 
     if !manifest.notes.is_empty() {
-        writeln!(writer)?;
+        if show_structural_blind_spots {
+            writeln!(writer)?;
+        }
         writeln!(writer, "Run-specific notes:")?;
         for note in &manifest.notes {
             writeln!(writer, "- {}", note)?;
         }
+    }
+
+    if !show_structural_blind_spots {
+        if !manifest.notes.is_empty() {
+            writeln!(writer)?;
+        }
+        writeln!(
+            writer,
+            "ℹ {} structural blind spots not analyzed — see --blind-spots (or --json).",
+            manifest.blind_spots.len()
+        )?;
     }
 
     writeln!(writer)?;
@@ -1334,6 +1409,7 @@ fn write_manifest_markdown_section<W: Write>(
 fn write_manifest_summary_section<W: Write>(
     manifest: &AnalysisManifest,
     japanese: bool,
+    show_structural_blind_spots: bool,
     writer: &mut W,
 ) -> io::Result<()> {
     if japanese {
@@ -1342,12 +1418,14 @@ fn write_manifest_summary_section<W: Write>(
         writeln!(writer, "Not Analyzed (blind spots):")?;
     }
 
-    for blind_spot in &manifest.blind_spots {
-        writeln!(
-            writer,
-            "  - {}: {}",
-            blind_spot.area, blind_spot.description
-        )?;
+    if show_structural_blind_spots {
+        for blind_spot in &manifest.blind_spots {
+            writeln!(
+                writer,
+                "  - {}: {}",
+                blind_spot.area, blind_spot.description
+            )?;
+        }
     }
 
     if !manifest.notes.is_empty() {
@@ -1358,6 +1436,22 @@ fn write_manifest_summary_section<W: Write>(
         }
         for note in &manifest.notes {
             writeln!(writer, "  - {}", note)?;
+        }
+    }
+
+    if !show_structural_blind_spots {
+        if japanese {
+            writeln!(
+                writer,
+                "ℹ {} 件の構造的 blind spot は未分析です — 詳細は --blind-spots (または --json)。",
+                manifest.blind_spots.len()
+            )?;
+        } else {
+            writeln!(
+                writer,
+                "ℹ {} structural blind spots not analyzed — see --blind-spots (or --json).",
+                manifest.blind_spots.len()
+            )?;
         }
     }
 
@@ -1396,11 +1490,12 @@ mod tests {
         assert!(output_str.contains("# Coupling Analysis Report"));
         assert!(output_str.contains("Executive Summary"));
         assert!(output_str.contains("## Not Analyzed (blind spots)"));
-        assert!(output_str.contains("dynamic-connascence"));
+        assert!(output_str.contains("4 structural blind spots not analyzed"));
+        assert!(!output_str.contains("Dynamic connascence (Execution"));
     }
 
     #[test]
-    fn test_generate_summary_includes_manifest_notes() {
+    fn test_generate_summary_includes_manifest_notes_and_pointer() {
         let metrics = ProjectMetrics::new();
         let thresholds = IssueThresholds::default();
         let manifest = build_manifest(&ManifestContext {
@@ -1416,9 +1511,139 @@ mod tests {
 
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("Not Analyzed (blind spots):"));
-        assert!(output_str.contains("dynamic-connascence"));
+        assert!(output_str.contains("4 structural blind spots not analyzed"));
+        assert!(!output_str.contains("Dynamic connascence (Execution"));
         assert!(output_str.contains("Git history was not analyzed"));
         assert!(output_str.contains("Test code was excluded"));
+    }
+
+    #[test]
+    fn test_text_report_blind_spots_are_opt_in() {
+        let metrics = ProjectMetrics::new();
+        let thresholds = IssueThresholds::default();
+        let manifest = build_manifest(&ManifestContext {
+            git_used: false,
+            tests_excluded: true,
+            parse_failures: 1,
+        });
+
+        let mut default_output = Vec::new();
+        generate_report_with_options(
+            &metrics,
+            &thresholds,
+            &manifest,
+            TextReportOptions::default(),
+            &mut default_output,
+        )
+        .unwrap();
+        let default_text = String::from_utf8(default_output).unwrap();
+        assert!(default_text.contains("4 structural blind spots not analyzed"));
+        assert!(default_text.contains("Git history was not analyzed"));
+        assert!(default_text.contains("Test code was excluded"));
+        assert!(default_text.contains("1 source file(s) failed to parse"));
+        assert!(!default_text.contains("Dynamic connascence (Execution"));
+
+        for options in [
+            TextReportOptions {
+                show_structural_blind_spots: true,
+                show_all_temporal_couplings: false,
+            },
+            TextReportOptions {
+                show_structural_blind_spots: true,
+                show_all_temporal_couplings: true,
+            },
+        ] {
+            let mut output = Vec::new();
+            generate_report_with_options(&metrics, &thresholds, &manifest, options, &mut output)
+                .unwrap();
+            let text = String::from_utf8(output).unwrap();
+            assert!(text.contains("dynamic-connascence"));
+            assert!(text.contains("Dynamic connascence (Execution"));
+        }
+    }
+
+    #[test]
+    fn test_text_report_temporal_coupling_default_truncates_strong_pairs() {
+        use crate::volatility::TemporalCoupling;
+
+        let mut metrics = ProjectMetrics::new();
+        metrics.temporal_couplings = (0..7)
+            .map(|i| TemporalCoupling {
+                file_a: format!("src/a{}.rs", i),
+                file_b: format!("src/b{}.rs", i),
+                co_change_count: i + 1,
+                coupling_ratio: 0.95 - (i as f64 * 0.05),
+            })
+            .collect();
+        metrics.temporal_couplings.push(TemporalCoupling {
+            file_a: "src/moderate_a.rs".to_string(),
+            file_b: "src/moderate_b.rs".to_string(),
+            co_change_count: 2,
+            coupling_ratio: 0.4,
+        });
+
+        let manifest = default_manifest();
+        let thresholds = IssueThresholds::default();
+        let mut output = Vec::new();
+        generate_report_with_options(
+            &metrics,
+            &thresholds,
+            &manifest,
+            TextReportOptions::default(),
+            &mut output,
+        )
+        .unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("src/a0.rs"));
+        assert!(text.contains("src/a4.rs"));
+        assert!(!text.contains("src/a5.rs"));
+        assert!(!text.contains("src/moderate_a.rs"));
+        assert!(text.contains("... and 2 more (use --all)"));
+
+        let mut all_output = Vec::new();
+        generate_report_with_options(
+            &metrics,
+            &thresholds,
+            &manifest,
+            TextReportOptions {
+                show_structural_blind_spots: false,
+                show_all_temporal_couplings: true,
+            },
+            &mut all_output,
+        )
+        .unwrap();
+        let all_text = String::from_utf8(all_output).unwrap();
+        assert!(all_text.contains("src/a6.rs"));
+        assert!(all_text.contains("src/moderate_a.rs"));
+    }
+
+    #[test]
+    fn test_report_issues_surfaced_count_matches_issue_list() {
+        use crate::balance::analyze_project_balance_with_thresholds;
+        use crate::metrics::{CouplingMetrics, Distance, IntegrationStrength, Volatility};
+
+        let mut metrics = ProjectMetrics::new();
+        metrics.add_coupling(CouplingMetrics::new(
+            "source".to_string(),
+            "target".to_string(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::High,
+        ));
+
+        let thresholds = IssueThresholds::default();
+        let report = analyze_project_balance_with_thresholds(&metrics, &thresholds);
+        let mut output = Vec::new();
+        generate_report_with_options(
+            &metrics,
+            &thresholds,
+            &default_manifest(),
+            TextReportOptions::default(),
+            &mut output,
+        )
+        .unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains(&format!("| Issues Surfaced | {} |", report.issues.len())));
     }
 
     #[test]

@@ -16,15 +16,16 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 
 use cargo_coupling::{
-    CompiledConfig, IssueThresholds, ManifestContext, Severity, VolatilityAnalyzer,
-    analyze_history, analyze_ref, analyze_workspace_with_config, build_manifest,
+    CompiledConfig, IssueThresholds, ManifestContext, Severity, TextReportOptions,
+    VolatilityAnalyzer, analyze_history, analyze_ref, analyze_workspace_with_config,
+    build_manifest,
     cli_output::{
         CheckConfig, generate_baseline_diff_output, generate_check_output, generate_history_output,
         generate_hotspots_output, generate_impact_output, generate_json_output,
         generate_json_output_with_diff, generate_ratchet_check_output, parse_grade, parse_severity,
     },
-    diff_reports, generate_ai_output_with_thresholds, generate_report_with_thresholds,
-    generate_summary_with_thresholds, load_compiled_config,
+    diff_reports, generate_ai_output_with_thresholds, generate_report_with_options,
+    generate_summary_with_options, load_compiled_config,
     web::{DEFAULT_HISTORY_MAX_POINTS, ServerConfig, start_server},
 };
 
@@ -165,6 +166,10 @@ struct Args {
     #[arg(long)]
     all: bool,
 
+    /// Show the full structural blind-spot list in text output
+    #[arg(long)]
+    blind_spots: bool,
+
     /// Show explanations in Japanese (日本語で解説を表示)
     #[arg(long, visible_alias = "jp")]
     japanese: bool,
@@ -189,6 +194,8 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
 }
 
 fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
+    warn_on_output_mode_conflicts(&args);
+
     // Detect available CPU cores
     let available_cores = std::thread::available_parallelism()
         .map(|p| p.get())
@@ -298,7 +305,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
             Some(path) => Box::new(BufWriter::new(File::create(path)?)),
             None => Box::new(stdout()),
         };
-        generate_history_output(&report, args.json, &mut writer)?;
+        generate_history_output(&report, args.json, max_points, &mut writer)?;
         return Ok(0);
     }
 
@@ -453,15 +460,13 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
             cargo_coupling::analyze_project_balance_with_thresholds(&metrics, &thresholds);
         let diff = diff_reports(&baseline.report, &current_report);
 
-        if args.check {
+        if args.json {
+            generate_json_output_with_diff(&metrics, &thresholds, &manifest, &diff, &mut writer)?;
+        } else if args.check {
             let fail_on = ratchet_fail_on_from_args(&args)?;
             let exit_code =
                 generate_ratchet_check_output(&diff, baseline_ref, fail_on, &mut writer)?;
             return Ok(exit_code);
-        }
-
-        if args.json {
-            generate_json_output_with_diff(&metrics, &thresholds, &manifest, &diff, &mut writer)?;
         } else {
             generate_baseline_diff_output(&diff, baseline_ref, &mut writer)?;
         }
@@ -510,9 +515,24 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     if args.ai {
         generate_ai_output_with_thresholds(&metrics, &thresholds, &manifest, &mut writer)?;
     } else if args.summary {
-        generate_summary_with_thresholds(&metrics, &thresholds, &manifest, &mut writer)?;
+        generate_summary_with_options(
+            &metrics,
+            &thresholds,
+            &manifest,
+            args.blind_spots || args.all,
+            &mut writer,
+        )?;
     } else {
-        generate_report_with_thresholds(&metrics, &thresholds, &manifest, &mut writer)?;
+        generate_report_with_options(
+            &metrics,
+            &thresholds,
+            &manifest,
+            TextReportOptions {
+                show_structural_blind_spots: args.blind_spots || args.all,
+                show_all_temporal_couplings: args.all,
+            },
+            &mut writer,
+        )?;
     }
 
     // Notify about output file
@@ -531,6 +551,46 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     }
 
     Ok(0)
+}
+
+fn warn_on_output_mode_conflicts(args: &Args) {
+    if let Some((used, ignored)) = output_mode_conflict(args) {
+        eprintln!("Warning: using {}; ignoring {}.", used, ignored.join(", "));
+    }
+}
+
+fn output_mode_conflict(args: &Args) -> Option<(&'static str, Vec<&'static str>)> {
+    let mut modes = Vec::new();
+
+    if args.history.is_some() {
+        modes.push("--history");
+    }
+    if args.web {
+        modes.push("--web");
+    }
+    if args.json && args.history.is_none() {
+        modes.push("--json");
+    }
+    if args.check {
+        modes.push("--check");
+    }
+    if args.hotspots.is_some() {
+        modes.push("--hotspots");
+    }
+    if args.impact.is_some() {
+        modes.push("--impact");
+    }
+    if args.trace.is_some() {
+        modes.push("--trace");
+    }
+    if args.ai {
+        modes.push("--ai");
+    }
+    if args.summary {
+        modes.push("--summary");
+    }
+
+    (modes.len() > 1).then(|| (modes[0], modes[1..].to_vec()))
 }
 
 fn check_config_from_args(args: &Args) -> Result<CheckConfig, std::io::Error> {
@@ -624,6 +684,7 @@ mod tests {
             fail_on: None,
             json: false,
             all: false,
+            blind_spots: false,
             japanese: false,
         }
     }
@@ -810,5 +871,63 @@ mod tests {
             note.as_str()
                 .is_some_and(|note| note.contains("1 source file(s) failed to parse"))
         }));
+    }
+
+    #[test]
+    fn default_text_manifest_is_concise_and_blind_spots_are_opt_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        write_files(&src, false);
+
+        let default_output = tmp.path().join("default.txt");
+        let mut default_args = base_args(src.clone());
+        default_args.output = Some(default_output.clone());
+        assert_eq!(run_coupling(default_args).unwrap(), 0);
+        let default_text = std::fs::read_to_string(default_output).unwrap();
+        assert!(default_text.contains("4 structural blind spots not analyzed"));
+        assert!(default_text.contains("Git history was not analyzed"));
+        assert!(!default_text.contains("Dynamic connascence (Execution"));
+
+        let blind_spots_output = tmp.path().join("blind-spots.txt");
+        let mut blind_spots_args = base_args(src.clone());
+        blind_spots_args.blind_spots = true;
+        blind_spots_args.output = Some(blind_spots_output.clone());
+        assert_eq!(run_coupling(blind_spots_args).unwrap(), 0);
+        let blind_spots_text = std::fs::read_to_string(blind_spots_output).unwrap();
+        assert!(blind_spots_text.contains("Dynamic connascence (Execution"));
+
+        let all_output = tmp.path().join("all.txt");
+        let mut all_args = base_args(src);
+        all_args.all = true;
+        all_args.output = Some(all_output.clone());
+        assert_eq!(run_coupling(all_args).unwrap(), 0);
+        let all_text = std::fs::read_to_string(all_output).unwrap();
+        assert!(all_text.contains("Dynamic connascence (Execution"));
+    }
+
+    #[test]
+    fn output_mode_conflicts_follow_existing_precedence() {
+        let mut args = base_args(PathBuf::from("src"));
+        args.json = true;
+        args.check = true;
+        assert_eq!(
+            output_mode_conflict(&args),
+            Some(("--json", vec!["--check"]))
+        );
+
+        args.json = false;
+        args.check = false;
+        args.summary = true;
+        args.ai = true;
+        assert_eq!(
+            output_mode_conflict(&args),
+            Some(("--ai", vec!["--summary"]))
+        );
+
+        args.history = Some(8);
+        args.json = true;
+        args.ai = false;
+        args.summary = false;
+        assert_eq!(output_mode_conflict(&args), None);
     }
 }
