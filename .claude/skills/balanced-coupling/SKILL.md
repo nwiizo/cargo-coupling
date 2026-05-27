@@ -82,6 +82,16 @@ generic = ["src/config.rs", "src/web/**"]
 
 Hidden Coupling indicates strong co-change without a direct AST dependency, often duplicated business logic or connascence of meaning/algorithm. Accidental Volatility indicates high churn where the subdomain classification says volatility should be low.
 
+## Recognition Rules (avoid false positives)
+
+The balance rule only condemns coupling when volatility is genuinely high. Apply these so the signal stays trustworthy:
+
+- **Essential vs accidental volatility**: subdomain (`.coupling.toml`) volatility is authoritative for scoring. Raw git churn from a development sprint is *accidental* — it feeds `AccidentalVolatility` only, and must not create Cascading Change Risk on a low-essential-volatility target.
+- **Severity by volatility**: Strong + Far + High = Global Complexity (act now); Strong + Far + Low = **Acceptable** (Minor — low volatility neutralizes the distance).
+- **Entrypoint** (`crate::main`): high efferent fan-out and co-change with wired modules are expected by design → not a defect / not hidden coupling.
+- **Re-export facade** (`crate::crate_name` = `lib.rs`): a stable Contract; coupling to it is not intrusive coupling to a volatile component.
+- **Stable central abstraction**: high afferent coupling is good design; only risky when the hub is itself volatile (scale severity by the hub's essential volatility).
+
 ## Analysis Manifest
 
 `cargo-coupling` declares blind spots for static analysis. Text output can expand them with `--blind-spots`; `--json` and `--ai` include the full manifest. Use this when interpreting a clean report.

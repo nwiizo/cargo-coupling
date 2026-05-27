@@ -61,6 +61,26 @@ docker push ghcr.io/nwiizo/cargo-coupling:latest
 - `.claude/rules/` - Rust, Web UI rules
 - `.claude/skills/` - All slash commands and references (analyze, balanced-coupling, check-balance, e2e-test, explain-issue, full-review, hotspots, mutants, refactor, release, review, similarity, web)
 
+## Design Principles (observe & trust)
+
+This tool exists for a review paradigm shift: from "read and understand the code" to
+"observe a signal and trust it". That only works if the signal is trustworthy. Hard rules:
+
+- **Never game the grade.** No `--no-git`, no git-history resets via file moves, no
+  threshold/subdomain manipulation to dodge flags. A grade you can game is worthless. Raise the
+  grade only by genuinely improving structure or by correcting a *real* false positive.
+- **Precision over recall.** Every false positive forces the reviewer back to reading code, defeating
+  the paradigm. Recognize expected-by-design patterns and don't flag them:
+  - Binary **entrypoint** (`main`): high fan-out + co-change with what it wires is expected, not a defect.
+  - Crate-root **re-export facade** (`crate::crate_name`, i.e. `lib.rs`): a stable Contract, not a volatile target.
+  - **Stable central abstraction**: high afferent coupling is good design unless the hub is volatile.
+- **Essential vs accidental volatility.** Subdomain (`.coupling.toml`) essential volatility is
+  authoritative for scoring; raw git churn (a sprint) is *accidental* and only feeds the
+  `AccidentalVolatility` diagnostic — it must not manufacture Cascading Change Risk.
+- **Declare blind spots.** A clean report must state what was NOT analyzed (the manifest), so "no
+  issues" is never read as "no problems".
+- Dogfood: run `cargo coupling ./src` on this repo and listen to it; see `.claude/docs/dogfooding-learnings.md`.
+
 ## Notes
 
 **Edition 2024**:
