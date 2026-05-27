@@ -11,8 +11,10 @@
 | Module | Purpose |
 |--------|---------|
 | `state.js` | Shared state & configuration |
-| `graph.js` | Cytoscape setup, styles, layouts |
-| `ui.js` | UI components, filters, search |
+| `coupling-graph-2d.js` | Cytoscape 2D coupling graph setup, styles, layouts |
+| `coupling-graph-3d.js` | Three.js/3d-force-graph network view and dimension-space cube |
+| `ui-controls.js` | Filters, search, details, exports, health header, trust panel |
+| `panels-and-jobs.js` | Sidebar panels: issues, hotspots, temporal coupling, rankings, jobs |
 | `item-graph.js` | Item-level dependency graph |
 | `timeline.js` | History timeline chart and auto-play controls |
 | `main.js` | Entry point |
@@ -22,6 +24,9 @@
 - **ID mismatch**: Always check HTML IDs match JS selectors
 - **Event listener duplication**: Use flags or cloneNode
 - **Animation conflicts**: Use graph-queue.js for sequential operations
+- **3D assets**: Use CDN-loaded browser globals only; do not add npm, bundlers, or generated assets
+- **Model fidelity**: Strength, distance, and volatility must remain independent visual dimensions; dimension-space plots use x=strength, y=distance, z=volatility
+- **Trust signals**: Keep `/api/graph` issue lists, hidden temporal coupling, subdomains, and Not Analyzed manifest visible in the UI when available
 
 ## API Endpoints
 

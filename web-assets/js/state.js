@@ -12,8 +12,11 @@ export const CONFIG = {
 // Global state (mutable)
 export const state = {
     cy: null,
+    graph3d: null,
     graphData: null,
     currentLayout: 'cose',
+    currentGraphProjection: '2d',
+    current3dMode: 'network',
     selectedNode: null,
     isSimpleView: false,
     centerMode: false,  // true = re-layout on click, false = zoom only
@@ -29,8 +32,20 @@ export function setCy(instance) {
     state.cy = instance;
 }
 
+export function setGraph3d(instance) {
+    state.graph3d = instance;
+}
+
 export function setGraphData(data) {
     state.graphData = data;
+}
+
+export function setGraphProjection(projection) {
+    state.currentGraphProjection = projection;
+}
+
+export function set3dMode(mode) {
+    state.current3dMode = mode;
 }
 
 export function setSelectedNode(node) {

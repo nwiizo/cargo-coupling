@@ -7,7 +7,10 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
 use crate::analyzer::ItemDepType;
-use crate::balance::{BalanceScore, IssueThresholds, analyze_project_balance};
+use crate::balance::{
+    BalanceScore, CouplingIssue, IssueThresholds, IssueType, analyze_project_balance,
+};
+use crate::manifest::{ManifestContext, build_manifest};
 use crate::metrics::{BalanceClassification, CouplingMetrics, ProjectMetrics};
 
 /// Temporal coupling data for visualization
@@ -15,9 +18,61 @@ use crate::metrics::{BalanceClassification, CouplingMetrics, ProjectMetrics};
 pub struct TemporalCouplingData {
     pub file_a: String,
     pub file_b: String,
+    pub source_module: Option<String>,
+    pub target_module: Option<String>,
     pub co_change_count: usize,
     pub coupling_ratio: f64,
     pub is_strong: bool,
+    pub hidden: bool,
+}
+
+/// Strong temporal coupling with no explicit code edge.
+#[derive(Debug, Clone, Serialize)]
+pub struct HiddenCouplingEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub co_change_count: usize,
+    pub coupling_ratio: f64,
+    pub dimensions: Dimensions,
+    pub issue: IssueInfo,
+}
+
+/// Full issue list for web panels, including module-level issues.
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphIssue {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub issue_type: String,
+    pub severity: String,
+    pub source: String,
+    pub target: String,
+    pub description: String,
+    pub refactoring: String,
+    pub balance_score: f64,
+    pub focus: IssueFocus,
+}
+
+/// Where a web issue should focus in the graph.
+#[derive(Debug, Clone, Serialize)]
+pub struct IssueFocus {
+    pub kind: String,
+    pub node_ids: Vec<String>,
+    pub edge_id: Option<String>,
+}
+
+/// Declared analysis blind spots shown in the web UI.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalysisManifestData {
+    pub blind_spots: Vec<BlindSpotData>,
+    pub notes: Vec<String>,
+}
+
+/// One blind spot in the web manifest.
+#[derive(Debug, Clone, Serialize)]
+pub struct BlindSpotData {
+    pub area: String,
+    pub description: String,
 }
 
 /// Complete graph data for visualization
@@ -28,6 +83,9 @@ pub struct GraphData {
     pub summary: Summary,
     pub circular_dependencies: Vec<Vec<String>>,
     pub temporal_couplings: Vec<TemporalCouplingData>,
+    pub hidden_couplings: Vec<HiddenCouplingEdge>,
+    pub issues: Vec<GraphIssue>,
+    pub not_analyzed: AnalysisManifestData,
 }
 
 /// A node in the coupling graph (represents a module)
@@ -35,6 +93,9 @@ pub struct GraphData {
 pub struct Node {
     pub id: String,
     pub label: String,
+    pub subdomain: Option<String>,
+    pub expected_volatility: Option<String>,
+    pub flags: Vec<String>,
     pub metrics: NodeMetrics,
     pub in_cycle: bool,
     pub file_path: Option<String>,
@@ -176,10 +237,76 @@ fn get_short_name(full_path: &str) -> &str {
     full_path.split("::").last().unwrap_or(full_path)
 }
 
+fn ordered_pair(a: &str, b: &str) -> (String, String) {
+    if a <= b {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
+    }
+}
+
+fn sanitize_id(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn volatility_label(volatility: crate::metrics::Volatility) -> String {
+    match volatility {
+        crate::metrics::Volatility::Low => "Low",
+        crate::metrics::Volatility::Medium => "Medium",
+        crate::metrics::Volatility::High => "High",
+    }
+    .to_string()
+}
+
+fn build_file_to_module_map(metrics: &ProjectMetrics) -> Vec<(String, String)> {
+    metrics
+        .modules
+        .iter()
+        .map(|(name, module)| (normalize_path_string(&module.path), name.clone()))
+        .collect()
+}
+
+fn module_for_file(file_path: &str, file_to_module: &[(String, String)]) -> Option<String> {
+    let normalized_file = normalize_path_str(file_path);
+    file_to_module
+        .iter()
+        .find(|(module_path, _)| paths_match(module_path, &normalized_file))
+        .map(|(_, module_name)| module_name.clone())
+}
+
+fn normalize_path_string(path: &std::path::Path) -> String {
+    normalize_path_str(&path.to_string_lossy())
+}
+
+fn normalize_path_str(path: &str) -> String {
+    path.replace('\\', "/").trim_start_matches("./").to_string()
+}
+
+fn paths_match(module_path: &str, git_path: &str) -> bool {
+    module_path == git_path
+        || module_path.ends_with(&format!("/{git_path}"))
+        || git_path.ends_with(&format!("/{module_path}"))
+}
+
 /// Convert ProjectMetrics to GraphData for visualization
 pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) -> GraphData {
     let balance_report = analyze_project_balance(metrics);
     let circular_deps = metrics.detect_circular_dependencies();
+    let accidental_volatility_modules: HashSet<String> = balance_report
+        .issues
+        .iter()
+        .filter(|issue| issue.issue_type == IssueType::AccidentalVolatility)
+        .map(|issue| issue.source.clone())
+        .collect();
 
     // Collect nodes in cycles for highlighting
     let cycle_nodes: HashSet<String> = circular_deps.iter().flatten().cloned().collect();
@@ -349,9 +476,21 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
         let type_count = module.type_definitions.len();
         let impl_count = module.trait_impl_count + module.inherent_impl_count;
 
+        let subdomain = module.subdomain.map(|s| s.to_string());
+        let expected_volatility = module
+            .subdomain
+            .map(|s| volatility_label(s.expected_volatility()));
+        let mut flags = Vec::new();
+        if accidental_volatility_modules.contains(name) {
+            flags.push("AccidentalVolatility".to_string());
+        }
+
         nodes.push(Node {
             id: name.clone(),
             label: module.name.clone(),
+            subdomain,
+            expected_volatility,
+            flags,
             metrics: NodeMetrics {
                 couplings_out: out_count,
                 couplings_in: in_count,
@@ -408,6 +547,9 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
             nodes.push(Node {
                 id: node_id.clone(),
                 label: get_short_name(full_path).to_string(),
+                subdomain: None,
+                expected_volatility: None,
+                flags: Vec::new(),
                 metrics: NodeMetrics {
                     couplings_out: out_count,
                     couplings_in: in_count,
@@ -482,6 +624,19 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
         });
     }
 
+    let explicit_edge_pairs: HashSet<(String, String)> = edges
+        .iter()
+        .map(|edge| ordered_pair(&edge.source, &edge.target))
+        .collect();
+    let file_to_module = build_file_to_module_map(metrics);
+    let hidden_couplings = build_hidden_couplings(metrics, &file_to_module, &explicit_edge_pairs);
+    let graph_issues = build_graph_issues(
+        &balance_report.issues,
+        &normalize_to_node_id,
+        &edges,
+        &hidden_couplings,
+    );
+
     // Count issues by severity
     let mut critical = 0;
     let mut high = 0;
@@ -527,15 +682,225 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
             .temporal_couplings
             .iter()
             .take(20)
-            .map(|tc| TemporalCouplingData {
-                file_a: tc.file_a.clone(),
-                file_b: tc.file_b.clone(),
-                co_change_count: tc.co_change_count,
-                coupling_ratio: tc.coupling_ratio,
-                is_strong: tc.is_strong(),
+            .map(|tc| {
+                let source_module = module_for_file(&tc.file_a, &file_to_module);
+                let target_module = module_for_file(&tc.file_b, &file_to_module);
+                let hidden = tc.is_strong()
+                    && source_module.as_ref().is_some_and(|source| {
+                        target_module.as_ref().is_some_and(|target| {
+                            source != target
+                                && !explicit_edge_pairs.contains(&ordered_pair(source, target))
+                        })
+                    });
+                TemporalCouplingData {
+                    file_a: tc.file_a.clone(),
+                    file_b: tc.file_b.clone(),
+                    source_module,
+                    target_module,
+                    co_change_count: tc.co_change_count,
+                    coupling_ratio: tc.coupling_ratio,
+                    is_strong: tc.is_strong(),
+                    hidden,
+                }
             })
             .collect(),
+        hidden_couplings,
+        issues: graph_issues,
+        not_analyzed: build_not_analyzed_manifest(metrics),
     }
+}
+
+fn build_not_analyzed_manifest(metrics: &ProjectMetrics) -> AnalysisManifestData {
+    let manifest = build_manifest(&ManifestContext {
+        git_used: !metrics.file_changes.is_empty() || !metrics.temporal_couplings.is_empty(),
+        tests_excluded: false,
+        parse_failures: metrics.parse_failures,
+    });
+
+    AnalysisManifestData {
+        blind_spots: manifest
+            .blind_spots
+            .iter()
+            .map(|spot| BlindSpotData {
+                area: spot.area.to_string(),
+                description: spot.description.to_string(),
+            })
+            .collect(),
+        notes: manifest.notes,
+    }
+}
+
+fn build_hidden_couplings(
+    metrics: &ProjectMetrics,
+    file_to_module: &[(String, String)],
+    explicit_edge_pairs: &HashSet<(String, String)>,
+) -> Vec<HiddenCouplingEdge> {
+    let mut seen = HashSet::new();
+    let mut hidden = Vec::new();
+
+    for temporal in metrics
+        .temporal_couplings
+        .iter()
+        .filter(|tc| tc.is_strong())
+    {
+        let Some(source) = module_for_file(&temporal.file_a, file_to_module) else {
+            continue;
+        };
+        let Some(target) = module_for_file(&temporal.file_b, file_to_module) else {
+            continue;
+        };
+        if source == target {
+            continue;
+        }
+
+        let pair = ordered_pair(&source, &target);
+        if explicit_edge_pairs.contains(&pair) || !seen.insert(pair.clone()) {
+            continue;
+        }
+
+        let ratio_pct = temporal.coupling_ratio * 100.0;
+        hidden.push(HiddenCouplingEdge {
+            id: format!("hidden-{}-{}", sanitize_id(&pair.0), sanitize_id(&pair.1)),
+            source: pair.0,
+            target: pair.1,
+            co_change_count: temporal.co_change_count,
+            coupling_ratio: temporal.coupling_ratio,
+            dimensions: hidden_coupling_dimensions(temporal.coupling_ratio),
+            issue: IssueInfo {
+                issue_type: "HiddenCoupling".to_string(),
+                severity: if temporal.coupling_ratio >= 0.8 {
+                    "High"
+                } else {
+                    "Medium"
+                }
+                .to_string(),
+                description: format!(
+                    "Strong temporal co-change without code dependency ({ratio_pct:.0}% ratio, {} co-changes)",
+                    temporal.co_change_count
+                ),
+            },
+        });
+    }
+
+    hidden
+}
+
+fn hidden_coupling_dimensions(coupling_ratio: f64) -> Dimensions {
+    Dimensions {
+        strength: DimensionValue {
+            value: 0.75,
+            label: "Functional".to_string(),
+        },
+        distance: DimensionValue {
+            value: 0.5,
+            label: "DifferentModule".to_string(),
+        },
+        volatility: DimensionValue {
+            value: 1.0,
+            label: "High".to_string(),
+        },
+        balance: BalanceValue {
+            value: 1.0 - coupling_ratio,
+            label: "NeedsRefactoring".to_string(),
+            interpretation: "Hidden temporal coupling".to_string(),
+            classification: "Global Complexity".to_string(),
+            classification_ja: "グローバル複雑性 (隠れた結合)".to_string(),
+        },
+        connascence: None,
+    }
+}
+
+fn build_graph_issues<F>(
+    issues: &[CouplingIssue],
+    normalize_to_node_id: &F,
+    edges: &[Edge],
+    hidden_couplings: &[HiddenCouplingEdge],
+) -> Vec<GraphIssue>
+where
+    F: Fn(&str) -> String,
+{
+    issues
+        .iter()
+        .enumerate()
+        .map(|(index, issue)| {
+            let source = normalize_issue_endpoint(&issue.source, normalize_to_node_id);
+            let target = normalize_issue_endpoint(&issue.target, normalize_to_node_id);
+            let focus = issue_focus(issue, &source, &target, edges, hidden_couplings);
+
+            GraphIssue {
+                id: format!("issue-{index}"),
+                issue_type: format!("{:?}", issue.issue_type),
+                severity: issue.severity.to_string(),
+                source,
+                target,
+                description: issue.description.clone(),
+                refactoring: issue.refactoring.to_string(),
+                balance_score: issue.balance_score,
+                focus,
+            }
+        })
+        .collect()
+}
+
+fn issue_focus(
+    issue: &CouplingIssue,
+    source: &str,
+    target: &str,
+    edges: &[Edge],
+    hidden_couplings: &[HiddenCouplingEdge],
+) -> IssueFocus {
+    if issue.issue_type == IssueType::HiddenCoupling
+        && let Some(hidden_edge) = hidden_couplings
+            .iter()
+            .find(|edge| ordered_pair(&edge.source, &edge.target) == ordered_pair(source, target))
+    {
+        return IssueFocus {
+            kind: "hidden-edge".to_string(),
+            node_ids: vec![hidden_edge.source.clone(), hidden_edge.target.clone()],
+            edge_id: Some(hidden_edge.id.clone()),
+        };
+    }
+
+    if let Some(edge) = edges
+        .iter()
+        .find(|edge| edge.source == source && edge.target == target)
+    {
+        return IssueFocus {
+            kind: "edge".to_string(),
+            node_ids: vec![edge.source.clone(), edge.target.clone()],
+            edge_id: Some(edge.id.clone()),
+        };
+    }
+
+    let node_ids = match issue.issue_type {
+        IssueType::HighAfferentCoupling => vec![target.to_string()],
+        IssueType::HighEfferentCoupling
+        | IssueType::GodModule
+        | IssueType::AccidentalVolatility
+        | IssueType::PublicFieldExposure
+        | IssueType::PrimitiveObsession => vec![source.to_string()],
+        _ if source != target => vec![source.to_string(), target.to_string()],
+        _ => vec![source.to_string()],
+    };
+
+    IssueFocus {
+        kind: if node_ids.len() > 1 { "nodes" } else { "node" }.to_string(),
+        node_ids,
+        edge_id: None,
+    }
+}
+
+fn normalize_issue_endpoint<F>(endpoint: &str, normalize_to_node_id: &F) -> String
+where
+    F: Fn(&str) -> String,
+{
+    if endpoint.ends_with(" dependencies")
+        || endpoint.ends_with(" dependents")
+        || matches!(endpoint, "Core" | "Supporting" | "Generic")
+    {
+        return endpoint.to_string();
+    }
+    normalize_to_node_id(endpoint)
 }
 
 fn coupling_to_dimensions(coupling: &CouplingMetrics, score: &BalanceScore) -> Dimensions {
@@ -570,6 +935,14 @@ fn coupling_to_dimensions(coupling: &CouplingMetrics, score: &BalanceScore) -> D
     // Calculate Khononov's BalanceClassification
     let classification =
         BalanceClassification::classify(coupling.strength, coupling.distance, coupling.volatility);
+    let classification_en = match classification {
+        BalanceClassification::Pain => "Global Complexity",
+        _ => classification.description_en(),
+    };
+    let classification_ja = match classification {
+        BalanceClassification::Pain => "グローバル複雑性 (強+遠+変動)",
+        _ => classification.description_ja(),
+    };
 
     Dimensions {
         strength: DimensionValue {
@@ -588,8 +961,8 @@ fn coupling_to_dimensions(coupling: &CouplingMetrics, score: &BalanceScore) -> D
             value: score.score,
             label: balance_label.to_string(),
             interpretation: format!("{:?}", score.interpretation),
-            classification: classification.description_en().to_string(),
-            classification_ja: classification.description_ja().to_string(),
+            classification: classification_en.to_string(),
+            classification_ja: classification_ja.to_string(),
         },
         connascence: None, // TODO: Add connascence tracking per coupling
     }

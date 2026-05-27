@@ -4,8 +4,9 @@
 
 import { state, setSelectedNode } from './state.js';
 import { t } from './i18n.js';
-import { highlightDependencyPath, focusOnNode, clearHighlights } from './graph.js';
-import { showEdgeDetails, showNodeDetails, showBlastRadius, clearBlastRadius, clearDetails } from './ui.js';
+import { highlightDependencyPath, focusOnNode, clearHighlights } from './coupling-graph-2d.js';
+import { focusLink3d, focusNode3d } from './coupling-graph-3d.js';
+import { showEdgeDetails, showNodeDetails, showBlastRadius, clearBlastRadius, clearDetails } from './ui-controls.js';
 import { escapeHtml } from './utils.js';
 
 // =====================================================
@@ -30,7 +31,7 @@ export function populateCriticalIssues() {
             let status = 'good';
             let icon = '✅';
 
-            if (classification === 'Needs Refactoring') {
+            if (classification === 'Global Complexity' || classification === 'Needs Refactoring') {
                 priority = 3;
                 status = 'critical';
                 icon = '❌';
@@ -254,7 +255,7 @@ export function populateTemporalCouplings() {
 // =====================================================
 
 export function populateModuleRankings(sortBy = 'connections') {
-    const container = document.getElementById('rankings-list');
+    const container = document.getElementById('module-rankings');
     if (!container || !state.graphData) return;
 
     const modules = state.graphData.nodes.map(node => ({
@@ -294,7 +295,7 @@ export function populateModuleRankings(sortBy = 'connections') {
 }
 
 export function setupModuleRankingSorting() {
-    const buttons = document.querySelectorAll('.ranking-sort-btn');
+    const buttons = document.querySelectorAll('.quick-action[data-sort]');
     buttons.forEach(btn => {
         btn.addEventListener('click', () => {
             buttons.forEach(b => b.classList.remove('active'));
@@ -312,15 +313,13 @@ export function populateIssueList() {
     const container = document.getElementById('issue-list');
     if (!container || !state.graphData) return;
 
-    const issues = state.graphData.edges
-        .filter(e => e.issue)
-        .map(e => ({
-            ...e.issue,
-            edgeId: e.id,
-            source: e.source,
-            target: e.target
-        }))
+    const severityFilter = document.getElementById('issue-severity-filter')?.value || 'all';
+    const issues = (state.graphData.issues || [])
+        .filter(issue => severityFilter === 'all' || issue.severity === severityFilter)
         .sort((a, b) => getSeverityOrder(a.severity) - getSeverityOrder(b.severity));
+
+    const count = document.getElementById('issue-count');
+    if (count) count.textContent = (state.graphData.issues || []).length;
 
     if (issues.length === 0) {
         container.innerHTML = '<div class="no-data">No issues found</div>';
@@ -328,26 +327,65 @@ export function populateIssueList() {
     }
 
     container.innerHTML = issues.map(issue => `
-        <div class="issue-item severity-${issue.severity?.toLowerCase()}" data-edge-id="${issue.edgeId}">
-            <div class="issue-header">
-                <span class="issue-type">${formatIssueType(issue.type)}</span>
-                <span class="issue-severity">${issue.severity}</span>
+        <div class="issue-item severity-${issue.severity?.toLowerCase()}" data-issue-id="${issue.id}">
+            <span class="severity ${issue.severity?.toLowerCase()}"></span>
+            <div class="content">
+                <div class="issue-header">
+                    <span class="type">${formatIssueType(issue.type || issue.issue_type)}</span>
+                    <span class="issue-severity">${issue.severity}</span>
+                </div>
+                <div class="target">${escapeHtml(issue.source)}${issue.target ? ` -> ${escapeHtml(issue.target)}` : ''}</div>
+                <div class="issue-desc">${escapeHtml(issue.description)}</div>
             </div>
-            <div class="issue-path">${issue.source} → ${issue.target}</div>
-            <div class="issue-desc">${issue.description}</div>
         </div>
     `).join('');
 
     container.querySelectorAll('.issue-item').forEach(item => {
         item.addEventListener('click', () => {
-            const edgeId = item.dataset.edgeId;
-            const edge = state.cy.getElementById(edgeId);
-            if (edge.length) {
-                highlightDependencyPath(edge);
-                showEdgeDetails(edge.data());
-            }
+            const issue = (state.graphData.issues || []).find(i => i.id === item.dataset.issueId);
+            focusIssue(issue);
         });
     });
+}
+
+export function setupIssueFilters() {
+    document.getElementById('issue-severity-filter')?.addEventListener('change', populateIssueList);
+}
+
+function focusIssue(issue) {
+    if (!issue) return;
+    const focus = issue.focus || {};
+    const edgeId = focus.edge_id;
+
+    if (edgeId && state.cy) {
+        let edge = state.cy.getElementById(edgeId);
+        if (!edge.length && focus.node_ids?.length >= 2) {
+            edge = state.cy.edges().filter(e =>
+                e.data('source') === focus.node_ids[0] && e.data('target') === focus.node_ids[1]
+            );
+        }
+        if (edge.length) {
+            highlightDependencyPath(edge.first());
+            showEdgeDetails(edge.first().data());
+        }
+    } else if (focus.node_ids?.length && state.cy) {
+        clearHighlights();
+        state.cy.elements().addClass('dimmed');
+        const nodes = focus.node_ids
+            .map(id => state.cy.getElementById(id))
+            .filter(node => node.length);
+        nodes.forEach(node => node.removeClass('dimmed').addClass('highlighted'));
+        if (nodes.length > 0) {
+            state.cy.fit(nodes.reduce((acc, node) => acc ? acc.union(node) : node, null), 80);
+            showNodeDetails(nodes[0].data());
+        }
+    }
+
+    if (edgeId) {
+        focusLink3d(edgeId, focus.node_ids || []);
+    } else if (focus.node_ids?.[0]) {
+        focusNode3d(focus.node_ids[0]);
+    }
 }
 
 // =====================================================
@@ -417,7 +455,7 @@ function showFullImpact(node) {
 // =====================================================
 
 export function setupClusterView() {
-    const container = document.getElementById('cluster-list');
+    const container = document.getElementById('cluster-info');
     if (!container || !state.graphData) return;
 
     const clusters = detectClusters();

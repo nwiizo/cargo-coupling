@@ -9,6 +9,7 @@
     <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
     <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
     <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+    <script src="https://unpkg.com/3d-force-graph"></script>
 </head>
 <body>
     <!-- Trigger zones for auto-hide UI -->
@@ -39,6 +40,12 @@
         <!-- Main Content Area - full viewport -->
         <main class="main">
             <div class="graph-container" id="cy"></div>
+            <div class="graph-container graph-3d-container" id="graph-3d" style="display: none;"></div>
+            <div class="dimension-space-labels" id="dimension-space-labels" style="display: none;">
+                <span class="axis-label axis-x">X: Integration Strength</span>
+                <span class="axis-label axis-y">Y: Distance</span>
+                <span class="axis-label axis-z">Z: Volatility</span>
+            </div>
             <div class="tree-container" id="tree-view" style="display: none;"></div>
         </main>
 
@@ -134,6 +141,14 @@
                         <button id="view-graph" class="btn btn-view active">Graph</button>
                         <button id="view-tree" class="btn btn-view">Tree</button>
                     </div>
+                    <div class="view-buttons projection-buttons" style="margin-top: 0.5rem;">
+                        <button id="projection-2d" class="btn btn-view active">2D</button>
+                        <button id="projection-3d" class="btn btn-view">3D</button>
+                    </div>
+                    <div class="view-buttons projection-buttons" id="graph-3d-mode-buttons" style="display: none; margin-top: 0.5rem;">
+                        <button id="mode-3d-network" class="btn btn-view active">Network</button>
+                        <button id="mode-3d-space" class="btn btn-view">Dimension Space</button>
+                    </div>
                     <div class="filter-group" style="margin-top: 0.5rem;">
                         <label><input type="checkbox" id="center-mode-toggle"> Center on Click</label>
                         <p style="font-size: 0.6875rem; color: var(--text-secondary); margin-top: 0.25rem;">
@@ -203,6 +218,7 @@
                     <div class="filter-group">
                         <label><input type="checkbox" id="show-issues-only"> Show Issues Only</label>
                         <label><input type="checkbox" id="show-cycles-only"> Show Cycles Only</label>
+                        <label><input type="checkbox" id="show-hidden-coupling" checked> Show Hidden Coupling</label>
                         <label><input type="checkbox" id="hide-external" checked> Hide External Crates</label>
                     </div>
 
@@ -345,9 +361,23 @@
                 <!-- Issue List -->
                 <section class="panel">
                     <h2>Issues <span id="issue-count" class="badge">0</span></h2>
+                    <select id="issue-severity-filter" class="select issue-filter">
+                        <option value="all">All severities</option>
+                        <option value="Critical">Critical</option>
+                        <option value="High">High</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Low">Low</option>
+                    </select>
                     <div id="issue-list" class="issue-list">
                         <p class="placeholder">No issues detected</p>
                     </div>
+                </section>
+
+                <!-- Trust Panel -->
+                <section class="panel trust-panel" id="trust-panel">
+                    <h2>Not Analyzed <span id="blind-spot-count" class="badge">0</span></h2>
+                    <button id="toggle-trust-panel" class="btn trust-toggle">Show blind spots</button>
+                    <div id="trust-panel-content" class="trust-panel-content" style="display: none;"></div>
                 </section>
 
                 <!-- Export -->

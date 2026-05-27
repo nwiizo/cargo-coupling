@@ -56,6 +56,10 @@ export function buildElements(data, options = {}) {
                 label: node.label,
                 crate: crate,
                 nodeType: 'module',
+                subdomain: node.subdomain,
+                expected_volatility: node.expected_volatility,
+                flags: node.flags || [],
+                accidental_volatility: (node.flags || []).includes('AccidentalVolatility'),
                 ...node.metrics,
                 file_path: node.file_path,
                 in_cycle: node.in_cycle,
@@ -109,24 +113,27 @@ export function buildElements(data, options = {}) {
                 issue: edge.issue,
                 inCycle: edge.in_cycle,
                 location: edge.location,
-                count: 1
+                count: 1,
+                originalIds: [edge.id]
             });
         } else {
             const existing = edgeMap.get(key);
-            existing.strength = Math.max(existing.strength, dims.strength?.value ?? 0.5);
+            const newStrength = dims.strength?.value ?? 0.5;
+            if (newStrength > existing.strength) {
+                existing.strength = newStrength;
+                existing.strengthLabel = dims.strength?.label ?? existing.strengthLabel;
+            }
             existing.balance = Math.min(existing.balance, dims.balance?.value ?? 0.5);
             existing.inCycle = existing.inCycle || edge.in_cycle;
             existing.issue = existing.issue || edge.issue;
             existing.count++;
-            if ((dims.strength?.value ?? 0) > existing.strength) {
-                existing.strengthLabel = dims.strength?.label ?? existing.strengthLabel;
-            }
+            existing.originalIds.push(edge.id);
         }
     });
 
-    const edges = Array.from(edgeMap.entries()).map(([key, data], idx) => ({
+    const edges = Array.from(edgeMap.entries()).map(([key, data]) => ({
         data: {
-            id: `e${idx}`,
+            id: `edge-${sanitizeElementId(key)}`,
             source: data.source,
             target: data.target,
             edgeType: 'module',
@@ -141,9 +148,35 @@ export function buildElements(data, options = {}) {
             issue: data.issue,
             inCycle: data.inCycle,
             location: data.location,
-            count: data.count
+            count: data.count,
+            originalIds: data.originalIds
         }
     }));
+
+    (data.hidden_couplings || []).forEach(hidden => {
+        const dims = hidden.dimensions || {};
+        edges.push({
+            data: {
+                id: hidden.id,
+                source: hidden.source,
+                target: hidden.target,
+                edgeType: 'hidden-coupling',
+                strength: dims.strength?.value ?? 0.75,
+                strengthLabel: dims.strength?.label ?? 'Functional',
+                distance: dims.distance?.label ?? 'DifferentModule',
+                volatility: dims.volatility?.label ?? 'High',
+                balance: dims.balance?.value ?? (1 - hidden.coupling_ratio),
+                balanceLabel: dims.balance?.label ?? 'NeedsRefactoring',
+                classification: dims.balance?.classification ?? 'Needs Refactoring',
+                classificationJa: dims.balance?.classification_ja ?? '要改善',
+                issue: hidden.issue,
+                hiddenCoupling: true,
+                coChangeCount: hidden.co_change_count,
+                couplingRatio: hidden.coupling_ratio,
+                count: 1
+            }
+        });
+    });
 
     // Add item-level edges if enabled
     if (showItems) {
@@ -228,9 +261,9 @@ export function getCytoscapeStyle() {
                 'text-halign': 'center',
                 'text-wrap': 'wrap',
                 'text-max-width': '120px',
-                'background-color': node => getHealthColor(node.data('health')),
+                'background-color': node => getNodeColor(node.data()),
                 'border-width': 2,
-                'border-color': '#475569',
+                'border-color': node => node.data('accidental_volatility') ? '#f97316' : '#475569',
                 'color': '#f8fafc',
                 'font-size': '9px',
                 'text-outline-color': '#0f172a',
@@ -321,6 +354,18 @@ export function getCytoscapeStyle() {
             style: {
                 'width': edge => 3 + edge.data('strength') * 4,
                 'opacity': 0.85
+            }
+        },
+        // Hidden temporal coupling
+        {
+            selector: 'edge[?hiddenCoupling]',
+            style: {
+                'line-color': '#f59e0b',
+                'target-arrow-color': '#f59e0b',
+                'line-style': 'dashed',
+                'width': edge => 2 + (edge.data('couplingRatio') || 0.5) * 4,
+                'opacity': 0.95,
+                'target-arrow-shape': 'triangle'
             }
         },
         // Cycle edges
@@ -586,6 +631,15 @@ export function getHealthColor(health) {
     return colors[health] || '#64748b';
 }
 
+export function getNodeColor(data) {
+    if (data.accidental_volatility) return '#f97316';
+    const subdomain = (data.subdomain || '').toLowerCase();
+    if (subdomain === 'core') return '#ef4444';
+    if (subdomain === 'supporting') return '#38bdf8';
+    if (subdomain === 'generic') return '#94a3b8';
+    return getHealthColor(data.health);
+}
+
 export function getBalanceColor(balance) {
     if (balance >= 0.8) return '#22c55e';
     if (balance >= 0.4) return '#eab308';
@@ -603,6 +657,10 @@ function getStrengthName(value) {
     if (value >= 0.5) return 'Functional';
     if (value >= 0.25) return 'Model';
     return 'Contract';
+}
+
+function sanitizeElementId(value) {
+    return value.replace(/[^a-zA-Z0-9_-]/g, '-');
 }
 
 /**

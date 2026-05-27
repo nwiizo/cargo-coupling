@@ -2,9 +2,10 @@
 // cargo-coupling Web Visualization - Main Entry Point
 // =====================================================
 
-import { CONFIG, state, setGraphData, setSelectedNode, setShowItems, setCy } from './state.js';
+import { CONFIG, state, setGraphData, setSelectedNode, setShowItems, setCy, setGraphProjection, set3dMode } from './state.js';
 import { setupLanguageToggle, updateUILanguage } from './i18n.js';
-import { initCytoscape, buildElements, getCytoscapeStyle, getLayoutConfig, applyLayout, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, clearHighlights } from './graph.js';
+import { initCytoscape, buildElements, getCytoscapeStyle, getLayoutConfig, applyLayout, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, clearHighlights } from './coupling-graph-2d.js';
+import { initCouplingGraph3d, render3dMode, focusLink3d, focusNode3d, clear3dFocus } from './coupling-graph-3d.js';
 import {
     updateHeaderStats,
     updateFooterStats,
@@ -16,6 +17,8 @@ import {
     setupKeyboardShortcuts,
     setupCenterModeToggle,
     setupLegendToggle,
+    populateTrustPanel,
+    setupTrustPanelToggle,
     setupResizableSidebar,
     showNodeDetails,
     showEdgeDetails,
@@ -23,7 +26,7 @@ import {
     showBlastRadius,
     clearBlastRadius,
     setupDetailsModal
-} from './ui.js';
+} from './ui-controls.js';
 import { showItemGraph, hideItemGraph } from './item-graph.js';
 import {
     populateCriticalIssues,
@@ -32,6 +35,7 @@ import {
     populateModuleRankings,
     setupModuleRankingSorting,
     populateIssueList,
+    setupIssueFilters,
     setupAnalysisButtons,
     enableAnalysisButtons,
     setupClusterView,
@@ -39,7 +43,7 @@ import {
     setupJobButtons,
     updateWhatBreaksButton,
     setSelectNodeCallback
-} from './features.js';
+} from './panels-and-jobs.js';
 import { graphQueue, runLayoutAsync, debounce } from './graph-queue.js';
 import { getInitialSelection, updateUrl, initUrlRouter } from './url-router.js';
 import { initTimeline } from './timeline.js';
@@ -186,6 +190,14 @@ function initGraph(data, options = {}) {
         // Options
         options
     );
+    initCouplingGraph3d(
+        data,
+        (nodeId) => {
+            const node = state.cy?.getElementById(nodeId);
+            if (node?.length) selectNode(node);
+        },
+        (edgeData) => selectEdgeFromGraphData(edgeData)
+    );
 }
 
 /**
@@ -239,6 +251,9 @@ function initUI(data) {
     setupAnalysisButtons();
     setupClusterView();
     populateIssueList();
+    setupIssueFilters();
+    populateTrustPanel();
+    setupTrustPanelToggle();
     setupResizableSidebar();
     setupDetailsModal();
 
@@ -248,6 +263,7 @@ function initUI(data) {
 
     setupAutoHideTriggers();
     setupViewToggle();
+    setupProjectionToggle();
     setupLegendToggle();
     setupCenterModeToggle();
     setupItemToggle();
@@ -313,6 +329,7 @@ function selectNode(node) {
         }
 
         highlightNeighbors(node);
+        focusNode3d(node.id());
         showNodeDetails(node.data());
         enableAnalysisButtons(true);
         showBlastRadius(node);
@@ -334,6 +351,7 @@ function clearSelection() {
             state.cy.elements().removeClass('hidden highlighted dimmed dependency-source dependency-target search-match');
             state.cy.fit(undefined, 50);
         }
+        clear3dFocus();
 
         clearDetails();
         enableAnalysisButtons(false);
@@ -349,6 +367,49 @@ function clearSelection() {
         const jobResult = document.getElementById('job-result');
         if (jobResult) jobResult.innerHTML = '';
     }, { cancelPending: true });
+}
+
+function selectEdgeFromGraphData(edgeData) {
+    if (!edgeData) return;
+
+    let edge = state.cy?.getElementById(edgeData.id);
+    if ((!edge || !edge.length) && edgeData.source && edgeData.target) {
+        edge = state.cy?.edges().filter(e =>
+            e.data('source') === edgeData.source && e.data('target') === edgeData.target
+        );
+    }
+
+    if (edge?.length) {
+        const selectedEdge = edge.first();
+        highlightDependencyPath(selectedEdge);
+        showEdgeDetails(selectedEdge.data());
+        focusLink3d(selectedEdge.id(), [selectedEdge.data('source'), selectedEdge.data('target')]);
+        return;
+    }
+
+    showEdgeDetails(edgeDataToDetails(edgeData));
+    focusLink3d(edgeData.id, [edgeData.source, edgeData.target]);
+}
+
+function edgeDataToDetails(edgeData) {
+    const dims = edgeData.dimensions || {};
+    return {
+        id: edgeData.id,
+        source: edgeData.source,
+        target: edgeData.target,
+        edgeType: edgeData.issue?.type === 'HiddenCoupling' ? 'hidden-coupling' : 'module',
+        strength: dims.strength?.value ?? 0.5,
+        strengthLabel: dims.strength?.label ?? 'Model',
+        distance: dims.distance?.label ?? 'DifferentModule',
+        volatility: dims.volatility?.label ?? 'Low',
+        balance: dims.balance?.value ?? 0.5,
+        balanceLabel: dims.balance?.label ?? 'Acceptable',
+        classification: dims.balance?.classification || '',
+        classificationJa: dims.balance?.classification_ja || '',
+        issue: edgeData.issue,
+        couplingRatio: edgeData.coupling_ratio,
+        coChangeCount: edgeData.co_change_count
+    };
 }
 
 /**
@@ -424,7 +485,7 @@ function setupViewToggle() {
         if (currentView === 'graph') return;
 
         currentView = 'graph';
-        document.getElementById('cy').style.display = 'block';
+        showActiveGraphProjection();
         document.getElementById('tree-view')?.style.setProperty('display', 'none');
 
         // Update button states
@@ -436,6 +497,7 @@ function setupViewToggle() {
             state.cy.resize();
             state.cy.fit(undefined, 50);
         }
+        render3dMode(state.graphData, state.current3dMode);
     });
 
     treeBtn.addEventListener('click', () => {
@@ -443,6 +505,8 @@ function setupViewToggle() {
 
         currentView = 'tree';
         document.getElementById('cy').style.display = 'none';
+        document.getElementById('graph-3d').style.display = 'none';
+        document.getElementById('dimension-space-labels').style.display = 'none';
         const treeView = document.getElementById('tree-view');
         if (treeView) {
             treeView.style.display = 'block';
@@ -453,6 +517,62 @@ function setupViewToggle() {
         treeBtn.classList.add('active');
         graphBtn.classList.remove('active');
     });
+}
+
+function setupProjectionToggle() {
+    const twoDButton = document.getElementById('projection-2d');
+    const threeDButton = document.getElementById('projection-3d');
+    const networkButton = document.getElementById('mode-3d-network');
+    const spaceButton = document.getElementById('mode-3d-space');
+
+    twoDButton?.addEventListener('click', () => {
+        setGraphProjection('2d');
+        twoDButton.classList.add('active');
+        threeDButton?.classList.remove('active');
+        document.getElementById('graph-3d-mode-buttons').style.display = 'none';
+        if (currentView === 'graph') showActiveGraphProjection();
+    });
+
+    threeDButton?.addEventListener('click', () => {
+        setGraphProjection('3d');
+        threeDButton.classList.add('active');
+        twoDButton?.classList.remove('active');
+        document.getElementById('graph-3d-mode-buttons').style.display = 'flex';
+        if (currentView === 'graph') showActiveGraphProjection();
+        render3dMode(state.graphData, state.current3dMode);
+    });
+
+    networkButton?.addEventListener('click', () => {
+        set3dMode('network');
+        networkButton.classList.add('active');
+        spaceButton?.classList.remove('active');
+        render3dMode(state.graphData, 'network');
+    });
+
+    spaceButton?.addEventListener('click', () => {
+        set3dMode('dimension-space');
+        spaceButton.classList.add('active');
+        networkButton?.classList.remove('active');
+        render3dMode(state.graphData, 'dimension-space');
+    });
+}
+
+function showActiveGraphProjection() {
+    const cy = document.getElementById('cy');
+    const graph3d = document.getElementById('graph-3d');
+    const dimensionLabels = document.getElementById('dimension-space-labels');
+    if (!cy || !graph3d) return;
+
+    const show3d = state.currentGraphProjection === '3d';
+    cy.style.display = show3d ? 'none' : 'block';
+    graph3d.style.display = show3d ? 'block' : 'none';
+    if (dimensionLabels) {
+        dimensionLabels.style.display = show3d && state.current3dMode === 'dimension-space' ? 'block' : 'none';
+    }
+    if (!show3d && state.cy) {
+        state.cy.resize();
+        state.cy.fit(undefined, 50);
+    }
 }
 
 // =====================================================

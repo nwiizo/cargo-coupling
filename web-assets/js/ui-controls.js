@@ -4,7 +4,8 @@
 
 import { state, setSelectedNode, setCenterMode } from './state.js';
 import { t } from './i18n.js';
-import { applyLayout, clearHighlights, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, analyzeCoupling, getHealthColor } from './graph.js';
+import { applyLayout, clearHighlights, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, analyzeCoupling, getHealthColor } from './coupling-graph-2d.js';
+import { refresh3dGraph } from './coupling-graph-3d.js';
 import { debounce, escapeHtml, estimateVolatility } from './utils.js';
 import { updateUrl } from './url-router.js';
 
@@ -28,12 +29,15 @@ export function updateHeaderStats(summary, graphData) {
         }
     }
 
+    const counts = summary.issues_by_severity || {};
     container.innerHTML = `
-        <span class="stat">Modules: <span class="stat-value">${summary.total_modules}</span></span>
-        <span class="stat">Functions: <span class="stat-value">${totalFunctions}</span></span>
-        <span class="stat">Types: <span class="stat-value">${totalTypes}</span></span>
-        <span class="stat">Impls: <span class="stat-value">${totalImpls}</span></span>
-        <span class="stat">Health: <span class="health-grade ${summary.health_grade}">${summary.health_grade}</span></span>
+        <span class="stat health-summary">Grade <span class="health-grade ${summary.health_grade}">${summary.health_grade}</span></span>
+        <span class="stat">Score <span class="stat-value">${(summary.health_score * 100).toFixed(1)}%</span></span>
+        <span class="stat issue-critical">Critical <span class="stat-value">${counts.critical || 0}</span></span>
+        <span class="stat issue-high">High <span class="stat-value">${counts.high || 0}</span></span>
+        <span class="stat issue-medium">Medium <span class="stat-value">${counts.medium || 0}</span></span>
+        <span class="stat">Modules <span class="stat-value">${summary.total_modules}</span></span>
+        <span class="stat">Items <span class="stat-value">${totalFunctions}fn ${totalTypes}ty ${totalImpls}impl</span></span>
     `;
 }
 
@@ -66,6 +70,7 @@ export function applyFilters() {
     const issuesOnly = document.getElementById('show-issues-only')?.checked;
     const cyclesOnly = document.getElementById('show-cycles-only')?.checked;
     const hideExternal = document.getElementById('hide-external')?.checked;
+    const showHiddenCoupling = document.getElementById('show-hidden-coupling')?.checked ?? true;
 
     // First, determine which nodes are internal (have source file path)
     const internalNodes = new Set();
@@ -85,10 +90,16 @@ export function applyFilters() {
         const hasIssue = edge.data('issue');
         const inCycle = edge.data('inCycle');
         const edgeType = edge.data('edgeType');
+        const hiddenCoupling = edge.data('hiddenCoupling');
 
         // Skip filtering for parent/item edges
         if (edgeType === 'parent' || edgeType === 'item-dep') {
             edge.style('display', 'element');
+            return;
+        }
+
+        if (hiddenCoupling && !showHiddenCoupling) {
+            edge.style('display', 'none');
             return;
         }
 
@@ -165,7 +176,14 @@ export function setupFilters() {
 
     document.getElementById('show-issues-only')?.addEventListener('change', applyFilters);
     document.getElementById('show-cycles-only')?.addEventListener('change', applyFilters);
-    document.getElementById('hide-external')?.addEventListener('change', applyFilters);
+    document.getElementById('hide-external')?.addEventListener('change', () => {
+        applyFilters();
+        refresh3dGraph();
+    });
+    document.getElementById('show-hidden-coupling')?.addEventListener('change', () => {
+        applyFilters();
+        refresh3dGraph();
+    });
 
     document.getElementById('reset-filters')?.addEventListener('click', () => {
         document.querySelectorAll('#strength-filters input, #volatility-filters input').forEach(cb => cb.checked = true);
@@ -176,10 +194,12 @@ export function setupFilters() {
         document.getElementById('balance-max').value = 100;
         document.getElementById('show-issues-only').checked = false;
         document.getElementById('show-cycles-only').checked = false;
+        document.getElementById('show-hidden-coupling').checked = true;
         document.getElementById('hide-external').checked = true; // Default: hide external
 
         state.cy.elements().removeClass('hidden highlighted dimmed dependency-source dependency-target search-match');
         applyFilters();
+        refresh3dGraph();
     });
 
     document.getElementById('fit-graph')?.addEventListener('click', () => state.cy?.fit(undefined, 50));
@@ -322,7 +342,7 @@ export function setupCenterModeToggle() {
 // =====================================================
 
 export function setupLegendToggle() {
-    const toggle = document.getElementById('legend-toggle');
+    const toggle = document.getElementById('legend-toggle') || document.getElementById('toggle-legend');
     const content = document.getElementById('legend-content');
     if (toggle && content) {
         toggle.addEventListener('click', () => {
@@ -331,6 +351,50 @@ export function setupLegendToggle() {
             toggle.textContent = isHidden ? '▼' : '▶';
         });
     }
+}
+
+// =====================================================
+// Trust Panel
+// =====================================================
+
+export function populateTrustPanel() {
+    const count = document.getElementById('blind-spot-count');
+    const content = document.getElementById('trust-panel-content');
+    if (!content || !state.graphData) return;
+
+    const manifest = state.graphData.not_analyzed || {};
+    const blindSpots = manifest.blind_spots || [];
+    const notes = manifest.notes || [];
+
+    if (count) count.textContent = blindSpots.length + notes.length;
+
+    content.innerHTML = `
+        ${notes.length > 0 ? `
+            <div class="trust-notes">
+                ${notes.map(note => `<div class="trust-note">${escapeHtml(note)}</div>`).join('')}
+            </div>
+        ` : ''}
+        <div class="blind-spot-list">
+            ${blindSpots.map(spot => `
+                <div class="blind-spot-item">
+                    <div class="blind-spot-area">${escapeHtml(spot.area)}</div>
+                    <div class="blind-spot-description">${escapeHtml(spot.description)}</div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+export function setupTrustPanelToggle() {
+    const toggle = document.getElementById('toggle-trust-panel');
+    const content = document.getElementById('trust-panel-content');
+    if (!toggle || !content) return;
+
+    toggle.addEventListener('click', () => {
+        const hidden = content.style.display === 'none';
+        content.style.display = hidden ? 'block' : 'none';
+        toggle.textContent = hidden ? 'Hide blind spots' : 'Show blind spots';
+    });
 }
 
 // =====================================================
@@ -353,6 +417,9 @@ export function showNodeDetails(data) {
     const items = data.items || fullNode?.items || [];
     const inCycle = data.in_cycle || fullNode?.in_cycle || false;
     const volatility = data.volatility || metrics.volatility || 'Medium';
+    const subdomain = data.subdomain || fullNode?.subdomain;
+    const expectedVolatility = data.expected_volatility || fullNode?.expected_volatility;
+    const flags = data.flags || fullNode?.flags || [];
 
     // Group items by kind
     const types = items.filter(i => i.kind === 'type' || i.kind === 'struct' || i.kind === 'enum');
@@ -414,6 +481,19 @@ export function showNodeDetails(data) {
             <span class="detail-label">Volatility:</span>
             <span class="volatility-badge ${getVolatilityClass(volatility)}">${volatility}</span>
         </div>
+        ${subdomain ? `
+        <div class="detail-row">
+            <span class="detail-label">Subdomain:</span>
+            <span class="subdomain-badge ${subdomain.toLowerCase()}">${escapeHtml(subdomain)}</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Expected Volatility:</span>
+            <span>${escapeHtml(expectedVolatility || 'Unknown')}</span>
+        </div>
+        ` : ''}
+        ${flags.includes('AccidentalVolatility') ? `
+            <div class="warning-banner medium">Accidental volatility: stable subdomain with high git churn</div>
+        ` : ''}
         <div class="detail-row">
             <span class="detail-label">Outgoing:</span>
             <span>${data.couplings_out || 0}</span>
@@ -586,6 +666,12 @@ export function showEdgeDetails(data) {
             <span class="detail-label">Target:</span>
             <span>${escapeHtml(data.target)}</span>
         </div>
+        ${data.hiddenCoupling || data.edgeType === 'hidden-coupling' ? `
+        <div class="detail-row">
+            <span class="detail-label">Co-change:</span>
+            <span>${data.coChangeCount || 0} commits, ${Math.round((data.couplingRatio || 0) * 100)}%</span>
+        </div>
+        ` : ''}
         <hr class="detail-divider">
         <div class="detail-row">
             <span class="detail-label">${t('strength')}:</span>
