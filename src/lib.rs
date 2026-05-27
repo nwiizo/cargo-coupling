@@ -40,6 +40,7 @@ pub mod analyzer;
 pub mod balance;
 pub mod cli_output;
 pub mod config;
+pub mod history;
 pub mod metrics;
 pub mod report;
 pub mod volatility;
@@ -59,6 +60,9 @@ pub use balance::{
 pub use config::{
     AnalysisConfig, CompiledConfig, ConfigError, CouplingConfig, ThresholdsConfig,
     VolatilityConfig, load_compiled_config, load_config,
+};
+pub use history::{
+    HistoryError, HistoryPoint, HistoryReport, SkippedRevision, analyze_history, sample_evenly,
 };
 pub use metrics::{
     BalanceClassification, BalanceCounts, CircularDependencySummary, CouplingMetrics,

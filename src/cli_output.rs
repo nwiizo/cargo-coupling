@@ -14,6 +14,7 @@ use serde::Serialize;
 use crate::balance::{
     BalanceScore, HealthGrade, IssueThresholds, Severity, analyze_project_balance_with_thresholds,
 };
+use crate::history::HistoryReport;
 use crate::metrics::{Distance, ProjectMetrics};
 
 // ============================================================================
@@ -1432,9 +1433,211 @@ pub fn generate_trace_output<W: Write>(
     Ok(true)
 }
 
+// ============================================================================
+// History: Time-Series Coupling Health
+// ============================================================================
+
+/// A single timeline point in JSON format.
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonHistoryPoint {
+    pub commit: String,
+    pub date: String,
+    pub grade: char,
+    pub average_score: f64,
+    pub total_couplings: usize,
+    pub module_count: usize,
+    pub critical_issues: usize,
+    pub high_issues: usize,
+}
+
+/// A skipped revision in JSON format.
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonSkippedRevision {
+    pub commit: String,
+    pub date: String,
+    pub reason: String,
+}
+
+/// Complete history timeline in JSON format.
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonHistory {
+    pub months: usize,
+    pub points: Vec<JsonHistoryPoint>,
+    pub skipped: Vec<JsonSkippedRevision>,
+}
+
+/// Render a history report as text or JSON.
+pub fn generate_history_output<W: Write>(
+    report: &HistoryReport,
+    json: bool,
+    writer: &mut W,
+) -> io::Result<()> {
+    if json {
+        let output = JsonHistory {
+            months: report.months,
+            points: report
+                .points
+                .iter()
+                .map(|p| JsonHistoryPoint {
+                    commit: p.commit.clone(),
+                    date: p.date.clone(),
+                    grade: p.grade.letter(),
+                    average_score: p.average_score,
+                    total_couplings: p.total_couplings,
+                    module_count: p.module_count,
+                    critical_issues: p.critical,
+                    high_issues: p.high,
+                })
+                .collect(),
+            skipped: report
+                .skipped
+                .iter()
+                .map(|s| JsonSkippedRevision {
+                    commit: s.commit.clone(),
+                    date: s.date.clone(),
+                    reason: s.reason.clone(),
+                })
+                .collect(),
+        };
+        let text = serde_json::to_string_pretty(&output).map_err(io::Error::other)?;
+        writeln!(writer, "{}", text)?;
+        return Ok(());
+    }
+
+    writeln!(
+        writer,
+        "Coupling History (last {} months, {} sample(s))\n",
+        report.months,
+        report.points.len()
+    )?;
+
+    if report.points.is_empty() {
+        writeln!(writer, "  No analyzable revisions in the requested window.")?;
+    } else {
+        writeln!(
+            writer,
+            "  date        commit   grade  avg     couplings  critical"
+        )?;
+        for p in &report.points {
+            writeln!(
+                writer,
+                "  {:<11} {:<8} {:<6} {:<7.3} {:<10} {}",
+                p.date,
+                p.commit,
+                p.grade.letter(),
+                p.average_score,
+                p.total_couplings,
+                p.critical,
+            )?;
+        }
+
+        if let Some((first, last)) = report.endpoints() {
+            let direction = describe_trend(first.average_score, last.average_score);
+            writeln!(
+                writer,
+                "\nTrend: grade {} -> {}, avg {:.3} -> {:.3} ({})",
+                first.grade.letter(),
+                last.grade.letter(),
+                first.average_score,
+                last.average_score,
+                direction,
+            )?;
+        }
+    }
+
+    if !report.skipped.is_empty() {
+        writeln!(writer, "\nSkipped {} revision(s):", report.skipped.len())?;
+        for s in &report.skipped {
+            writeln!(writer, "  {} ({}): {}", s.commit, s.date, s.reason)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Describe the direction of change between two scores.
+fn describe_trend(from: f64, to: f64) -> &'static str {
+    let delta = to - from;
+    if delta > 0.01 {
+        "improving"
+    } else if delta < -0.01 {
+        "regressing"
+    } else {
+        "stable"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::{HistoryPoint, HistoryReport};
+
+    fn sample_point(date: &str, grade: HealthGrade, score: f64) -> HistoryPoint {
+        HistoryPoint {
+            commit: "abc1234".to_string(),
+            date: date.to_string(),
+            grade,
+            average_score: score,
+            total_couplings: 100,
+            module_count: 12,
+            critical: 0,
+            high: 1,
+        }
+    }
+
+    #[test]
+    fn test_describe_trend() {
+        assert_eq!(describe_trend(0.70, 0.85), "improving");
+        assert_eq!(describe_trend(0.85, 0.70), "regressing");
+        assert_eq!(describe_trend(0.80, 0.805), "stable");
+    }
+
+    #[test]
+    fn test_history_text_output_shows_trend() {
+        let report = HistoryReport {
+            months: 6,
+            points: vec![
+                sample_point("2026-01-01", HealthGrade::C, 0.60),
+                sample_point("2026-05-01", HealthGrade::A, 0.85),
+            ],
+            skipped: vec![],
+        };
+        let mut buf = Vec::new();
+        generate_history_output(&report, false, &mut buf).unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("Coupling History (last 6 months, 2 sample(s))"));
+        assert!(text.contains("Trend: grade C -> A"));
+        assert!(text.contains("improving"));
+    }
+
+    #[test]
+    fn test_history_json_output_is_valid() {
+        let report = HistoryReport {
+            months: 12,
+            points: vec![sample_point("2026-05-01", HealthGrade::B, 0.75)],
+            skipped: vec![],
+        };
+        let mut buf = Vec::new();
+        generate_history_output(&report, true, &mut buf).unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["months"], 12);
+        assert_eq!(parsed["points"][0]["grade"], "B");
+        assert_eq!(parsed["points"][0]["module_count"], 12);
+    }
+
+    #[test]
+    fn test_history_empty_output() {
+        let report = HistoryReport {
+            months: 6,
+            points: vec![],
+            skipped: vec![],
+        };
+        let mut buf = Vec::new();
+        generate_history_output(&report, false, &mut buf).unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("No analyzable revisions"));
+    }
 
     #[test]
     fn test_parse_grade() {

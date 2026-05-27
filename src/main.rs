@@ -16,10 +16,11 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 
 use cargo_coupling::{
-    CompiledConfig, IssueThresholds, VolatilityAnalyzer, analyze_workspace_with_config,
+    CompiledConfig, IssueThresholds, VolatilityAnalyzer, analyze_history,
+    analyze_workspace_with_config,
     cli_output::{
-        CheckConfig, generate_check_output, generate_hotspots_output, generate_impact_output,
-        generate_json_output, parse_grade, parse_severity,
+        CheckConfig, generate_check_output, generate_history_output, generate_hotspots_output,
+        generate_impact_output, generate_json_output, parse_grade, parse_severity,
     },
     generate_ai_output_with_thresholds, generate_report_with_thresholds,
     generate_summary_with_thresholds, load_compiled_config,
@@ -127,6 +128,10 @@ struct Args {
     #[arg(long, value_name = "ITEM")]
     trace: Option<String>,
 
+    /// Show coupling health over git history (default: 12 samples). Window set by --git-months
+    #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "12")]
+    history: Option<usize>,
+
     /// Run quality gate check (returns non-zero exit code on failure)
     #[arg(long)]
     check: bool,
@@ -228,6 +233,52 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    // Create custom thresholds - CLI args override config, which overrides defaults.
+    // Computed early so both the history timeline and the snapshot analysis share them.
+    let thresholds = IssueThresholds {
+        max_dependencies: args.max_deps.unwrap_or(config.thresholds.max_dependencies),
+        max_dependents: args
+            .max_dependents
+            .unwrap_or(config.thresholds.max_dependents),
+        strict_mode: !args.all, // Default is strict (hide Low), --all shows everything
+        japanese: args.japanese,
+        exclude_tests: config.exclude_tests,
+        prelude_module_count: config.prelude_module_count(),
+        ..IssueThresholds::default()
+    };
+
+    if args.verbose {
+        eprintln!(
+            "Thresholds: max_deps={}, max_dependents={}",
+            thresholds.max_dependencies, thresholds.max_dependents
+        );
+    }
+
+    // --history: time-series coupling health across git revisions. Independent of
+    // the snapshot analysis below, so handle it here and return early.
+    if let Some(max_points) = args.history {
+        eprintln!(
+            "Analyzing coupling history ({} months, up to {} samples)...",
+            args.git_months, max_points
+        );
+
+        let report = analyze_history(
+            &args.path,
+            &config,
+            &thresholds,
+            args.git_months,
+            max_points,
+        )
+        .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
+
+        let mut writer: Box<dyn Write> = match &args.output {
+            Some(path) => Box::new(BufWriter::new(File::create(path)?)),
+            None => Box::new(stdout()),
+        };
+        generate_history_output(&report, args.json, &mut writer)?;
+        return Ok(());
+    }
+
     // Print analysis header
     eprintln!("Analyzing project at '{}'...", args.path.display());
 
@@ -318,26 +369,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "Analysis complete: {} files, {} modules\n",
             metrics.total_files,
             metrics.module_count()
-        );
-    }
-
-    // Create custom thresholds - CLI args override config, which overrides defaults
-    let thresholds = IssueThresholds {
-        max_dependencies: args.max_deps.unwrap_or(config.thresholds.max_dependencies),
-        max_dependents: args
-            .max_dependents
-            .unwrap_or(config.thresholds.max_dependents),
-        strict_mode: !args.all, // Default is strict (hide Low), --all shows everything
-        japanese: args.japanese,
-        exclude_tests: config.exclude_tests,
-        prelude_module_count: config.prelude_module_count(),
-        ..IssueThresholds::default()
-    };
-
-    if args.verbose {
-        eprintln!(
-            "Thresholds: max_deps={}, max_dependents={}",
-            thresholds.max_dependencies, thresholds.max_dependents
         );
     }
 

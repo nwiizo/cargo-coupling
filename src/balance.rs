@@ -922,6 +922,23 @@ pub enum HealthGrade {
     F, // Immediate action required - critical issues blocking development
 }
 
+impl HealthGrade {
+    /// Single-letter representation (S, A, B, C, D, F).
+    ///
+    /// Used for compact, machine-readable output such as the history
+    /// timeline where the verbose `Display` form is too noisy.
+    pub fn letter(&self) -> char {
+        match self {
+            HealthGrade::S => 'S',
+            HealthGrade::A => 'A',
+            HealthGrade::B => 'B',
+            HealthGrade::C => 'C',
+            HealthGrade::D => 'D',
+            HealthGrade::F => 'F',
+        }
+    }
+}
+
 impl std::fmt::Display for HealthGrade {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
