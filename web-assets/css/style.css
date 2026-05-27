@@ -1307,6 +1307,10 @@ body.resizing-sidebar * {
     font-size: 0.8125rem;
     line-height: 1.6;
     border-left: 3px solid transparent;
+    /* Grow to the widest line so the whole block shares one horizontal scrollbar
+       (instead of a per-line scrollbar that renders as a grey bar over the code). */
+    width: max-content;
+    min-width: 100%;
 }
 
 .source-line.highlight {
@@ -1339,7 +1343,6 @@ body.resizing-sidebar * {
     flex: 1;
     padding: 0 1rem;
     white-space: pre;
-    overflow-x: auto;
     color: #e6edf3;
     tab-size: 4;
 }
