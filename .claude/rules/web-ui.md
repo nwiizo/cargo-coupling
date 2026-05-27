@@ -14,6 +14,7 @@
 | `graph.js` | Cytoscape setup, styles, layouts |
 | `ui.js` | UI components, filters, search |
 | `item-graph.js` | Item-level dependency graph |
+| `timeline.js` | History timeline chart and auto-play controls |
 | `main.js` | Entry point |
 
 ## Common Issues
@@ -27,6 +28,7 @@
 | Endpoint | Purpose |
 |----------|---------|
 | `/api/graph` | Full graph data |
+| `/api/history` | Precomputed git-history health timeline |
 | `/api/source` | Source code for file |
 | `/api/module` | Single module details |
 

@@ -107,6 +107,7 @@ body {
     font-size: 1rem;
 }
 
+.health-grade.S { background: #14b8a6; color: #000; }
 .health-grade.A { background: var(--accent-green); color: #000; }
 .health-grade.B { background: #4ade80; color: #000; }
 .health-grade.C { background: var(--accent-yellow); color: #000; }
@@ -393,6 +394,149 @@ body.resizing-sidebar * {
 .placeholder {
     color: var(--text-secondary);
     font-style: italic;
+}
+
+/* History Timeline */
+.timeline-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.timeline-header h2 {
+    margin-bottom: 0;
+}
+
+.timeline-play-btn {
+    flex: 0 0 auto;
+    min-width: 4.5rem;
+    padding: 0.375rem 0.625rem;
+    font-size: 0.75rem;
+}
+
+.timeline-play-btn.active {
+    border-color: var(--accent-blue);
+    color: var(--text-primary);
+    background: rgba(59, 130, 246, 0.25);
+}
+
+.timeline-play-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.timeline-chart {
+    min-height: 150px;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    background: rgba(15, 23, 42, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.timeline-svg {
+    display: block;
+    width: 100%;
+    height: 150px;
+}
+
+.timeline-grid-line {
+    stroke: rgba(148, 163, 184, 0.18);
+    stroke-width: 1;
+}
+
+.timeline-line {
+    fill: none;
+    stroke: var(--accent-blue);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.timeline-playhead {
+    stroke: rgba(248, 250, 252, 0.75);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 4;
+}
+
+.timeline-point {
+    fill: var(--bg-secondary);
+    stroke: var(--accent-blue);
+    stroke-width: 2;
+    cursor: pointer;
+    transition: r 0.15s ease, fill 0.15s ease, stroke 0.15s ease;
+}
+
+.timeline-point:hover,
+.timeline-point.active {
+    fill: var(--text-primary);
+    stroke: var(--accent-yellow);
+}
+
+.timeline-point.grade-S,
+.timeline-point.grade-A,
+.timeline-point.grade-B {
+    stroke: var(--accent-green);
+}
+
+.timeline-point.grade-C,
+.timeline-point.grade-D {
+    stroke: var(--accent-yellow);
+}
+
+.timeline-point.grade-F {
+    stroke: var(--accent-red);
+}
+
+.timeline-scrubber {
+    width: 100%;
+    accent-color: var(--accent-blue);
+    margin-bottom: 0.75rem;
+}
+
+.timeline-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+}
+
+.timeline-stat {
+    min-width: 0;
+    padding: 0.5rem;
+    background: var(--bg-tertiary);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 0.375rem;
+}
+
+.timeline-stat span {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: var(--text-secondary);
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.timeline-stat strong {
+    display: block;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.timeline-stat .health-grade {
+    display: inline-block;
+    width: fit-content;
+    padding: 0.125rem 0.5rem;
+    font-family: inherit;
+    font-size: 0.875rem;
 }
 
 .detail-section {

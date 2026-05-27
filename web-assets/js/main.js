@@ -42,6 +42,7 @@ import {
 } from './features.js';
 import { graphQueue, runLayoutAsync, debounce } from './graph-queue.js';
 import { getInitialSelection, updateUrl, initUrlRouter } from './url-router.js';
+import { initTimeline } from './timeline.js';
 
 // =====================================================
 // State Management
@@ -70,6 +71,7 @@ async function init() {
         initGraph(data);
         initUI(data);
         initJobFeatures();
+        await initTimeline();
 
         // Initialize URL router for browser navigation
         initUrlRouter(handleUrlNavigation);
