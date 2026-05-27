@@ -23,6 +23,7 @@ supporting = [
     "src/cli_output.rs",
     "src/history.rs",
     "src/diff.rs",
+    "src/external.rs",
     "src/manifest.rs",
     "src/volatility.rs",
 ]

@@ -753,17 +753,19 @@ pub fn analyze_project_balance_with_thresholds(
     let mut all_issues = Vec::new();
     let mut internal_balance_scores: Vec<BalanceScore> = Vec::new();
     let mut all_balance_scores: Vec<BalanceScore> = Vec::new();
+    let target_subdomains = build_target_subdomain_map(metrics);
 
     // Analyze individual couplings
     // Only INTERNAL couplings affect the health score
     for coupling in &metrics.couplings {
-        let score = BalanceScore::calculate(coupling);
+        let effective_coupling = coupling_with_essential_volatility(coupling, &target_subdomains);
+        let score = BalanceScore::calculate(&effective_coupling);
         all_balance_scores.push(score.clone());
 
         // Only count internal couplings for scoring
-        if coupling.distance != Distance::DifferentCrate {
+        if effective_coupling.distance != Distance::DifferentCrate {
             internal_balance_scores.push(score);
-            let issues = identify_issues_with_thresholds(coupling, &thresholds);
+            let issues = identify_issues_with_thresholds(&effective_coupling, &thresholds);
             all_issues.extend(issues);
         }
     }
@@ -1627,12 +1629,17 @@ impl ProjectBalanceReport {
 /// Only considers internal couplings (not external crate dependencies)
 /// since external dependencies are outside the developer's control.
 pub fn calculate_project_score(metrics: &ProjectMetrics) -> f64 {
+    let target_subdomains = build_target_subdomain_map(metrics);
+
     // Filter to internal couplings only
     let internal_scores: Vec<f64> = metrics
         .couplings
         .iter()
         .filter(|c| c.distance != Distance::DifferentCrate)
-        .map(|c| BalanceScore::calculate(c).score)
+        .map(|c| {
+            let effective_coupling = coupling_with_essential_volatility(c, &target_subdomains);
+            BalanceScore::calculate(&effective_coupling).score
+        })
         .collect();
 
     if internal_scores.is_empty() {
@@ -1640,6 +1647,83 @@ pub fn calculate_project_score(metrics: &ProjectMetrics) -> f64 {
     }
 
     internal_scores.iter().sum::<f64>() / internal_scores.len() as f64
+}
+
+fn build_target_subdomain_map(metrics: &ProjectMetrics) -> HashMap<String, Option<Subdomain>> {
+    let mut targets = HashMap::new();
+
+    for (module_key, module) in &metrics.modules {
+        let Some(subdomain) = module.subdomain else {
+            continue;
+        };
+
+        insert_subdomain_alias(&mut targets, module_key, subdomain);
+        insert_subdomain_alias(&mut targets, &module.name, subdomain);
+
+        if let Some(short_name) = module_key.rsplit("::").next() {
+            insert_subdomain_alias(&mut targets, short_name, subdomain);
+        }
+        if let Some(short_name) = module.name.rsplit("::").next() {
+            insert_subdomain_alias(&mut targets, short_name, subdomain);
+        }
+        if let Some(file_stem) = module.path.file_stem().and_then(|stem| stem.to_str()) {
+            insert_subdomain_alias(&mut targets, file_stem, subdomain);
+        }
+
+        for type_name in module.type_definitions.keys() {
+            insert_subdomain_alias(&mut targets, type_name, subdomain);
+        }
+        for function_name in module.function_definitions.keys() {
+            insert_subdomain_alias(&mut targets, function_name, subdomain);
+        }
+    }
+
+    targets
+}
+
+fn insert_subdomain_alias(
+    targets: &mut HashMap<String, Option<Subdomain>>,
+    alias: &str,
+    subdomain: Subdomain,
+) {
+    if !alias.is_empty() {
+        targets
+            .entry(alias.to_string())
+            .and_modify(|existing| {
+                if *existing != Some(subdomain) {
+                    *existing = None;
+                }
+            })
+            .or_insert(Some(subdomain));
+    }
+}
+
+fn coupling_with_essential_volatility(
+    coupling: &CouplingMetrics,
+    target_subdomains: &HashMap<String, Option<Subdomain>>,
+) -> CouplingMetrics {
+    let Some(subdomain) = target_subdomain_for_coupling(&coupling.target, target_subdomains) else {
+        return coupling.clone();
+    };
+
+    let mut effective = coupling.clone();
+    effective.volatility = subdomain.expected_volatility();
+    effective
+}
+
+fn target_subdomain_for_coupling(
+    target: &str,
+    target_subdomains: &HashMap<String, Option<Subdomain>>,
+) -> Option<Subdomain> {
+    target_subdomains
+        .get(target)
+        .copied()
+        .flatten()
+        .or_else(|| {
+            target
+                .rsplit("::")
+                .find_map(|part| target_subdomains.get(part).copied().flatten())
+        })
 }
 
 // ===== Labels and Formatting Helpers =====
@@ -1688,7 +1772,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    use crate::metrics::ModuleMetrics;
+    use crate::metrics::{ModuleMetrics, Visibility};
     use crate::volatility::TemporalCoupling;
 
     fn make_coupling(
@@ -1966,7 +2050,7 @@ mod tests {
     }
 
     #[test]
-    fn test_grade_rationale_names_top_issue_and_volatility_driver() {
+    fn test_supporting_subdomain_volatility_is_authoritative_for_balance_and_risk() {
         let mut metrics = ProjectMetrics::new();
         let mut stable_module =
             ModuleMetrics::new(PathBuf::from("src/stable.rs"), "stable".to_string());
@@ -1982,6 +2066,130 @@ mod tests {
             IntegrationStrength::Intrusive,
             Distance::DifferentModule,
             Volatility::High,
+        ));
+
+        let report = analyze_project_balance(&metrics);
+
+        assert_eq!(report.average_score, 0.5);
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| issue.issue_type == IssueType::CascadingChangeRisk),
+            "supporting subdomain's low essential volatility should suppress cascading risk"
+        );
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.issue_type == IssueType::AccidentalVolatility),
+            "raw churn should remain visible as accidental volatility"
+        );
+    }
+
+    #[test]
+    fn test_core_subdomain_volatility_is_authoritative_for_balance_and_risk() {
+        let mut metrics = ProjectMetrics::new();
+        let mut core_module = ModuleMetrics::new(PathBuf::from("src/core.rs"), "core".to_string());
+        core_module.subdomain = Some(Subdomain::Core);
+        metrics.add_module(core_module);
+        metrics.add_coupling(CouplingMetrics::new(
+            "caller".to_string(),
+            "core".to_string(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::Low,
+        ));
+
+        let report = analyze_project_balance(&metrics);
+
+        assert_eq!(report.average_score, 0.0);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.issue_type == IssueType::CascadingChangeRisk),
+            "core subdomain's high essential volatility should drive cascading risk"
+        );
+    }
+
+    #[test]
+    fn test_unclassified_git_churn_still_drives_balance_and_cascading_risk() {
+        let mut metrics = ProjectMetrics::new();
+        metrics.add_module(ModuleMetrics::new(
+            PathBuf::from("src/stable.rs"),
+            "stable".to_string(),
+        ));
+        metrics.add_coupling(CouplingMetrics::new(
+            "caller".to_string(),
+            "stable".to_string(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::High,
+        ));
+
+        let report = analyze_project_balance(&metrics);
+
+        assert_eq!(report.average_score, 0.0);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.issue_type == IssueType::CascadingChangeRisk),
+            "unclassified modules should keep existing git-churn volatility behavior"
+        );
+    }
+
+    #[test]
+    fn test_ambiguous_item_alias_does_not_override_git_churn() {
+        let mut metrics = ProjectMetrics::new();
+        let mut supporting_module =
+            ModuleMetrics::new(PathBuf::from("src/supporting.rs"), "supporting".to_string());
+        supporting_module.subdomain = Some(Subdomain::Supporting);
+        supporting_module.add_type_definition("SharedName".to_string(), Visibility::Public, false);
+        metrics.add_module(supporting_module);
+
+        let mut core_module = ModuleMetrics::new(PathBuf::from("src/core.rs"), "core".to_string());
+        core_module.subdomain = Some(Subdomain::Core);
+        core_module.add_type_definition("SharedName".to_string(), Visibility::Public, false);
+        metrics.add_module(core_module);
+
+        metrics.add_coupling(CouplingMetrics::new(
+            "caller".to_string(),
+            "SharedName".to_string(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::High,
+        ));
+
+        let report = analyze_project_balance(&metrics);
+
+        assert_eq!(report.average_score, 0.0);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.issue_type == IssueType::CascadingChangeRisk),
+            "ambiguous item aliases should preserve existing git-churn volatility"
+        );
+    }
+
+    #[test]
+    fn test_grade_rationale_names_top_issue_and_volatility_driver() {
+        let mut metrics = ProjectMetrics::new();
+        let mut core_module = ModuleMetrics::new(PathBuf::from("src/core.rs"), "core".to_string());
+        core_module.subdomain = Some(Subdomain::Core);
+        metrics.add_module(core_module);
+        metrics.file_changes.insert("src/core.rs".to_string(), 1);
+        metrics.file_changes.insert("src/lib.rs".to_string(), 1);
+        metrics.file_changes.insert("src/config.rs".to_string(), 2);
+        metrics.file_changes.insert("src/report.rs".to_string(), 3);
+        metrics.add_coupling(CouplingMetrics::new(
+            "caller".to_string(),
+            "core".to_string(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::Low,
         ));
 
         let report = analyze_project_balance(&metrics);
