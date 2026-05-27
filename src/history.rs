@@ -1,20 +1,20 @@
 //! Time-series coupling analysis.
 //!
-//! Re-runs structural balance analysis at past git revisions using disposable
-//! `git worktree`s, producing a chronological health timeline. This is the data
-//! foundation for *observing* how a codebase's coupling evolves over time, rather
-//! than inspecting a single snapshot.
+//! Re-runs snapshot-equivalent balance analysis at past git revisions using
+//! disposable `git worktree`s, producing a chronological health timeline. This is
+//! the data foundation for *observing* how a codebase's coupling evolves over
+//! time, rather than inspecting a single snapshot.
 //!
-//! Each sampled revision is analyzed structurally only (AST + config overrides);
-//! git-churn volatility is intentionally skipped so that points are comparable and
-//! fast to compute. The score therefore reflects structural balance at that commit.
+//! Each sampled revision is analyzed with AST structure, git-churn volatility,
+//! and config volatility/subdomain overrides so the timeline score uses the same
+//! methodology as the snapshot report for that revision.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::balance::{HealthGrade, Severity, analyze_project_balance_with_thresholds};
 use crate::config::CompiledConfig;
-use crate::{IssueThresholds, analyze_workspace_with_config};
+use crate::{IssueThresholds, VolatilityAnalyzer, analyze_workspace_with_config};
 
 /// One sampled point in the coupling timeline.
 #[derive(Debug, Clone)]
@@ -101,7 +101,7 @@ impl From<std::io::Error> for HistoryError {
 /// Analyze the coupling health of a project across its recent git history.
 ///
 /// Samples up to `max_points` commits evenly across the last `months` months,
-/// re-running structural analysis at each via a disposable worktree.
+/// re-running snapshot-equivalent analysis at each via a disposable worktree.
 pub fn analyze_history(
     path: &Path,
     config: &CompiledConfig,
@@ -124,9 +124,19 @@ pub fn analyze_history(
         ..Default::default()
     };
 
+    let mut config = config.clone();
+
     for (idx, &i) in sampled.iter().enumerate() {
         let (commit, date) = &commits[i];
-        match analyze_revision(&repo_root, &subpath, commit, config, thresholds, idx) {
+        match analyze_revision(
+            &repo_root,
+            &subpath,
+            commit,
+            &mut config,
+            thresholds,
+            months,
+            idx,
+        ) {
             Ok(point) => report.points.push(HistoryPoint {
                 date: date.clone(),
                 ..point
@@ -210,8 +220,9 @@ fn analyze_revision(
     repo_root: &Path,
     subpath: &Path,
     commit: &str,
-    config: &CompiledConfig,
+    config: &mut CompiledConfig,
     thresholds: &IssueThresholds,
+    months: usize,
     seq: usize,
 ) -> Result<HistoryPoint, String> {
     let worktree = Worktree::add(repo_root, commit, seq).map_err(|e| e.to_string())?;
@@ -221,11 +232,25 @@ fn analyze_revision(
         return Err("analysis path does not exist at this revision".to_string());
     }
 
-    let metrics = analyze_workspace_with_config(&analysis_path, config)
+    let mut metrics = analyze_workspace_with_config(&analysis_path, config)
         .map_err(|e| format!("analysis failed: {}", e))?;
 
     if metrics.modules.is_empty() {
         return Err("no modules found at this revision".to_string());
+    }
+
+    let mut volatility = VolatilityAnalyzer::new(months);
+    if volatility.analyze(&worktree.dir).is_ok() {
+        metrics.file_changes = volatility.file_changes;
+        metrics.update_volatility_from_git();
+    }
+
+    if config.has_volatility_overrides() || config.has_subdomain_config() {
+        for coupling in &mut metrics.couplings {
+            if let Some(override_vol) = config.get_volatility_override(&coupling.target) {
+                coupling.volatility = override_vol;
+            }
+        }
     }
 
     let report = analyze_project_balance_with_thresholds(&metrics, thresholds);

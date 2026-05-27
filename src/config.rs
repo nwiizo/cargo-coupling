@@ -208,7 +208,7 @@ impl std::fmt::Display for Subdomain {
 }
 
 /// Compiled configuration with glob patterns
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CompiledConfig {
     // === Analysis settings ===
     /// Whether to exclude test code from analysis

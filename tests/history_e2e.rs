@@ -9,7 +9,10 @@
 use std::path::Path;
 use std::process::Command;
 
-use cargo_coupling::{CompiledConfig, IssueThresholds, analyze_history};
+use cargo_coupling::{
+    CompiledConfig, IssueThresholds, VolatilityAnalyzer, analyze_history,
+    analyze_project_balance_with_thresholds, analyze_workspace_with_config,
+};
 
 /// Run a git command in `dir`, panicking with context on failure.
 fn git(dir: &Path, args: &[&str]) {
@@ -64,6 +67,16 @@ fn history_builds_timeline_from_a_real_git_repo() {
     git(root, &["add", "-A"]);
     git(root, &["commit", "-q", "-m", "extend coupling"]);
 
+    // Repeated changes make git volatility affect the latest snapshot score.
+    for i in 0..11 {
+        write(
+            &src.join("a.rs"),
+            &format!("pub struct A;\npub fn make() -> A {{\n    A\n}}\n// change {i}\n"),
+        );
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-q", "-m", "touch volatile module"]);
+    }
+
     let config = CompiledConfig::empty();
     let thresholds = IssueThresholds::default();
     let report = analyze_history(&src, &config, &thresholds, 120, 5)
@@ -117,6 +130,25 @@ fn history_builds_timeline_from_a_real_git_repo() {
         let last = report.points.last().unwrap();
         assert!(first.date <= last.date, "points must be chronological");
     }
+
+    let mut snapshot_metrics = analyze_workspace_with_config(&src, &config).unwrap();
+    let mut volatility = VolatilityAnalyzer::new(120);
+    volatility.analyze(root).unwrap();
+    snapshot_metrics.file_changes = volatility.file_changes;
+    snapshot_metrics.update_volatility_from_git();
+    let snapshot_report = analyze_project_balance_with_thresholds(&snapshot_metrics, &thresholds);
+    let latest = report.points.last().unwrap();
+
+    assert_eq!(
+        latest.grade, snapshot_report.health_grade,
+        "latest history grade should match snapshot methodology"
+    );
+    assert!(
+        (latest.average_score - snapshot_report.average_score).abs() < f64::EPSILON,
+        "latest history score {} should match snapshot score {}",
+        latest.average_score,
+        snapshot_report.average_score
+    );
 }
 
 #[test]

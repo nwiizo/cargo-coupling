@@ -166,16 +166,29 @@ struct Args {
 }
 
 fn main() {
-    if let Err(e) = run() {
-        eprintln!("Error: {}", e);
-        process::exit(1);
+    match run() {
+        Ok(exit_code) => process::exit(exit_code),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            process::exit(1);
+        }
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     let Commands::Coupling(args) = cli.command;
+
+    run_coupling(args)
+}
+
+fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
+    let check_config = if args.check {
+        Some(check_config_from_args(&args)?)
+    } else {
+        None
+    };
 
     // Detect available CPU cores
     let available_cores = std::thread::available_parallelism()
@@ -257,6 +270,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // --history: time-series coupling health across git revisions. Independent of
     // the snapshot analysis below, so handle it here and return early.
     if let Some(max_points) = args.history {
+        if max_points == 0 {
+            return Err(invalid_cli_input("--history must be greater than 0").into());
+        }
+        if args.no_git {
+            eprintln!(
+                "Warning: --history requires git history; ignoring --no-git for history analysis."
+            );
+        }
         eprintln!(
             "Analyzing coupling history ({} months, up to {} samples)...",
             args.git_months, max_points
@@ -276,7 +297,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             None => Box::new(stdout()),
         };
         generate_history_output(&report, args.json, &mut writer)?;
-        return Ok(());
+        return Ok(0);
     }
 
     // Print analysis header
@@ -389,7 +410,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         rt.block_on(start_server(metrics, thresholds, server_config))
             .map_err(|e| -> Box<dyn std::error::Error> { e })?;
 
-        return Ok(());
+        return Ok(0);
     }
 
     // Generate output
@@ -408,34 +429,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // --json: Machine-readable JSON output
     if args.json {
         generate_json_output(&metrics, &thresholds, &mut writer)?;
-        return Ok(());
+        return Ok(0);
     }
 
     // --check: Quality gate check (returns exit code)
     if args.check {
-        let check_config = CheckConfig {
-            min_grade: args.min_grade.as_ref().and_then(|s| parse_grade(s)),
-            max_critical: args.max_critical,
-            max_circular: args.max_circular,
-            fail_on: args.fail_on.as_ref().and_then(|s| parse_severity(s)),
-        };
+        let check_config = check_config.expect("--check config should be validated");
         let exit_code = generate_check_output(&metrics, &thresholds, &check_config, &mut writer)?;
-        process::exit(exit_code);
+        return Ok(exit_code);
     }
 
     // --hotspots: Show top refactoring targets
     if let Some(limit) = args.hotspots {
         generate_hotspots_output(&metrics, &thresholds, limit, args.verbose, &mut writer)?;
-        return Ok(());
+        return Ok(0);
     }
 
     // --impact: Analyze impact of a specific module
     if let Some(module_name) = &args.impact {
         let found = generate_impact_output(&metrics, module_name, &mut writer)?;
         if !found {
-            process::exit(1);
+            return Ok(1);
         }
-        return Ok(());
+        return Ok(0);
     }
 
     // --trace: Trace dependencies for a specific function/type
@@ -443,9 +459,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let found =
             cargo_coupling::cli_output::generate_trace_output(&metrics, item_name, &mut writer)?;
         if !found {
-            process::exit(1);
+            return Ok(1);
         }
-        return Ok(());
+        return Ok(0);
     }
 
     // Default modes
@@ -472,5 +488,200 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    Ok(())
+    Ok(0)
+}
+
+fn check_config_from_args(args: &Args) -> Result<CheckConfig, std::io::Error> {
+    let has_gate_flag = args.min_grade.is_some()
+        || args.max_critical.is_some()
+        || args.max_circular.is_some()
+        || args.fail_on.is_some();
+
+    if !has_gate_flag {
+        return Ok(CheckConfig::default());
+    }
+
+    let min_grade = match args.min_grade.as_deref() {
+        Some(value) => Some(parse_grade(value).ok_or_else(|| {
+            invalid_cli_input(format!(
+                "invalid --min-grade '{}'; expected S, A, B, C, D, or F",
+                value
+            ))
+        })?),
+        None => None,
+    };
+
+    let fail_on = match args.fail_on.as_deref() {
+        Some(value) => Some(parse_severity(value).ok_or_else(|| {
+            invalid_cli_input(format!(
+                "invalid --fail-on '{}'; expected critical, high, medium, or low",
+                value
+            ))
+        })?),
+        None => None,
+    };
+
+    Ok(CheckConfig {
+        min_grade,
+        max_critical: args.max_critical,
+        max_circular: args.max_circular,
+        fail_on,
+    })
+}
+
+fn invalid_cli_input(message: impl Into<String>) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, message.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cargo_coupling::{HealthGrade, Severity};
+    use std::path::Path;
+
+    fn base_args(path: PathBuf) -> Args {
+        Args {
+            path,
+            output: None,
+            summary: false,
+            ai: false,
+            git_months: 6,
+            no_git: true,
+            exclude_tests: false,
+            config: None,
+            verbose: false,
+            timing: false,
+            jobs: None,
+            max_deps: None,
+            max_dependents: None,
+            web: false,
+            port: 3000,
+            no_open: true,
+            api_endpoint: None,
+            hotspots: None,
+            impact: None,
+            trace: None,
+            history: None,
+            check: false,
+            min_grade: None,
+            max_critical: None,
+            max_circular: None,
+            fail_on: None,
+            json: false,
+            all: false,
+            japanese: false,
+        }
+    }
+
+    fn write_files(src: &Path, circular: bool) {
+        std::fs::create_dir_all(src).unwrap();
+        std::fs::write(src.join("lib.rs"), "pub mod a;\npub mod b;\n").unwrap();
+        if circular {
+            std::fs::write(src.join("a.rs"), "use crate::b::B;\npub struct A(pub B);\n").unwrap();
+            std::fs::write(src.join("b.rs"), "use crate::a::A;\npub struct B(pub A);\n").unwrap();
+        } else {
+            std::fs::write(src.join("a.rs"), "pub struct A;\n").unwrap();
+            std::fs::write(
+                src.join("b.rs"),
+                "use crate::a::A;\npub fn take(_a: A) {}\n",
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn bare_check_uses_documented_defaults() {
+        let mut args = base_args(PathBuf::from("src"));
+        args.check = true;
+
+        let config = check_config_from_args(&args).unwrap();
+
+        assert_eq!(config.min_grade, Some(HealthGrade::C));
+        assert_eq!(config.max_critical, Some(0));
+        assert_eq!(config.max_circular, Some(0));
+        assert_eq!(config.fail_on, None);
+    }
+
+    #[test]
+    fn check_with_any_gate_flag_keeps_only_specified_gates() {
+        let mut args = base_args(PathBuf::from("src"));
+        args.check = true;
+        args.fail_on = Some("high".to_string());
+
+        let config = check_config_from_args(&args).unwrap();
+
+        assert_eq!(config.min_grade, None);
+        assert_eq!(config.max_critical, None);
+        assert_eq!(config.max_circular, None);
+        assert_eq!(config.fail_on, Some(Severity::High));
+    }
+
+    #[test]
+    fn invalid_check_grade_and_severity_are_errors() {
+        let mut args = base_args(PathBuf::from("src"));
+        args.check = true;
+        args.min_grade = Some("ZZZ".to_string());
+        assert!(
+            check_config_from_args(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid --min-grade")
+        );
+
+        args.min_grade = None;
+        args.fail_on = Some("bogus".to_string());
+        assert!(
+            check_config_from_args(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid --fail-on")
+        );
+    }
+
+    #[test]
+    fn check_output_file_is_flushed_on_pass_and_fail() {
+        let passing = tempfile::tempdir().unwrap();
+        let passing_src = passing.path().join("src");
+        write_files(&passing_src, false);
+        let passing_output = passing.path().join("pass.txt");
+
+        let mut pass_args = base_args(passing_src);
+        pass_args.check = true;
+        pass_args.min_grade = Some("F".to_string());
+        pass_args.max_critical = Some(usize::MAX);
+        pass_args.max_circular = Some(usize::MAX);
+        pass_args.output = Some(passing_output.clone());
+
+        assert_eq!(run_coupling(pass_args).unwrap(), 0);
+        assert!(
+            std::fs::metadata(&passing_output).unwrap().len() > 0,
+            "passing check output should be flushed before returning"
+        );
+
+        let failing = tempfile::tempdir().unwrap();
+        let failing_src = failing.path().join("src");
+        write_files(&failing_src, true);
+        let failing_output = failing.path().join("fail.txt");
+
+        let mut fail_args = base_args(failing_src);
+        fail_args.check = true;
+        fail_args.output = Some(failing_output.clone());
+
+        assert_eq!(run_coupling(fail_args).unwrap(), 1);
+        assert!(
+            std::fs::metadata(&failing_output).unwrap().len() > 0,
+            "failing check output should be flushed before returning"
+        );
+    }
+
+    #[test]
+    fn history_zero_is_rejected_before_git_analysis() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut args = base_args(tmp.path().to_path_buf());
+        args.history = Some(0);
+
+        let error = run_coupling(args).unwrap_err().to_string();
+
+        assert!(error.contains("--history must be greater than 0"));
+    }
 }
