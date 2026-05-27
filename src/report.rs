@@ -1002,9 +1002,17 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
     // Worst balanced couplings
     writeln!(writer, "### Worst Balanced Couplings\n")?;
 
+    // External (DifferentCrate) couplings are outside our control and are excluded
+    // from issue detection everywhere else; the crate-root re-export facade is a
+    // stable Contract. Exclude both, and dedupe by (source, target), so this shows
+    // distinct, actionable internal couplings.
+    let mut seen_worst = std::collections::HashSet::new();
     let mut couplings_with_scores: Vec<_> = metrics
         .couplings
         .iter()
+        .filter(|c| c.distance != Distance::DifferentCrate)
+        .filter(|c| !crate::balance::is_crate_root_facade(&c.target))
+        .filter(|c| seen_worst.insert((c.source.clone(), c.target.clone())))
         .map(|c| (c, BalanceScore::calculate(c)))
         .collect();
 

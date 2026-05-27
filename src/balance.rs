@@ -652,7 +652,7 @@ fn is_entrypoint_module(name: &str) -> bool {
 ///
 /// `crate-name::crate_name` (i.e. `lib.rs`) is a stable Contract surface; coupling
 /// to it is not intrusive coupling to a volatile implementation.
-fn is_crate_root_facade(name: &str) -> bool {
+pub(crate) fn is_crate_root_facade(name: &str) -> bool {
     match name.split_once("::") {
         Some((krate, rest)) => !rest.contains("::") && rest == krate.replace('-', "_"),
         None => false,
