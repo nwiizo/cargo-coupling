@@ -77,8 +77,8 @@ fn baseline_diff_reports_new_issue_and_ratchet_results() {
     let config = CompiledConfig::empty();
     let thresholds = strict_thresholds();
 
-    let baseline =
-        analyze_ref(&src, &config, &thresholds, "HEAD~1", 6).expect("baseline ref should analyze");
+    let baseline = analyze_ref(&src, &config, &thresholds, "HEAD~1", 6, true)
+        .expect("baseline ref should analyze");
     let current_metrics = analyze_workspace_with_config(&src, &config).unwrap();
     let current_report = analyze_project_balance_with_thresholds(&current_metrics, &thresholds);
     let diff = diff_reports(&baseline.report, &current_report);
@@ -139,11 +139,28 @@ fn baseline_diff_reports_new_issue_and_ratchet_results() {
         String::from_utf8_lossy(&pass.stdout)
     );
 
-    let same_baseline =
-        analyze_ref(&src, &config, &thresholds, "HEAD", 6).expect("HEAD baseline should analyze");
+    let same_baseline = analyze_ref(&src, &config, &thresholds, "HEAD", 6, true)
+        .expect("HEAD baseline should analyze");
     let no_change = diff_reports(&same_baseline.report, &current_report);
     assert!(no_change.new_issues.is_empty());
     assert!(no_change.ratchet_failures(Severity::High).is_empty());
+}
+
+#[test]
+fn baseline_ref_with_slash_analyzes_in_path_safe_worktree() {
+    let tmp = fixture_repo();
+    let root = tmp.path();
+    let src = root.join("src");
+    git(root, &["branch", "feat/foo", "HEAD~1"]);
+
+    let config = CompiledConfig::empty();
+    let thresholds = strict_thresholds();
+
+    let baseline = analyze_ref(&src, &config, &thresholds, "feat/foo", 6, true)
+        .expect("slash-containing baseline ref should analyze");
+
+    assert_eq!(baseline.git_ref, "feat/foo");
+    assert!(baseline.module_count > 0);
 }
 
 #[test]

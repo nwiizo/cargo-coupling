@@ -66,7 +66,7 @@ pub use config::{
 pub use diff::{BaselineDiff, IssueKey, diff_reports};
 pub use history::{
     HistoryError, HistoryPoint, HistoryReport, RefAnalysis, SkippedRevision, analyze_history,
-    analyze_ref, sample_evenly,
+    analyze_ref,
 };
 pub use manifest::{AnalysisManifest, BlindSpot, ManifestContext, build_manifest};
 pub use metrics::{

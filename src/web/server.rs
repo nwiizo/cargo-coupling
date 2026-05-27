@@ -12,14 +12,13 @@ use tokio::net::TcpListener;
 
 use crate::analyze_history;
 use crate::balance::IssueThresholds;
-use crate::cli_output::{JsonHistory, JsonHistoryPoint, JsonSkippedRevision};
+use crate::cli_output::{JsonHistory, history_report_to_json};
 use crate::config::CompiledConfig;
-use crate::history::HistoryReport;
 use crate::metrics::ProjectMetrics;
 
 use super::routes;
 
-const DEFAULT_HISTORY_MAX_POINTS: usize = 30;
+pub const DEFAULT_HISTORY_MAX_POINTS: usize = 30;
 
 /// Shared application state
 pub struct AppState {
@@ -38,6 +37,7 @@ pub struct ServerConfig {
     pub analysis_config: CompiledConfig,
     pub git_months: usize,
     pub history_max_points: usize,
+    pub no_git: bool,
 }
 
 impl Default for ServerConfig {
@@ -50,6 +50,7 @@ impl Default for ServerConfig {
             analysis_config: CompiledConfig::empty(),
             git_months: 6,
             history_max_points: DEFAULT_HISTORY_MAX_POINTS,
+            no_git: false,
         }
     }
 }
@@ -96,6 +97,14 @@ pub async fn start_server(
 }
 
 fn load_history(config: &ServerConfig, thresholds: &IssueThresholds) -> JsonHistory {
+    if config.no_git {
+        return JsonHistory {
+            months: config.git_months,
+            points: Vec::new(),
+            skipped: Vec::new(),
+        };
+    }
+
     match analyze_history(
         &config.analysis_path,
         &config.analysis_config,
@@ -103,7 +112,7 @@ fn load_history(config: &ServerConfig, thresholds: &IssueThresholds) -> JsonHist
         config.git_months,
         config.history_max_points,
     ) {
-        Ok(report) => history_to_json(&report),
+        Ok(report) => history_report_to_json(&report),
         Err(e) => {
             eprintln!("Warning: History analysis failed: {}", e);
             JsonHistory {
@@ -112,34 +121,5 @@ fn load_history(config: &ServerConfig, thresholds: &IssueThresholds) -> JsonHist
                 skipped: Vec::new(),
             }
         }
-    }
-}
-
-fn history_to_json(report: &HistoryReport) -> JsonHistory {
-    JsonHistory {
-        months: report.months,
-        points: report
-            .points
-            .iter()
-            .map(|point| JsonHistoryPoint {
-                commit: point.commit.clone(),
-                date: point.date.clone(),
-                grade: point.grade.letter(),
-                average_score: point.average_score,
-                total_couplings: point.total_couplings,
-                module_count: point.module_count,
-                critical_issues: point.critical,
-                high_issues: point.high,
-            })
-            .collect(),
-        skipped: report
-            .skipped
-            .iter()
-            .map(|skipped| JsonSkippedRevision {
-                commit: skipped.commit.clone(),
-                date: skipped.date.clone(),
-                reason: skipped.reason.clone(),
-            })
-            .collect(),
     }
 }

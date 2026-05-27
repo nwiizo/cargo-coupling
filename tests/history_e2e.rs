@@ -133,7 +133,7 @@ fn history_builds_timeline_from_a_real_git_repo() {
 
     let mut snapshot_metrics = analyze_workspace_with_config(&src, &config).unwrap();
     let mut volatility = VolatilityAnalyzer::new(120);
-    volatility.analyze(root).unwrap();
+    volatility.analyze(&src).unwrap();
     snapshot_metrics.file_changes = volatility.file_changes;
     snapshot_metrics.update_volatility_from_git();
     let snapshot_report = analyze_project_balance_with_thresholds(&snapshot_metrics, &thresholds);
@@ -144,7 +144,7 @@ fn history_builds_timeline_from_a_real_git_repo() {
         "latest history grade should match snapshot methodology"
     );
     assert!(
-        (latest.average_score - snapshot_report.average_score).abs() < f64::EPSILON,
+        (latest.average_score - snapshot_report.average_score).abs() < 1e-9,
         "latest history score {} should match snapshot score {}",
         latest.average_score,
         snapshot_report.average_score

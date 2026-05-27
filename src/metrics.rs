@@ -773,6 +773,8 @@ pub struct ProjectMetrics {
     pub file_changes: HashMap<String, usize>,
     /// Total files analyzed
     pub total_files: usize,
+    /// Source files that failed to parse or analyze and were skipped.
+    pub parse_failures: usize,
     /// Workspace name (if available from cargo metadata)
     pub workspace_name: Option<String>,
     /// Workspace member crate names

@@ -6,8 +6,8 @@
 //! time, rather than inspecting a single snapshot.
 //!
 //! Each sampled revision is analyzed with AST structure, git-churn volatility,
-//! and config volatility/subdomain overrides so the timeline score uses the same
-//! methodology as the snapshot report for that revision.
+//! temporal coupling, and config volatility/subdomain overrides so the timeline
+//! score uses the same methodology as the snapshot report for that revision.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -131,7 +131,7 @@ pub fn analyze_history(
     max_points: usize,
 ) -> Result<HistoryReport, HistoryError> {
     let repo_root = repo_root(path)?;
-    let subpath = relative_subpath(&repo_root, path);
+    let subpath = relative_subpath(&repo_root, path)?;
 
     let commits = list_commits(&repo_root, months)?;
     if commits.is_empty() {
@@ -145,18 +145,10 @@ pub fn analyze_history(
         ..Default::default()
     };
 
-    let mut config = config.clone();
-
     for (idx, &i) in sampled.iter().enumerate() {
         let (commit, date) = &commits[i];
         match analyze_revision(
-            &repo_root,
-            &subpath,
-            commit,
-            &mut config,
-            thresholds,
-            months,
-            idx,
+            &repo_root, &subpath, commit, config, thresholds, months, idx,
         ) {
             Ok(point) => report.points.push(HistoryPoint {
                 date: date.clone(),
@@ -184,12 +176,22 @@ pub fn analyze_ref(
     thresholds: &IssueThresholds,
     git_ref: &str,
     months: usize,
+    use_git: bool,
 ) -> Result<RefAnalysis, HistoryError> {
     let repo_root = repo_root(path)?;
-    let subpath = relative_subpath(&repo_root, path);
+    let subpath = relative_subpath(&repo_root, path)?;
     let seq = WORKTREE_SEQ.fetch_add(1, Ordering::Relaxed);
     analyze_ref_in_repo(
-        &repo_root, &subpath, git_ref, config, thresholds, months, seq,
+        &repo_root,
+        &subpath,
+        git_ref,
+        RefAnalysisParams {
+            config,
+            thresholds,
+            months,
+            use_git,
+            seq,
+        },
     )
 }
 
@@ -215,11 +217,17 @@ fn repo_root(path: &Path) -> Result<PathBuf, HistoryError> {
 }
 
 /// Compute the analysis path relative to the repo root (for use inside a worktree).
-fn relative_subpath(repo_root: &Path, path: &Path) -> PathBuf {
+fn relative_subpath(repo_root: &Path, path: &Path) -> Result<PathBuf, HistoryError> {
     let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     abs.strip_prefix(repo_root)
         .map(|p| p.to_path_buf())
-        .unwrap_or_default()
+        .map_err(|_| {
+            HistoryError::Analysis(format!(
+                "analysis path '{}' is not under git repository root '{}'",
+                abs.display(),
+                repo_root.display()
+            ))
+        })
 }
 
 /// List `(hash, iso-date)` of `.rs`-touching commits in the window, oldest first.
@@ -261,13 +269,24 @@ fn analyze_revision(
     repo_root: &Path,
     subpath: &Path,
     commit: &str,
-    config: &mut CompiledConfig,
+    config: &CompiledConfig,
     thresholds: &IssueThresholds,
     months: usize,
     seq: usize,
 ) -> Result<HistoryPoint, String> {
-    let analysis = analyze_ref_in_repo(repo_root, subpath, commit, config, thresholds, months, seq)
-        .map_err(|e| e.to_string())?;
+    let analysis = analyze_ref_in_repo(
+        repo_root,
+        subpath,
+        commit,
+        RefAnalysisParams {
+            config,
+            thresholds,
+            months,
+            use_git: true,
+            seq,
+        },
+    )
+    .map_err(|e| e.to_string())?;
     let report = analysis.report;
     let critical = *report
         .issues_by_severity
@@ -287,16 +306,21 @@ fn analyze_revision(
     })
 }
 
+struct RefAnalysisParams<'a> {
+    config: &'a CompiledConfig,
+    thresholds: &'a IssueThresholds,
+    months: usize,
+    use_git: bool,
+    seq: usize,
+}
+
 fn analyze_ref_in_repo(
     repo_root: &Path,
     subpath: &Path,
     git_ref: &str,
-    config: &CompiledConfig,
-    thresholds: &IssueThresholds,
-    months: usize,
-    seq: usize,
+    params: RefAnalysisParams<'_>,
 ) -> Result<RefAnalysis, HistoryError> {
-    let worktree = Worktree::add(repo_root, git_ref, seq)?;
+    let worktree = Worktree::add(repo_root, git_ref, params.seq)?;
 
     let analysis_path = worktree.dir.join(subpath);
     if !analysis_path.exists() {
@@ -305,7 +329,7 @@ fn analyze_ref_in_repo(
         ));
     }
 
-    let mut config = rebase_config_root(config, repo_root, &worktree.dir);
+    let mut config = rebase_config_root(params.config, repo_root, &worktree.dir);
     let mut metrics = analyze_workspace_with_config(&analysis_path, &config)
         .map_err(|e| HistoryError::Analysis(e.to_string()))?;
 
@@ -315,10 +339,15 @@ fn analyze_ref_in_repo(
         ));
     }
 
-    let mut volatility = VolatilityAnalyzer::new(months);
-    if volatility.analyze(&worktree.dir).is_ok() {
-        metrics.file_changes = volatility.file_changes;
-        metrics.update_volatility_from_git();
+    if params.use_git {
+        let mut volatility = VolatilityAnalyzer::new(params.months);
+        if volatility.analyze(&analysis_path).is_ok() {
+            if let Ok(temporal) = volatility.analyze_temporal_coupling(&analysis_path) {
+                metrics.temporal_couplings = temporal;
+            }
+            metrics.file_changes = volatility.file_changes;
+            metrics.update_volatility_from_git();
+        }
     }
 
     if config.has_volatility_overrides() || config.has_subdomain_config() {
@@ -329,7 +358,7 @@ fn analyze_ref_in_repo(
         }
     }
 
-    let report = analyze_project_balance_with_thresholds(&metrics, thresholds);
+    let report = analyze_project_balance_with_thresholds(&metrics, params.thresholds);
 
     Ok(RefAnalysis {
         git_ref: git_ref.to_string(),
@@ -373,7 +402,7 @@ impl Worktree {
         ));
 
         let output = Command::new("git")
-            .args(["worktree", "add", "--detach", "--force"])
+            .args(["worktree", "add", "--detach"])
             .arg(&dir)
             .arg(commit)
             .current_dir(repo_root)
@@ -402,16 +431,25 @@ impl Drop for Worktree {
     }
 }
 
-/// Abbreviate a commit hash to 7 characters.
+/// Abbreviate a commit/ref to a path-safe 7-character label.
 fn short_hash(hash: &str) -> String {
-    hash.chars().take(7).collect()
+    hash.chars()
+        .take(7)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// Pick up to `max` evenly-spaced indices from `[0, len)`.
 ///
 /// Always includes the first and last index when `len >= 2` so the endpoints
 /// of the timeline are preserved. Returns all indices when `len <= max`.
-pub fn sample_evenly(len: usize, max: usize) -> Vec<usize> {
+pub(crate) fn sample_evenly(len: usize, max: usize) -> Vec<usize> {
     // Covers the empty cases too: `len <= max` is true when `len == 0`, and the
     // loop below produces nothing when `max == 0`, so no separate guard is needed.
     if len <= max {
@@ -470,6 +508,7 @@ mod tests {
     fn short_hash_truncates() {
         assert_eq!(short_hash("0123456789abcdef"), "0123456");
         assert_eq!(short_hash("abc"), "abc");
+        assert_eq!(short_hash("feat/foo"), "feat_fo");
     }
 
     #[test]
@@ -493,7 +532,13 @@ mod tests {
     fn relative_subpath_strips_root() {
         // `/repo` does not exist, so canonicalize falls back to the path as-is
         // (`/repo/src`), and strip_prefix then yields the relative `src`.
-        let sub = relative_subpath(Path::new("/repo"), Path::new("/repo/src"));
+        let sub = relative_subpath(Path::new("/repo"), Path::new("/repo/src")).unwrap();
         assert_eq!(sub, Path::new("src"));
+    }
+
+    #[test]
+    fn relative_subpath_errors_outside_root() {
+        let err = relative_subpath(Path::new("/repo"), Path::new("/elsewhere/src")).unwrap_err();
+        assert!(err.to_string().contains("is not under git repository root"));
     }
 }

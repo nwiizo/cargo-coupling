@@ -13,4 +13,4 @@ pub mod routes;
 pub mod server;
 
 pub use graph::GraphData;
-pub use server::{ServerConfig, start_server};
+pub use server::{DEFAULT_HISTORY_MAX_POINTS, ServerConfig, start_server};

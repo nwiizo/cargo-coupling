@@ -25,7 +25,7 @@ use cargo_coupling::{
     },
     diff_reports, generate_ai_output_with_thresholds, generate_report_with_thresholds,
     generate_summary_with_thresholds, load_compiled_config,
-    web::{ServerConfig, start_server},
+    web::{DEFAULT_HISTORY_MAX_POINTS, ServerConfig, start_server},
 };
 
 /// cargo-coupling - Measure the "right distance" in your Rust code
@@ -189,12 +189,6 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
 }
 
 fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
-    let check_config = if args.check && args.baseline.is_none() {
-        Some(check_config_from_args(&args)?)
-    } else {
-        None
-    };
-
     // Detect available CPU cores
     let available_cores = std::thread::available_parallelism()
         .map(|p| p.get())
@@ -406,7 +400,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     let manifest = build_manifest(&ManifestContext {
         git_used,
         tests_excluded: config.exclude_tests,
-        parse_failures: 0,
+        parse_failures: metrics.parse_failures,
     });
 
     // Web visualization mode
@@ -418,7 +412,8 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
             analysis_path: args.path.clone(),
             analysis_config: config,
             git_months: args.git_months,
-            history_max_points: 30,
+            history_max_points: DEFAULT_HISTORY_MAX_POINTS,
+            no_git: args.no_git,
         };
 
         // Run the web server using tokio runtime
@@ -451,6 +446,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
             &thresholds,
             baseline_ref,
             args.git_months,
+            !args.no_git,
         )
         .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
         let current_report =
@@ -480,7 +476,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
 
     // --check: Quality gate check (returns exit code)
     if args.check {
-        let check_config = check_config.expect("--check config should be validated");
+        let check_config = check_config_from_args(&args)?;
         let exit_code = generate_check_output(&metrics, &thresholds, &check_config, &mut writer)?;
         return Ok(exit_code);
     }
@@ -789,6 +785,30 @@ mod tests {
         assert!(notes.iter().any(|note| {
             note.as_str()
                 .is_some_and(|note| note.contains("Test code was excluded"))
+        }));
+    }
+
+    #[test]
+    fn json_manifest_reports_parse_failures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        write_files(&src, false);
+        std::fs::write(src.join("broken.rs"), "pub fn broken( {").unwrap();
+        let output = tmp.path().join("manifest.json");
+
+        let mut args = base_args(src);
+        args.json = true;
+        args.output = Some(output.clone());
+
+        assert_eq!(run_coupling(args).unwrap(), 0);
+
+        let text = std::fs::read_to_string(output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let notes = parsed["analysis_manifest"]["notes"].as_array().unwrap();
+
+        assert!(notes.iter().any(|note| {
+            note.as_str()
+                .is_some_and(|note| note.contains("1 source file(s) failed to parse"))
         }));
     }
 }

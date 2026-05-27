@@ -17,13 +17,40 @@ pub struct IssueKey {
 }
 
 impl IssueKey {
-    pub fn from_issue(issue: &CouplingIssue) -> Self {
-        Self {
-            issue_type: issue.issue_type,
-            source: issue.source.clone(),
-            target: issue.target.clone(),
+    fn normalized_source(issue: &CouplingIssue) -> String {
+        match issue.issue_type {
+            IssueType::HighAfferentCoupling if is_count_target(&issue.source, "dependents") => {
+                "<dependent-count>".to_string()
+            }
+            _ => issue.source.clone(),
         }
     }
+
+    fn normalized_target(issue: &CouplingIssue) -> String {
+        match issue.issue_type {
+            IssueType::HighEfferentCoupling if is_count_target(&issue.target, "dependencies") => {
+                "<dependency-count>".to_string()
+            }
+            _ => issue.target.clone(),
+        }
+    }
+}
+
+impl From<&CouplingIssue> for IssueKey {
+    fn from(issue: &CouplingIssue) -> Self {
+        Self {
+            issue_type: issue.issue_type,
+            source: Self::normalized_source(issue),
+            target: Self::normalized_target(issue),
+        }
+    }
+}
+
+fn is_count_target(value: &str, unit: &str) -> bool {
+    let Some((count, suffix)) = value.split_once(' ') else {
+        return false;
+    };
+    count.chars().all(|c| c.is_ascii_digit()) && suffix == unit
 }
 
 /// Difference between a baseline report and the current report.
@@ -52,22 +79,27 @@ pub fn diff_reports(
     baseline: &ProjectBalanceReport,
     current: &ProjectBalanceReport,
 ) -> BaselineDiff {
-    let baseline_keys: HashSet<IssueKey> =
-        baseline.issues.iter().map(IssueKey::from_issue).collect();
-    let current_keys: HashSet<IssueKey> = current.issues.iter().map(IssueKey::from_issue).collect();
+    let baseline_keys: HashSet<IssueKey> = baseline.issues.iter().map(IssueKey::from).collect();
+    let current_keys: HashSet<IssueKey> = current.issues.iter().map(IssueKey::from).collect();
 
+    let mut seen_new = HashSet::new();
     let new_issues = current
         .issues
         .iter()
-        .filter(|issue| !baseline_keys.contains(&IssueKey::from_issue(issue)))
-        .cloned()
+        .filter_map(|issue| {
+            let key = IssueKey::from(issue);
+            (!baseline_keys.contains(&key) && seen_new.insert(key)).then(|| issue.clone())
+        })
         .collect();
 
+    let mut seen_resolved = HashSet::new();
     let resolved_issues = baseline
         .issues
         .iter()
-        .filter(|issue| !current_keys.contains(&IssueKey::from_issue(issue)))
-        .cloned()
+        .filter_map(|issue| {
+            let key = IssueKey::from(issue);
+            (!current_keys.contains(&key) && seen_resolved.insert(key)).then(|| issue.clone())
+        })
         .collect();
 
     BaselineDiff {
@@ -117,6 +149,87 @@ mod tests {
             issues,
             top_priorities: Vec::new(),
         }
+    }
+
+    #[test]
+    fn is_count_target_requires_digits_and_exact_unit() {
+        assert!(is_count_target("3 dependencies", "dependencies"));
+        assert!(is_count_target("12 dependents", "dependents"));
+        // digits but wrong unit -> false (guards against `&&` -> `||`).
+        assert!(!is_count_target("3 widgets", "dependencies"));
+        // non-digit count -> false.
+        assert!(!is_count_target("many dependencies", "dependencies"));
+        // no space separator -> false.
+        assert!(!is_count_target("dependencies", "dependencies"));
+    }
+
+    #[test]
+    fn issue_key_normalizes_efferent_dependency_count() {
+        let three = IssueKey::from(&issue(
+            IssueType::HighEfferentCoupling,
+            Severity::High,
+            "m",
+            "3 dependencies",
+        ));
+        let five = IssueKey::from(&issue(
+            IssueType::HighEfferentCoupling,
+            Severity::High,
+            "m",
+            "5 dependencies",
+        ));
+        assert_eq!(three, five, "count change must not change the key");
+        assert_eq!(three.target, "<dependency-count>");
+        assert_eq!(three.source, "m", "source passes through unchanged");
+    }
+
+    #[test]
+    fn issue_key_normalizes_afferent_dependent_count() {
+        let three = IssueKey::from(&issue(
+            IssueType::HighAfferentCoupling,
+            Severity::High,
+            "3 dependents",
+            "m",
+        ));
+        let five = IssueKey::from(&issue(
+            IssueType::HighAfferentCoupling,
+            Severity::High,
+            "5 dependents",
+            "m",
+        ));
+        assert_eq!(three, five);
+        assert_eq!(three.source, "<dependent-count>");
+        assert_eq!(three.target, "m", "target passes through unchanged");
+    }
+
+    #[test]
+    fn issue_key_preserves_non_count_fields() {
+        // A non-count issue type keeps source/target verbatim.
+        let k = IssueKey::from(&issue(
+            IssueType::GodModule,
+            Severity::High,
+            "src_mod",
+            "dst_mod",
+        ));
+        assert_eq!(k.source, "src_mod");
+        assert_eq!(k.target, "dst_mod");
+
+        // Efferent issue whose target is NOT a count is preserved (guard must stay false).
+        let e = IssueKey::from(&issue(
+            IssueType::HighEfferentCoupling,
+            Severity::High,
+            "m",
+            "not a count",
+        ));
+        assert_eq!(e.target, "not a count");
+
+        // Afferent issue whose source is NOT a count is preserved.
+        let a = IssueKey::from(&issue(
+            IssueType::HighAfferentCoupling,
+            Severity::High,
+            "not a count",
+            "m",
+        ));
+        assert_eq!(a.source, "not a count");
     }
 
     #[test]
@@ -175,5 +288,87 @@ mod tests {
 
         assert_eq!(diff.ratchet_failures(Severity::High).len(), 1);
         assert_eq!(diff.ratchet_failures(Severity::Medium).len(), 2);
+    }
+
+    #[test]
+    fn high_coupling_count_targets_do_not_create_new_issue_keys() {
+        let baseline = report(
+            vec![
+                issue(
+                    IssueType::HighEfferentCoupling,
+                    Severity::High,
+                    "web::server",
+                    "2 dependencies",
+                ),
+                issue(
+                    IssueType::HighAfferentCoupling,
+                    Severity::High,
+                    "2 dependents",
+                    "cli_output",
+                ),
+            ],
+            0.7,
+            HealthGrade::B,
+        );
+        let current = report(
+            vec![
+                issue(
+                    IssueType::HighEfferentCoupling,
+                    Severity::High,
+                    "web::server",
+                    "3 dependencies",
+                ),
+                issue(
+                    IssueType::HighAfferentCoupling,
+                    Severity::High,
+                    "3 dependents",
+                    "cli_output",
+                ),
+            ],
+            0.6,
+            HealthGrade::C,
+        );
+
+        let diff = diff_reports(&baseline, &current);
+
+        assert!(diff.new_issues.is_empty());
+        assert!(diff.resolved_issues.is_empty());
+        assert_eq!(diff.unchanged, 2);
+    }
+
+    #[test]
+    fn diff_deduplicates_same_key_issues() {
+        let duplicate_new = issue(
+            IssueType::CascadingChangeRisk,
+            Severity::High,
+            "web::server",
+            "cli_output",
+        );
+        let duplicate_resolved = issue(
+            IssueType::GlobalComplexity,
+            Severity::Medium,
+            "history",
+            "volatility",
+        );
+        let baseline = report(
+            vec![duplicate_resolved.clone(), duplicate_resolved],
+            0.7,
+            HealthGrade::B,
+        );
+        let current = report(
+            vec![duplicate_new.clone(), duplicate_new],
+            0.6,
+            HealthGrade::C,
+        );
+
+        let diff = diff_reports(&baseline, &current);
+
+        assert_eq!(diff.new_issues.len(), 1);
+        assert_eq!(diff.resolved_issues.len(), 1);
+        let new_keys: HashSet<IssueKey> = diff.new_issues.iter().map(IssueKey::from).collect();
+        let resolved_keys: HashSet<IssueKey> =
+            diff.resolved_issues.iter().map(IssueKey::from).collect();
+        assert_eq!(new_keys.len(), diff.new_issues.len());
+        assert_eq!(resolved_keys.len(), diff.resolved_issues.len());
     }
 }

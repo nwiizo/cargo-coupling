@@ -851,7 +851,7 @@ pub fn run_check(
 
     CheckResult {
         passed,
-        grade: format!("{:?}", report.health_grade),
+        grade: report.health_grade.letter().to_string(),
         score: report.average_score,
         critical_count,
         high_count,
@@ -1188,7 +1188,7 @@ fn generate_json_output_with_optional_diff<W: Write>(
 
     let output = JsonOutput {
         summary: JsonSummary {
-            health_grade: format!("{:?}", report.health_grade),
+            health_grade: report.health_grade.letter().to_string(),
             health_score: report.average_score,
             total_modules: metrics.modules.len(),
             total_couplings: metrics.couplings.len(),
@@ -1247,8 +1247,8 @@ fn json_baseline_diff(diff: &BaselineDiff) -> JsonBaselineDiff {
         unchanged: diff.unchanged,
         score_delta: diff.score_delta,
         grade_change: JsonGradeChange {
-            baseline: format!("{:?}", diff.baseline_grade),
-            current: format!("{:?}", diff.current_grade),
+            baseline: diff.baseline_grade.letter().to_string(),
+            current: diff.current_grade.letter().to_string(),
         },
     }
 }
@@ -1655,6 +1655,36 @@ pub struct JsonHistory {
     pub skipped: Vec<JsonSkippedRevision>,
 }
 
+/// Convert a history report into its shared JSON representation.
+pub fn history_report_to_json(report: &HistoryReport) -> JsonHistory {
+    JsonHistory {
+        months: report.months,
+        points: report
+            .points
+            .iter()
+            .map(|p| JsonHistoryPoint {
+                commit: p.commit.clone(),
+                date: p.date.clone(),
+                grade: p.grade.letter(),
+                average_score: p.average_score,
+                total_couplings: p.total_couplings,
+                module_count: p.module_count,
+                critical_issues: p.critical,
+                high_issues: p.high,
+            })
+            .collect(),
+        skipped: report
+            .skipped
+            .iter()
+            .map(|s| JsonSkippedRevision {
+                commit: s.commit.clone(),
+                date: s.date.clone(),
+                reason: s.reason.clone(),
+            })
+            .collect(),
+    }
+}
+
 /// Render a history report as text or JSON.
 pub fn generate_history_output<W: Write>(
     report: &HistoryReport,
@@ -1662,32 +1692,7 @@ pub fn generate_history_output<W: Write>(
     writer: &mut W,
 ) -> io::Result<()> {
     if json {
-        let output = JsonHistory {
-            months: report.months,
-            points: report
-                .points
-                .iter()
-                .map(|p| JsonHistoryPoint {
-                    commit: p.commit.clone(),
-                    date: p.date.clone(),
-                    grade: p.grade.letter(),
-                    average_score: p.average_score,
-                    total_couplings: p.total_couplings,
-                    module_count: p.module_count,
-                    critical_issues: p.critical,
-                    high_issues: p.high,
-                })
-                .collect(),
-            skipped: report
-                .skipped
-                .iter()
-                .map(|s| JsonSkippedRevision {
-                    commit: s.commit.clone(),
-                    date: s.date.clone(),
-                    reason: s.reason.clone(),
-                })
-                .collect(),
-        };
+        let output = history_report_to_json(report);
         let text = serde_json::to_string_pretty(&output).map_err(io::Error::other)?;
         writeln!(writer, "{}", text)?;
         return Ok(());

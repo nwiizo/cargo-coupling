@@ -1219,6 +1219,7 @@ pub fn analyze_project_parallel_with_config(
     // Build project metrics (sequential, but fast)
     let mut project = ProjectMetrics::new();
     project.total_files = analyzed_results.len();
+    project.parse_failures = file_paths.len().saturating_sub(analyzed_results.len());
 
     // First pass: register all types with their visibility
     for analyzed in &analyzed_results {
@@ -1424,6 +1425,7 @@ fn analyze_with_workspace(
         .collect();
 
     project.total_files = analyzed_files.len();
+    project.parse_failures = file_crate_pairs.len().saturating_sub(analyzed_files.len());
 
     // Build set of known module names for validation
     let module_names: HashSet<String> = analyzed_files
