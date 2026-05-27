@@ -11,8 +11,11 @@ use crate::balance::{CouplingIssue, HealthGrade, IssueType, ProjectBalanceReport
 /// Stable identity for a coupling issue across snapshots.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IssueKey {
+    /// Issue category used as the primary diff discriminator.
     pub issue_type: IssueType,
+    /// Normalized issue source; count-only sources are canonicalized.
     pub source: String,
+    /// Normalized issue target; count-only targets are canonicalized.
     pub target: String,
 }
 
@@ -56,11 +59,17 @@ fn is_count_target(value: &str, unit: &str) -> bool {
 /// Difference between a baseline report and the current report.
 #[derive(Debug, Clone)]
 pub struct BaselineDiff {
+    /// Issues present only in the current report.
     pub new_issues: Vec<CouplingIssue>,
+    /// Issues present only in the baseline report.
     pub resolved_issues: Vec<CouplingIssue>,
+    /// Number of stable issue keys present in both reports.
     pub unchanged: usize,
+    /// Current average score minus baseline average score.
     pub score_delta: f64,
+    /// Baseline health grade.
     pub baseline_grade: HealthGrade,
+    /// Current health grade.
     pub current_grade: HealthGrade,
 }
 

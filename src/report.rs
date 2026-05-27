@@ -1,6 +1,7 @@
-//! Report generation for coupling analysis
+//! Text and Markdown report rendering for coupling analysis.
 //!
-//! Generates human-readable reports with actionable refactoring suggestions.
+//! This module translates balance scores, issue lists, volatility signals, and
+//! blind-spot manifests into CLI-facing summaries and full reports.
 
 use std::io::{self, Write};
 
@@ -13,6 +14,8 @@ use crate::metrics::{Distance, IntegrationStrength, ProjectMetrics};
 
 const DEFAULT_STRONG_TEMPORAL_LIMIT: usize = 5;
 
+// ===== Report Options =====
+
 /// Options for the default human-readable text report.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TextReportOptions {
@@ -21,6 +24,8 @@ pub struct TextReportOptions {
     /// Include all temporal-coupling pairs instead of the concise default.
     pub show_all_temporal_couplings: bool,
 }
+
+// ===== Summary Report =====
 
 /// Generate a summary report to the given writer
 pub fn generate_summary<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
@@ -374,6 +379,8 @@ pub fn generate_summary_with_options<W: Write>(
     Ok(())
 }
 
+// ===== Localization Helpers =====
+
 /// Get Japanese translation for issue type
 fn issue_type_japanese(issue_type: crate::balance::IssueType) -> &'static str {
     use crate::balance::IssueType;
@@ -434,6 +441,8 @@ fn refactoring_action_japanese(action: &crate::balance::RefactoringAction) -> St
         }
     }
 }
+
+// ===== Full Markdown Report =====
 
 /// Generate a full Markdown report with refactoring suggestions
 pub fn generate_report<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
@@ -1202,6 +1211,8 @@ fn truncate_path(path: &str, max_len: usize) -> String {
         format!("...{}", &path[path.len() - max_len + 3..])
     }
 }
+
+// ===== AI-Oriented Report =====
 
 /// Generate AI-friendly output format for coding agents
 ///

@@ -43,8 +43,11 @@ pub struct HistoryPoint {
 /// A revision that was sampled but could not be analyzed.
 #[derive(Debug, Clone)]
 pub struct SkippedRevision {
+    /// Abbreviated commit hash.
     pub commit: String,
+    /// Committer date in ISO-8601.
     pub date: String,
+    /// Human-readable reason analysis did not complete.
     pub reason: String,
 }
 
