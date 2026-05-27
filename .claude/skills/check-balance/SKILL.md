@@ -23,6 +23,12 @@ cargo run -- coupling --summary --japanese ./src
 
 # CI/CD quality gate
 cargo run -- coupling --check --min-grade=C ./src
+
+# Ratchet gate against a baseline ref
+cargo run -- coupling --check --baseline main --fail-on=high ./src
+
+# Coupling health over git history
+cargo run -- coupling --history ./src
 ```
 
 ## Health Grades
@@ -43,6 +49,10 @@ cargo run -- coupling --check --min-grade=C ./src
 | High | Fix within 1 week |
 | Medium | Plan to fix |
 | Low | Monitor |
+
+## Ratchet Mode
+
+`cargo run -- coupling --check --baseline <ref> ./src` compares current issues against the baseline ref and fails only on new issues at `--fail-on` severity or higher. The default ratchet threshold is High/Critical.
 
 ## Next Steps
 

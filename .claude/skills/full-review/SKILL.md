@@ -9,6 +9,11 @@ Comprehensive architecture review with expert perspectives.
 ```bash
 # Coupling analysis
 cargo run -- coupling ./src
+cargo run -- coupling --ai ./src
+
+# Optional trend and baseline context
+cargo run -- coupling --history ./src
+cargo run -- coupling --baseline main ./src
 
 # Lint check
 cargo clippy --all-targets --all-features -- -D warnings

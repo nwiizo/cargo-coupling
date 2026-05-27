@@ -18,7 +18,17 @@ Combines cargo-coupling's automated metrics with semantic code understanding.
 cargo run -- coupling --ai $ARGUMENTS
 ```
 
-Parse the output to understand current coupling state.
+Parse the output to understand current coupling state. AI output includes the full blind-spot manifest; treat "no issues" as "no observed issues", not as proof that no coupling risk exists.
+
+Optional release/PR context:
+
+```bash
+# Time-series trend across git revisions
+cargo run -- coupling --history $ARGUMENTS
+
+# Diff current issues against the target branch
+cargo run -- coupling --baseline main $ARGUMENTS
+```
 
 ### Step 2: Subdomain Classification
 
@@ -28,6 +38,8 @@ If absent, examine the codebase and suggest classification:
 - **Core**: Modules providing competitive advantage (frequently evolving)
 - **Supporting**: Stable business logic (CRUD, ETL, data pipelines)
 - **Generic**: Solved problems (auth, logging, config, web framework)
+
+The `[subdomains]` section informs essential-vs-accidental volatility. Core modules are expected to change; supporting/generic modules with high churn can indicate Accidental Volatility.
 
 ### Step 3: Map Integrations
 
@@ -42,6 +54,10 @@ Look beyond explicit code dependencies for **implicit coupling**:
 - Shared magic constants/strings
 - Assumptions about data format or ordering (connascence of meaning)
 - Co-changing files without explicit dependencies
+
+Automated issue signals to preserve in the review:
+- **Hidden Coupling**: strong temporal co-change without an AST dependency
+- **Accidental Volatility**: supporting/generic subdomain code with suspicious churn
 
 ### Step 4: Apply Balance Rule
 

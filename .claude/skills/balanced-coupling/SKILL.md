@@ -59,6 +59,15 @@ Determined by **DDD subdomain classification**, not just git history:
 Important: distinguish **essential** vs **accidental** volatility.
 Accidental volatility comes from poor design, not business needs.
 
+Configure this in `.coupling.toml`:
+
+```toml
+[subdomains]
+core = ["src/balance.rs", "src/metrics.rs"]
+supporting = ["src/analyzer.rs", "src/report.rs"]
+generic = ["src/config.rs", "src/web/**"]
+```
+
 ## Issue Classification
 
 | Pattern | Strength | Distance | Volatility | Severity |
@@ -68,6 +77,14 @@ Accidental volatility comes from poor design, not business needs.
 | Acceptable | Strong | Far | Low | Minor |
 | Global Complexity | Strong | Far | High | Critical |
 | Local Complexity | Weak | Close | Any | Review |
+| Hidden Coupling | Temporal co-change | No code edge | Medium/High | Medium/High |
+| Accidental Volatility | Any | Any | Supporting/Generic churn | Medium |
+
+Hidden Coupling indicates strong co-change without a direct AST dependency, often duplicated business logic or connascence of meaning/algorithm. Accidental Volatility indicates high churn where the subdomain classification says volatility should be low.
+
+## Analysis Manifest
+
+`cargo-coupling` declares blind spots for static analysis. Text output can expand them with `--blind-spots`; `--json` and `--ai` include the full manifest. Use this when interpreting a clean report.
 
 ## Connascence Refinement
 

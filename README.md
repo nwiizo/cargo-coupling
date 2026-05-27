@@ -52,7 +52,56 @@ cargo coupling --summary --jp ./src
 cargo coupling --summary --all ./src
 ```
 
-### 3. Refactor with AI
+### 3. Track Coupling Health Over Time
+
+```bash
+# Show coupling health across recent git revisions
+cargo coupling --history ./src
+
+# Use 8 sampled revisions and a 12-month git window
+cargo coupling --history=8 --git-months=12 ./src
+
+# Machine-readable history timeline
+cargo coupling --history=8 --json ./src
+```
+
+`--history` re-analyzes sampled git revisions in disposable worktrees. Output is chronological and uses the same snapshot methodology as normal analysis. The web UI also exposes this data as a timeline with auto-play.
+
+### 4. Compare Against a Baseline
+
+```bash
+# Diff current issues against a git ref
+cargo coupling --baseline main ./src
+
+# Ratchet gate: fail only on NEW High/Critical issues
+cargo coupling --check --baseline main ./src
+
+# Ratchet on Medium or higher
+cargo coupling --check --baseline main --fail-on=medium ./src
+```
+
+Baseline diffs use `(issue_type, source, target)` as the stable issue key. `--check --baseline <ref>` is useful in CI because existing debt does not fail the build; only new issues at the configured severity do.
+
+### 5. Review Blind Spots
+
+```bash
+# Default output shows run notes and a pointer to the full manifest
+cargo coupling ./src
+
+# Show the full "Not Analyzed" declaration
+cargo coupling --blind-spots ./src
+
+# --all also expands the blind-spot list
+cargo coupling --all ./src
+
+# JSON and AI output always include the full manifest
+cargo coupling --json ./src
+cargo coupling --ai ./src
+```
+
+The blind-spot manifest declares what the analyzer did not observe, such as runtime connascence, organizational/runtime distance, duplicated logic that does not co-change, and macro or inactive `cfg` paths. Treat a clean report as "no observed issues", not proof that no coupling risk exists.
+
+### 6. Refactor with AI
 
 ```bash
 # Generate AI-friendly output
@@ -90,7 +139,7 @@ Issues:
 
 The AI will analyze patterns and suggest specific refactoring strategies.
 
-### 4. Interactive Web Visualization (Experimental)
+### 7. Interactive Web Visualization (Experimental)
 
 > ⚠️ **Experimental Feature**: The Web UI is currently in an experimental state. The interface, features, and behavior may change significantly in future versions.
 
@@ -105,14 +154,17 @@ cargo coupling --web --port 8080 ./src
 ```
 
 The web UI provides:
-- Interactive graph visualization with Cytoscape.js
+- Interactive 2D and 3D coupling graph views
+- Dimension-Space exploration for strength, distance, volatility, and balance
+- Timeline view for `--history` data with auto-play
+- Trust panels that expose analysis confidence, run notes, and declared blind spots
 - **Hotspots panel**: Top refactoring targets ranked by severity
 - **Blast Radius**: Impact analysis with risk score
 - **Clusters**: Architecture grouping detection
 - Filtering by strength, distance, volatility, balance score
 - Source code viewing with syntax highlighting
 
-### 5. Job-Focused CLI Commands
+### 8. Job-Focused CLI Commands
 
 For quick, focused analysis without opening the web UI:
 
@@ -181,18 +233,21 @@ cargo coupling --no-git ./src
 
 - **3-Dimensional Balance Score**: Calculates coupling balance based on **Integration Strength**, **Distance**, and **Volatility** (0.0 - 1.0)
 - **Khononov Balance Formula**: `BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY`
-- **Interactive Web UI**: `--web` flag starts a browser-based visualization with graph, hotspots, and blast radius analysis
+- **Interactive Web UI**: `--web` starts browser-based 2D/3D graph, Dimension-Space, timeline, trust, hotspot, and blast-radius views
 - **Job-Focused CLI**: Quick commands for common tasks (`--hotspots`, `--impact`, `--check`, `--json`)
 - **Japanese Support**: `--japanese` / `--jp` flag for Japanese output with explanations and design decision matrix
 - **Noise Reduction**: Default strict mode hides Low severity issues (`--all` to show all)
+- **Blind-Spot Manifest**: Declares what was not analyzed; text can expand it with `--blind-spots`, and JSON/AI output includes it by default
 - **Beginner-Friendly**: `--verbose` flag explains issues in plain language with fix examples
 - **CI/CD Quality Gate**: `--check` command with configurable thresholds and exit codes
+- **Baseline Ratchet Gate**: `--baseline <ref>` diffs issues; `--check --baseline <ref>` fails only on new issues
 - **AI-Friendly Output**: `--ai` flag generates output optimized for coding agents (Claude, Copilot, etc.)
 - **Rust Pattern Detection**: Detects newtype usage, serde derives, public fields, primitive obsession
-- **Issue Detection**: Automatically identifies problematic coupling patterns (God Module, etc.)
+- **Issue Detection**: Automatically identifies problematic coupling patterns, including Hidden Coupling and Accidental Volatility
 - **Circular Dependency Detection**: Detects and reports dependency cycles
 - **Visibility Tracking**: Analyzes Rust visibility modifiers (pub, pub(crate), etc.)
 - **Git Integration**: Analyzes change frequency from Git history for volatility scoring
+- **History Timeline**: `--history[=N]` samples git revisions via worktrees for time-series coupling health
 - **DDD Subdomain Classification**: Configure core/supporting/generic subdomains to model business-driven volatility
 - **Temporal Coupling Detection**: Detects files that frequently co-change in Git history (implicit coupling)
 - **Configuration File**: Supports `.coupling.toml` for analysis excludes, volatility overrides, and thresholds
@@ -215,12 +270,21 @@ exclude = ["src/generated/*", "src/generated/**"]
 high = ["src/application/*"]
 low = ["src/domain/*"]
 
+[subdomains]
+# Core subdomains are expected to have essential volatility.
+core = ["src/balance.rs", "src/metrics.rs"]
+# Supporting and generic subdomains should normally be stable.
+supporting = ["src/analyzer.rs", "src/report.rs", "src/cli_output.rs"]
+generic = ["src/config.rs", "src/workspace.rs", "src/web/**"]
+
 [thresholds]
 max_dependencies = 15
 max_dependents = 20
 ```
 
 `cargo-coupling` searches for `.coupling.toml` (or `coupling.toml`) from the analysis path upward. `[analysis].exclude` patterns are evaluated relative to the directory that contains the config file, so when you analyze `./src`, write patterns like `src/generated/**`, not just `generated/**`.
+
+`[subdomains]` classifies modules as DDD core/supporting/generic. Core modules are expected to change as the product model evolves; supporting and generic modules should usually be stable. High churn in supporting/generic modules is reported as **Accidental Volatility** because Khononov's model distinguishes essential business volatility from churn caused by design or implementation friction. This repository's own [.coupling.toml](.coupling.toml) is a concrete example.
 
 Use `--config <PATH>` when you want to load a specific config file instead of relying on auto-discovery.
 
@@ -261,15 +325,17 @@ The physical or logical distance between dependent components.
 
 ### 3. Volatility
 
-How frequently a component changes (automatically calculated from Git history).
+How frequently a component changes. This is calculated from Git history and can be informed by DDD subdomain classification in `.coupling.toml`.
 
-| Level | Description | Changes (6 months) | Score |
-|-------|-------------|-------------------|-------|
-| **Low** | Stable, rarely changes | 0-2 times | 0.00 |
-| **Medium** | Occasionally changes | 3-10 times | 0.50 |
-| **High** | Frequently changes | 11+ times | 1.00 |
+| Level | Description | Git signal | Subdomain signal | Score |
+|-------|-------------|------------|------------------|-------|
+| **Low** | Stable, rarely changes | 0-2 changes | Supporting, Generic | 0.00 |
+| **Medium** | Occasionally changes | 3-10 changes | - | 0.50 |
+| **High** | Frequently changes | 11+ changes | Core | 1.00 |
 
 > **Note**: Volatility requires Git history. Use `cargo coupling ./src` (not `--no-git`) to enable volatility analysis.
+
+Khononov's rationale is that volatility is not always bad. Core subdomains have essential volatility because they contain the evolving business model. Supporting and generic subdomains should be stable; if they churn heavily, the tool reports **Accidental Volatility**.
 
 ## The Balance Law
 
@@ -445,6 +511,7 @@ Options:
       --japanese, --jp          Japanese output with explanations (日本語)
       --git-months <MONTHS>     Git history period [default: 6]
       --no-git                  Skip Git analysis
+      --exclude-tests           Exclude test code from analysis
   -c, --config <CONFIG>         Config file path (default: search for .coupling.toml)
   -v, --verbose                 Verbose output with explanations
       --timing                  Show timing information
@@ -462,12 +529,15 @@ Job-Focused Commands:
       --hotspots[=<N>]          Show top N refactoring targets [default: 5]
       --impact <MODULE>         Analyze change impact for a module
       --trace <ITEM>            Trace dependencies for a function/type
+      --history[=<N>]           Show coupling health over git history [default: 12 samples]
+      --baseline <GIT_REF>      Compare current issues against a baseline ref
       --check                   CI/CD quality gate (exit code 1 on failure)
       --min-grade <GRADE>       Minimum grade for --check (A/B/C/D/F)
       --max-critical <N>        Max critical issues for --check
       --max-circular <N>        Max circular dependencies for --check
       --fail-on <SEVERITY>      Fail --check on severity (critical/high/medium/low)
       --json                    Output in JSON format
+      --blind-spots             Show the full structural blind-spot list in text output
 
   -h, --help                    Print help
   -V, --version                 Print version
@@ -597,16 +667,21 @@ By Integration Strength:
 ### High Severity
 - **Global Complexity**: Strong coupling spanning long distances
 - **Cascading Change Risk**: Strong coupling with frequently changing components
+- **Hidden Coupling**: Strong temporal co-change in Git history without a direct code dependency
 
 ### Medium Severity
 - **God Module**: Module with too many functions, types, or implementations
 - **High Efferent Coupling**: Module depends on too many other modules
 - **High Afferent Coupling**: Too many modules depend on this module
 - **Inappropriate Intimacy**: Intrusive coupling across module boundaries
+- **Hidden Coupling**: Moderate temporal co-change without a direct code dependency
+- **Accidental Volatility**: Supporting or generic subdomain code churns like volatile core logic
 
 ### Low Severity (hidden by default, use `--all` to show)
 - **Public Field Exposure**: Public fields that could use getter methods
 - **Primitive Obsession**: Functions with many primitive parameters (suggest newtype)
+
+Hidden Coupling is based on the Khononov idea that functional coupling can be implicit: two modules may share a business rule or assumption even when the AST shows no import or call edge. Accidental Volatility applies the essential-vs-accidental distinction: frequent change is expected in a core subdomain, but suspicious in supporting or generic code.
 
 ## Performance
 
@@ -756,6 +831,9 @@ jobs:
       - name: Quality gate check
         run: cargo coupling --check --min-grade=C --max-circular=0 ./src
 
+      - name: Ratchet against main
+        run: cargo coupling --check --baseline origin/main --fail-on=high ./src
+
       - name: Generate report
         run: cargo coupling -o coupling-report.md ./src
 
@@ -782,6 +860,9 @@ cargo coupling --check --max-critical=0 ./src
 
 # Fail on any high severity or above
 cargo coupling --check --fail-on=high ./src
+
+# Fail only when this change introduces new high severity or above issues
+cargo coupling --check --baseline origin/main --fail-on=high ./src
 
 # Combine multiple conditions
 cargo coupling --check --min-grade=B --max-circular=0 --max-critical=0 ./src
@@ -857,13 +938,14 @@ Please keep the following limitations in mind:
 
 - **External Dependencies Are Excluded**: The health grade only considers internal couplings. Dependencies on external crates (serde, tokio, etc.) are not penalized since you cannot control their design.
 - **Git History Affects Volatility**: If Git history is unavailable or limited, volatility analysis will be incomplete.
+- **Blind Spots Are Explicit**: Text output shows run-specific notes and a pointer to the full "Not Analyzed" declaration. Use `--blind-spots` or `--all` for the full text list; `--json` and `--ai` always include it.
 - **Small Projects May Score Differently**: Projects with very few internal couplings (< 10) may receive a Grade B by default, as there's insufficient data for accurate assessment.
 
 ### Recommended Usage
 
 1. **Use as a Starting Point**: The tool highlights areas worth investigating, not definitive problems.
 2. **Combine with Code Review**: Human review should validate any suggested refactoring.
-3. **Track Trends Over Time**: Use the tool regularly to track coupling trends rather than focusing on absolute scores.
+3. **Track Trends Over Time**: Use `--history` regularly to track coupling trends rather than focusing on absolute scores.
 4. **Customize Thresholds**: Adjust `--max-deps` and `--max-dependents` to match your project's architecture.
 
 **The goal is to provide visibility into coupling patterns, empowering developers to make informed decisions.**
