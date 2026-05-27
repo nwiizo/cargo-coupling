@@ -5,12 +5,17 @@
 
 use std::io::{self, Write};
 
-use crate::balance::{
-    BalanceScore, CouplingIssue, IssueThresholds, IssueType, ProjectBalanceReport, Severity,
-    analyze_project_balance_with_thresholds,
-};
+use crate::balance::action::RefactoringAction;
+use crate::balance::coupling::is_crate_root_facade;
+use crate::balance::grade::{HealthGrade, ProjectBalanceReport};
+use crate::balance::issue::CouplingIssue;
+use crate::balance::issue_type::IssueType;
+use crate::balance::project::analyze_project_balance_with_thresholds;
+use crate::balance::score::{BalanceInterpretation, BalanceScore, IssueThresholds};
+use crate::balance::severity::Severity;
 use crate::manifest::{AnalysisManifest, ManifestContext, build_manifest};
-use crate::metrics::{Distance, IntegrationStrength, ProjectMetrics};
+use crate::metrics::dimensions::{Distance, IntegrationStrength};
+use crate::metrics::project::ProjectMetrics;
 
 const DEFAULT_STRONG_TEMPORAL_LIMIT: usize = 5;
 
@@ -384,8 +389,8 @@ pub fn generate_summary_with_options<W: Write>(
 // ===== Localization Helpers =====
 
 /// Get Japanese translation for issue type
-fn issue_type_japanese(issue_type: crate::balance::IssueType) -> &'static str {
-    use crate::balance::IssueType;
+fn issue_type_japanese(issue_type: IssueType) -> &'static str {
+    use IssueType;
     match issue_type {
         IssueType::GlobalComplexity => "グローバル複雑性 (遠距離への強い依存)",
         IssueType::CascadingChangeRisk => "変更波及リスク (頻繁に変わるものへの依存)",
@@ -407,8 +412,8 @@ fn issue_type_japanese(issue_type: crate::balance::IssueType) -> &'static str {
 }
 
 /// Get Japanese translation for refactoring action
-fn refactoring_action_japanese(action: &crate::balance::RefactoringAction) -> String {
-    use crate::balance::RefactoringAction;
+fn refactoring_action_japanese(action: &RefactoringAction) -> String {
+    use RefactoringAction;
     match action {
         RefactoringAction::IntroduceTrait { suggested_name, .. } => {
             format!("トレイト `{}` を導入して抽象化する", suggested_name)
@@ -454,8 +459,8 @@ fn refactoring_action_japanese(action: &crate::balance::RefactoringAction) -> St
     }
 }
 
-fn issue_instance_description_japanese(issue: &crate::balance::CouplingIssue) -> String {
-    use crate::balance::IssueType;
+fn issue_instance_description_japanese(issue: &CouplingIssue) -> String {
+    use IssueType;
     match issue.issue_type {
         IssueType::HiddenCoupling => {
             "明示的なコード依存はありませんが、ファイルが頻繁に一緒に変更されています。暗黙の知識や不足した抽象化を示している可能性があります。"
@@ -557,12 +562,12 @@ fn write_executive_summary<W: Write>(
 
     // Health Grade with emoji
     let grade_emoji = match report.health_grade {
-        crate::balance::HealthGrade::S => "⚠️",
-        crate::balance::HealthGrade::A => "🟢",
-        crate::balance::HealthGrade::B => "🟢",
-        crate::balance::HealthGrade::C => "🟡",
-        crate::balance::HealthGrade::D => "🟠",
-        crate::balance::HealthGrade::F => "🔴",
+        HealthGrade::S => "⚠️",
+        HealthGrade::A => "🟢",
+        HealthGrade::B => "🟢",
+        HealthGrade::C => "🟡",
+        HealthGrade::D => "🟠",
+        HealthGrade::F => "🔴",
     };
 
     writeln!(
@@ -970,17 +975,17 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
 
         for (volatility, label, impact) in [
             (
-                crate::metrics::Volatility::Low,
+                crate::volatility::Volatility::Low,
                 "Low (rarely changes)",
                 "No penalty",
             ),
             (
-                crate::metrics::Volatility::Medium,
+                crate::volatility::Volatility::Medium,
                 "Medium (sometimes changes)",
                 "Moderate penalty",
             ),
             (
-                crate::metrics::Volatility::High,
+                crate::volatility::Volatility::High,
                 "High (frequently changes)",
                 "Significant penalty",
             ),
@@ -1011,7 +1016,7 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
         .couplings
         .iter()
         .filter(|c| c.distance != Distance::DifferentCrate)
-        .filter(|c| !crate::balance::is_crate_root_facade(&c.target))
+        .filter(|c| !is_crate_root_facade(&c.target))
         .filter(|c| seen_worst.insert((c.source.clone(), c.target.clone())))
         .map(|c| (c, BalanceScore::calculate(c)))
         .collect();
@@ -1045,16 +1050,16 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
             Distance::DifferentCrate => "External",
         };
         let volatility_str = match coupling.volatility {
-            crate::metrics::Volatility::Low => "Low",
-            crate::metrics::Volatility::Medium => "Med",
-            crate::metrics::Volatility::High => "High",
+            crate::volatility::Volatility::Low => "Low",
+            crate::volatility::Volatility::Medium => "Med",
+            crate::volatility::Volatility::High => "High",
         };
         let status = match score.interpretation {
-            crate::balance::BalanceInterpretation::Balanced => "✅ Balanced",
-            crate::balance::BalanceInterpretation::Acceptable => "✅ OK",
-            crate::balance::BalanceInterpretation::NeedsReview => "🟡 Review",
-            crate::balance::BalanceInterpretation::NeedsRefactoring => "🟠 Refactor",
-            crate::balance::BalanceInterpretation::Critical => "🔴 Critical",
+            BalanceInterpretation::Balanced => "✅ Balanced",
+            BalanceInterpretation::Acceptable => "✅ OK",
+            BalanceInterpretation::NeedsReview => "🟡 Review",
+            BalanceInterpretation::NeedsRefactoring => "🟠 Refactor",
+            BalanceInterpretation::Critical => "🔴 Critical",
         };
 
         writeln!(
@@ -1847,8 +1852,10 @@ mod tests {
 
     #[test]
     fn test_report_issues_surfaced_count_matches_issue_list() {
-        use crate::balance::analyze_project_balance_with_thresholds;
-        use crate::metrics::{CouplingMetrics, Distance, IntegrationStrength, Volatility};
+        use crate::balance::project::analyze_project_balance_with_thresholds;
+        use crate::metrics::coupling::CouplingMetrics;
+        use crate::metrics::dimensions::{Distance, IntegrationStrength};
+        use crate::volatility::Volatility;
 
         let mut metrics = ProjectMetrics::new();
         metrics.add_coupling(CouplingMetrics::new(
@@ -1900,7 +1907,7 @@ mod tests {
 
     #[test]
     fn test_generate_report_with_modules() {
-        use crate::metrics::ModuleMetrics;
+        use crate::metrics::module::ModuleMetrics;
 
         let mut metrics = ProjectMetrics::new();
         let mut module = ModuleMetrics::new(PathBuf::from("lib.rs"), "lib".to_string());
@@ -1919,7 +1926,7 @@ mod tests {
     #[test]
     fn test_generate_report_surfaces_subdomain_when_present() {
         use crate::config::Subdomain;
-        use crate::metrics::ModuleMetrics;
+        use crate::metrics::module::ModuleMetrics;
 
         let mut metrics = ProjectMetrics::new();
         let mut module = ModuleMetrics::new(PathBuf::from("src/report.rs"), "report".to_string());

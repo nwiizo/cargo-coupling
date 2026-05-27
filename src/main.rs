@@ -25,7 +25,7 @@ use cargo_coupling::{
         generate_impact_output, generate_json_output, generate_json_output_with_diff,
         generate_ratchet_check_output, parse_grade, parse_severity,
     },
-    diff_reports, generate_ai_output_with_thresholds, generate_report_with_options,
+    diff_ref_analysis, generate_ai_output_with_thresholds, generate_report_with_options,
     generate_summary_with_options, load_compiled_config, load_lock_versions_near,
     web::{DEFAULT_HISTORY_MAX_POINTS, ServerConfig, start_server},
 };
@@ -456,7 +456,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
         let current_report =
             cargo_coupling::analyze_project_balance_with_thresholds(&metrics, &thresholds);
-        let diff = diff_reports(&baseline.report, &current_report);
+        let diff = diff_ref_analysis(&baseline, &current_report);
 
         if args.json {
             generate_json_output_with_diff(&metrics, &thresholds, &manifest, &diff, &mut writer)?;

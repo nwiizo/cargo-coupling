@@ -55,17 +55,21 @@ pub use analyzer::{
     ItemDependency, ItemKind, analyze_project, analyze_project_parallel_with_config,
     analyze_rust_file, analyze_rust_file_full, analyze_workspace, analyze_workspace_with_config,
 };
-pub use balance::{
-    BalanceInterpretation, BalanceScore, CouplingIssue, GradeDimension, GradeRationale,
-    HealthGrade, IssueThresholds, IssueType, IssueTypeContribution, ProjectBalanceReport,
-    RefactoringAction, Severity, analyze_project_balance, analyze_project_balance_with_thresholds,
-    calculate_project_score,
+pub use balance::action::RefactoringAction;
+pub use balance::grade::{HealthGrade, ProjectBalanceReport};
+pub use balance::issue::CouplingIssue;
+pub use balance::issue_type::IssueType;
+pub use balance::project::{
+    analyze_project_balance, analyze_project_balance_with_thresholds, calculate_project_score,
 };
+pub use balance::rationale::{GradeDimension, GradeRationale, IssueTypeContribution};
+pub use balance::score::{BalanceInterpretation, BalanceScore, IssueThresholds};
+pub use balance::severity::Severity;
 pub use config::{
     AnalysisConfig, CompiledConfig, ConfigError, CouplingConfig, ThresholdsConfig,
     VolatilityConfig, load_compiled_config, load_config,
 };
-pub use diff::{BaselineDiff, IssueKey, diff_reports};
+pub use diff::{BaselineDiff, IssueKey, diff_ref_analysis, diff_reports};
 pub use external::{
     ExternalDependencyReport, ExternalDependencyUsage, SCATTERED_EXTERNAL_BREADTH_THRESHOLD,
     analyze_external_dependencies, detect_scattered_external_coupling, load_lock_versions_near,
@@ -75,16 +79,20 @@ pub use history::{
     analyze_ref,
 };
 pub use manifest::{AnalysisManifest, BlindSpot, ManifestContext, build_manifest};
-pub use metrics::{
-    BalanceClassification, BalanceCounts, CircularDependencySummary, CouplingMetrics,
-    DimensionStats, Distance, DistanceCounts, FunctionDefinition, IntegrationStrength,
-    ModuleMetrics, ProjectMetrics, StrengthCounts, TypeDefinition, Visibility, Volatility,
-    VolatilityCounts,
+pub use metrics::coupling::{CouplingLocation, CouplingMetrics};
+pub use metrics::dimensions::{
+    Distance, IntegrationStrength, MetricsConfig, Subdomain, Visibility,
 };
+pub use metrics::module::{
+    BalanceClassification, BalanceCounts, DimensionStats, DistanceCounts, FunctionDefinition,
+    ModuleMetrics, StrengthCounts, TypeDefinition, VolatilityCounts,
+};
+pub use metrics::project::{CircularDependencySummary, ProjectMetrics};
 pub use report::{
     TextReportOptions, generate_ai_output, generate_ai_output_with_thresholds, generate_report,
     generate_report_with_options, generate_report_with_thresholds, generate_summary,
     generate_summary_with_options, generate_summary_with_thresholds,
 };
+pub use volatility::Volatility;
 pub use volatility::{VolatilityAnalyzer, VolatilityError, VolatilityStats};
 pub use workspace::{CrateInfo, WorkspaceError, WorkspaceInfo};

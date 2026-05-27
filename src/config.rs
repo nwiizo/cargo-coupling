@@ -52,8 +52,8 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
-use crate::metrics::MetricsConfig;
-pub use crate::metrics::Subdomain;
+use crate::metrics::dimensions::MetricsConfig;
+pub use crate::metrics::dimensions::Subdomain;
 use crate::volatility::Volatility;
 
 /// Errors that can occur when loading configuration

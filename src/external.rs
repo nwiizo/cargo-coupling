@@ -9,8 +9,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::balance::{CouplingIssue, IssueType, RefactoringAction, Severity};
-use crate::metrics::{CouplingMetrics, Distance, IntegrationStrength, ProjectMetrics};
+use crate::balance::action::RefactoringAction;
+use crate::balance::issue::CouplingIssue;
+use crate::balance::issue_type::IssueType;
+use crate::balance::severity::Severity;
+use crate::metrics::coupling::CouplingMetrics;
+use crate::metrics::dimensions::{Distance, IntegrationStrength};
+use crate::metrics::project::ProjectMetrics;
 
 /// Number of internal modules above which direct third-party usage is considered scattered.
 pub const SCATTERED_EXTERNAL_BREADTH_THRESHOLD: usize = 3;
@@ -300,7 +305,8 @@ fn strength_label(strength: IntegrationStrength) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metrics::{CouplingMetrics, Volatility};
+    use crate::metrics::coupling::CouplingMetrics;
+    use crate::volatility::Volatility;
 
     fn external_coupling(
         source: &str,

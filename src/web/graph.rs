@@ -7,11 +7,17 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
 use crate::analyzer::ItemDepType;
-use crate::balance::{
-    BalanceScore, CouplingIssue, IssueThresholds, IssueType, analyze_project_balance,
-};
+use crate::balance::issue::CouplingIssue;
+use crate::balance::issue_type::IssueType;
+use crate::balance::project::analyze_project_balance;
+use crate::balance::score::{BalanceInterpretation, BalanceScore, IssueThresholds};
+use crate::balance::severity::Severity;
 use crate::manifest::{ManifestContext, build_manifest};
-use crate::metrics::{BalanceClassification, CouplingMetrics, ProjectMetrics};
+use crate::metrics::coupling::CouplingMetrics;
+use crate::metrics::dimensions::{Distance, IntegrationStrength};
+use crate::metrics::module::BalanceClassification;
+use crate::metrics::project::ProjectMetrics;
+use crate::volatility::Volatility;
 
 /// Temporal coupling data for visualization
 #[derive(Debug, Clone, Serialize)]
@@ -260,11 +266,11 @@ fn sanitize_id(value: &str) -> String {
         .collect()
 }
 
-fn volatility_label(volatility: crate::metrics::Volatility) -> String {
+fn volatility_label(volatility: crate::volatility::Volatility) -> String {
     match volatility {
-        crate::metrics::Volatility::Low => "Low",
-        crate::metrics::Volatility::Medium => "Medium",
-        crate::metrics::Volatility::High => "High",
+        crate::volatility::Volatility::Low => "Low",
+        crate::volatility::Volatility::Medium => "Medium",
+        crate::volatility::Volatility::High => "High",
     }
     .to_string()
 }
@@ -647,10 +653,10 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
 
     for issue in &balance_report.issues {
         match issue.severity {
-            crate::balance::Severity::Critical => critical += 1,
-            crate::balance::Severity::High => high += 1,
-            crate::balance::Severity::Medium => medium += 1,
-            crate::balance::Severity::Low => low += 1,
+            Severity::Critical => critical += 1,
+            Severity::High => high += 1,
+            Severity::Medium => medium += 1,
+            Severity::Low => low += 1,
         }
     }
 
@@ -909,31 +915,31 @@ where
 
 fn coupling_to_dimensions(coupling: &CouplingMetrics, score: &BalanceScore) -> Dimensions {
     let strength_label = match coupling.strength {
-        crate::metrics::IntegrationStrength::Intrusive => "Intrusive",
-        crate::metrics::IntegrationStrength::Functional => "Functional",
-        crate::metrics::IntegrationStrength::Model => "Model",
-        crate::metrics::IntegrationStrength::Contract => "Contract",
+        IntegrationStrength::Intrusive => "Intrusive",
+        IntegrationStrength::Functional => "Functional",
+        IntegrationStrength::Model => "Model",
+        IntegrationStrength::Contract => "Contract",
     };
 
     let distance_label = match coupling.distance {
-        crate::metrics::Distance::SameFunction => "SameFunction",
-        crate::metrics::Distance::SameModule => "SameModule",
-        crate::metrics::Distance::DifferentModule => "DifferentModule",
-        crate::metrics::Distance::DifferentCrate => "DifferentCrate",
+        Distance::SameFunction => "SameFunction",
+        Distance::SameModule => "SameModule",
+        Distance::DifferentModule => "DifferentModule",
+        Distance::DifferentCrate => "DifferentCrate",
     };
 
     let volatility_label = match coupling.volatility {
-        crate::metrics::Volatility::Low => "Low",
-        crate::metrics::Volatility::Medium => "Medium",
-        crate::metrics::Volatility::High => "High",
+        Volatility::Low => "Low",
+        Volatility::Medium => "Medium",
+        Volatility::High => "High",
     };
 
     let balance_label = match score.interpretation {
-        crate::balance::BalanceInterpretation::Balanced => "Balanced",
-        crate::balance::BalanceInterpretation::Acceptable => "Acceptable",
-        crate::balance::BalanceInterpretation::NeedsReview => "NeedsReview",
-        crate::balance::BalanceInterpretation::NeedsRefactoring => "NeedsRefactoring",
-        crate::balance::BalanceInterpretation::Critical => "Critical",
+        BalanceInterpretation::Balanced => "Balanced",
+        BalanceInterpretation::Acceptable => "Acceptable",
+        BalanceInterpretation::NeedsReview => "NeedsReview",
+        BalanceInterpretation::NeedsRefactoring => "NeedsRefactoring",
+        BalanceInterpretation::Critical => "Critical",
     };
 
     // Calculate Khononov's BalanceClassification
@@ -978,8 +984,8 @@ fn find_issue_for_coupling(
     _thresholds: &IssueThresholds,
 ) -> Option<IssueInfo> {
     // Check for obvious issues
-    if coupling.strength == crate::metrics::IntegrationStrength::Intrusive
-        && coupling.distance == crate::metrics::Distance::DifferentCrate
+    if coupling.strength == IntegrationStrength::Intrusive
+        && coupling.distance == Distance::DifferentCrate
     {
         return Some(IssueInfo {
             issue_type: "GlobalComplexity".to_string(),
@@ -991,8 +997,7 @@ fn find_issue_for_coupling(
         });
     }
 
-    if coupling.strength.value() >= 0.75 && coupling.volatility == crate::metrics::Volatility::High
-    {
+    if coupling.strength.value() >= 0.75 && coupling.volatility == Volatility::High {
         return Some(IssueInfo {
             issue_type: "CascadingChangeRisk".to_string(),
             severity: "Medium".to_string(),

@@ -13,9 +13,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::balance::{HealthGrade, Severity, analyze_project_balance_with_thresholds};
+use crate::balance::grade::{HealthGrade, ProjectBalanceReport};
+use crate::balance::project::analyze_project_balance_with_thresholds;
+use crate::balance::severity::Severity;
 use crate::config::CompiledConfig;
-use crate::metrics::ProjectMetrics;
+use crate::metrics::project::ProjectMetrics;
 use crate::{IssueThresholds, VolatilityAnalyzer, analyze_workspace_with_config};
 
 static WORKTREE_SEQ: AtomicUsize = AtomicUsize::new(0);
@@ -69,9 +71,9 @@ pub struct RefAnalysis {
     /// The git ref that was analyzed.
     pub git_ref: String,
     /// Snapshot-equivalent project metrics for the ref.
-    pub metrics: crate::metrics::ProjectMetrics,
+    pub metrics: ProjectMetrics,
     /// Full balance report for the ref.
-    pub report: crate::balance::ProjectBalanceReport,
+    pub report: ProjectBalanceReport,
     /// Number of Rust files analyzed.
     pub total_files: usize,
     /// Number of modules analyzed.

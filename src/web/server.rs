@@ -11,10 +11,10 @@ use axum::Router;
 use tokio::net::TcpListener;
 
 use crate::analyze_history;
-use crate::balance::IssueThresholds;
+use crate::balance::score::IssueThresholds;
 use crate::cli_output::{JsonHistory, history_report_to_json};
 use crate::config::CompiledConfig;
-use crate::metrics::ProjectMetrics;
+use crate::metrics::project::ProjectMetrics;
 
 use super::routes;
 

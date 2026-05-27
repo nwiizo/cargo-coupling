@@ -6,7 +6,11 @@
 
 use std::collections::HashSet;
 
-use crate::balance::{CouplingIssue, HealthGrade, IssueType, ProjectBalanceReport, Severity};
+use crate::balance::grade::{HealthGrade, ProjectBalanceReport};
+use crate::balance::issue::CouplingIssue;
+use crate::balance::issue_type::IssueType;
+use crate::balance::severity::Severity;
+use crate::history::RefAnalysis;
 
 /// Stable identity for a coupling issue across snapshots.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -121,10 +125,17 @@ pub fn diff_reports(
     }
 }
 
+/// Diff a baseline git-ref analysis against the current report.
+pub fn diff_ref_analysis(baseline: &RefAnalysis, current: &ProjectBalanceReport) -> BaselineDiff {
+    diff_reports(&baseline.report, current)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::balance::{RefactoringAction, Severity};
+    use crate::balance::action::RefactoringAction;
+    use crate::balance::rationale::GradeRationale;
+    use crate::balance::severity::Severity;
 
     fn issue(
         issue_type: IssueType,
@@ -157,7 +168,7 @@ mod tests {
             issues_by_type: Default::default(),
             issues,
             top_priorities: Vec::new(),
-            grade_rationale: crate::balance::GradeRationale::empty(),
+            grade_rationale: GradeRationale::empty(),
         }
     }
 

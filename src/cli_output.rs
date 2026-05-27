@@ -11,16 +11,21 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
-use crate::balance::{
-    BalanceScore, HealthGrade, IssueThresholds, Severity, analyze_project_balance_with_thresholds,
-};
+use crate::balance::grade::HealthGrade;
+use crate::balance::issue::CouplingIssue;
+use crate::balance::issue_type::IssueType;
+use crate::balance::project::analyze_project_balance_with_thresholds;
+use crate::balance::score::{BalanceScore, IssueThresholds};
+use crate::balance::severity::Severity;
 use crate::diff::BaselineDiff;
 use crate::external::{
     ExternalDependencyReport, ExternalDependencyUsage, analyze_external_dependencies,
 };
 use crate::history::HistoryReport;
 use crate::manifest::AnalysisManifest;
-use crate::metrics::{Distance, ProjectMetrics};
+use crate::metrics::dimensions::Distance;
+use crate::metrics::project::ProjectMetrics;
+use crate::volatility::Volatility;
 
 // ============================================================================
 // Hotspots: Refactoring Prioritization
@@ -163,7 +168,7 @@ pub fn calculate_hotspots(
     let cycle_modules: HashSet<String> = circular_deps.iter().flatten().cloned().collect();
 
     // Group issues by source module
-    let mut module_issues: HashMap<String, Vec<&crate::balance::CouplingIssue>> = HashMap::new();
+    let mut module_issues: HashMap<String, Vec<&CouplingIssue>> = HashMap::new();
     for issue in &report.issues {
         module_issues
             .entry(issue.source.clone())
@@ -426,7 +431,7 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
     // Collect and group dependencies by target module
     let mut dep_map: HashMap<String, (String, HashMap<String, usize>)> = HashMap::new();
     let mut dependent_map: HashMap<String, (String, HashMap<String, usize>)> = HashMap::new();
-    let mut volatility_max = crate::metrics::Volatility::Low;
+    let mut volatility_max = Volatility::Low;
 
     for coupling in &metrics.couplings {
         if coupling.distance == Distance::DifferentCrate {
@@ -536,9 +541,9 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
         risk_score += 30;
     }
     match volatility_max {
-        crate::metrics::Volatility::High => risk_score += 20,
-        crate::metrics::Volatility::Medium => risk_score += 10,
-        crate::metrics::Volatility::Low => {}
+        Volatility::High => risk_score += 20,
+        Volatility::Medium => risk_score += 10,
+        Volatility::Low => {}
     }
     risk_score = risk_score.min(100);
 
@@ -1000,7 +1005,7 @@ pub fn generate_ratchet_check_output<W: Write>(
 fn write_issue_section<W: Write>(
     writer: &mut W,
     title: &str,
-    issues: &[crate::balance::CouplingIssue],
+    issues: &[CouplingIssue],
 ) -> io::Result<()> {
     writeln!(writer)?;
     writeln!(writer, "{}:", title)?;
@@ -1015,10 +1020,7 @@ fn write_issue_section<W: Write>(
     Ok(())
 }
 
-fn write_issue_line<W: Write>(
-    writer: &mut W,
-    issue: &crate::balance::CouplingIssue,
-) -> io::Result<()> {
+fn write_issue_line<W: Write>(writer: &mut W, issue: &CouplingIssue) -> io::Result<()> {
     writeln!(
         writer,
         "  - {} {}: {} -> {}",
@@ -1182,21 +1184,21 @@ pub fn generate_external_dependencies_output<W: Write>(
     Ok(())
 }
 
-fn severity_label(severity: crate::balance::Severity, japanese: bool) -> String {
+fn severity_label(severity: Severity, japanese: bool) -> String {
     if !japanese {
         return severity.to_string();
     }
     match severity {
-        crate::balance::Severity::Critical => "緊急",
-        crate::balance::Severity::High => "高",
-        crate::balance::Severity::Medium => "中",
-        crate::balance::Severity::Low => "低",
+        Severity::Critical => "緊急",
+        Severity::High => "高",
+        Severity::Medium => "中",
+        Severity::Low => "低",
     }
     .to_string()
 }
 
-fn issue_source_japanese(issue: &crate::balance::CouplingIssue) -> String {
-    if issue.issue_type == crate::balance::IssueType::ScatteredExternalCoupling
+fn issue_source_japanese(issue: &CouplingIssue) -> String {
+    if issue.issue_type == IssueType::ScatteredExternalCoupling
         && issue.source.ends_with(" internal modules")
     {
         let count = issue.source.split_whitespace().next().unwrap_or_default();
@@ -1205,20 +1207,20 @@ fn issue_source_japanese(issue: &crate::balance::CouplingIssue) -> String {
     issue.source.clone()
 }
 
-fn issue_instance_description_japanese(issue: &crate::balance::CouplingIssue) -> String {
+fn issue_instance_description_japanese(issue: &CouplingIssue) -> String {
     match issue.issue_type {
-        crate::balance::IssueType::ScatteredExternalCoupling => {
+        IssueType::ScatteredExternalCoupling => {
             let source = issue_source_japanese(issue);
             format!(
                 "{} は、{}から直接使われています。サードパーティ更新時のリスクがコードベース全体に広がっています。",
                 issue.target, source
             )
         }
-        crate::balance::IssueType::HiddenCoupling => {
+        IssueType::HiddenCoupling => {
             "明示的なコード依存はありませんが、ファイルが頻繁に一緒に変更されています。暗黙の知識や不足した抽象化を示している可能性があります。"
                 .to_string()
         }
-        crate::balance::IssueType::AccidentalVolatility => {
+        IssueType::AccidentalVolatility => {
             "安定しているはずのサブドメインが頻繁に変更されています。本質的な業務変化ではなく、設計や所有権の問題によるチャーンの可能性があります。"
                 .to_string()
         }
@@ -1226,19 +1228,19 @@ fn issue_instance_description_japanese(issue: &crate::balance::CouplingIssue) ->
     }
 }
 
-fn issue_refactoring_japanese(issue: &crate::balance::CouplingIssue) -> String {
+fn issue_refactoring_japanese(issue: &CouplingIssue) -> String {
     match issue.issue_type {
-        crate::balance::IssueType::ScatteredExternalCoupling => {
+        IssueType::ScatteredExternalCoupling => {
             let facade = issue.target.replace('-', "_");
             format!(
                 "`{}_facade` モジュールを導入し、直接利用をそこに集約する",
                 facade
             )
         }
-        crate::balance::IssueType::HiddenCoupling => {
+        IssueType::HiddenCoupling => {
             "共有されている知識を明示的な抽象化や境界に切り出す".to_string()
         }
-        crate::balance::IssueType::AccidentalVolatility => {
+        IssueType::AccidentalVolatility => {
             "変更理由を分離し、安定サブドメインを高頻度変更から守る".to_string()
         }
         _ => {
@@ -1555,7 +1557,7 @@ fn json_baseline_diff(diff: &BaselineDiff) -> JsonBaselineDiff {
     }
 }
 
-fn json_issue(issue: &crate::balance::CouplingIssue) -> JsonIssue {
+fn json_issue(issue: &CouplingIssue) -> JsonIssue {
     JsonIssue {
         issue_type: format!("{}", issue.issue_type),
         severity: format!("{}", issue.severity),
@@ -1655,7 +1657,7 @@ pub fn generate_trace_output<W: Write>(
     use crate::analyzer::ItemDepType;
 
     // Find all items matching the name
-    let mut found_in_modules: Vec<(&str, &crate::metrics::ModuleMetrics)> = Vec::new();
+    let mut found_in_modules: Vec<(&str, &crate::metrics::module::ModuleMetrics)> = Vec::new();
     let mut outgoing: Vec<TraceDependency> = Vec::new();
     let mut incoming: Vec<TraceDependency> = Vec::new();
 
@@ -2290,7 +2292,7 @@ mod tests {
     #[test]
     fn test_json_output_includes_module_subdomain_when_present() {
         use crate::config::Subdomain;
-        use crate::metrics::ModuleMetrics;
+        use crate::metrics::module::ModuleMetrics;
 
         let mut metrics = ProjectMetrics::new();
         let mut module = ModuleMetrics::new(PathBuf::from("src/report.rs"), "report".to_string());
@@ -2313,7 +2315,9 @@ mod tests {
 
     #[test]
     fn test_json_output_includes_grade_rationale() {
-        use crate::metrics::{CouplingMetrics, IntegrationStrength, Volatility};
+        use crate::metrics::coupling::CouplingMetrics;
+        use crate::metrics::dimensions::IntegrationStrength;
+        use crate::volatility::Volatility;
 
         let mut metrics = ProjectMetrics::new();
         metrics.add_coupling(CouplingMetrics::new(

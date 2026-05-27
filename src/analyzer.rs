@@ -19,10 +19,11 @@ use thiserror::Error;
 use walkdir::WalkDir;
 
 use crate::config::CompiledConfig;
-use crate::metrics::{
-    CouplingMetrics, Distance, IntegrationStrength, ModuleMetrics, ProjectMetrics, Visibility,
-    Volatility,
-};
+use crate::metrics::coupling::CouplingMetrics;
+use crate::metrics::dimensions::{Distance, IntegrationStrength, Visibility};
+use crate::metrics::module::ModuleMetrics;
+use crate::metrics::project::ProjectMetrics;
+use crate::volatility::Volatility;
 use crate::workspace::{WorkspaceError, WorkspaceInfo, resolve_crate_from_path};
 
 // ===== Syntax Helpers =====
@@ -1276,7 +1277,8 @@ pub fn analyze_project_parallel_with_config(
             }
 
             // Determine if this is an internal coupling
-            let target_module = extract_target_module(&dep.path);
+            let target_module =
+                resolve_target_module(&dep.path, &analyzed.module_name, &module_names);
 
             // Skip if target module looks invalid (but allow known module names)
             if !module_names.contains(&target_module) && !is_valid_dependency_path(&target_module) {
@@ -1486,7 +1488,8 @@ fn analyze_with_workspace(
             let resolved_crate =
                 resolve_crate_from_path(&dep.path, &analyzed.crate_name, workspace);
 
-            let target_module = extract_target_module(&dep.path);
+            let target_module =
+                resolve_target_module(&dep.path, &analyzed.module_name, &module_names);
 
             // Skip if target module looks invalid (but allow known module names)
             if !module_names.contains(&target_module) && !is_valid_dependency_path(&target_module) {
@@ -1599,6 +1602,64 @@ fn extract_target_module(path: &str) -> String {
 
     // Get first significant segment
     cleaned.split("::").next().unwrap_or(path).to_string()
+}
+
+fn resolve_target_module(
+    path: &str,
+    source_module: &str,
+    known_modules: &HashSet<String>,
+) -> String {
+    let resolved = resolve_relative_module_path(path, source_module);
+    let segments: Vec<&str> = resolved
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect();
+
+    for len in (1..=segments.len()).rev() {
+        let candidate = segments[..len].join("::");
+        if known_modules.contains(&candidate) {
+            return candidate;
+        }
+    }
+
+    extract_target_module(path)
+}
+
+fn resolve_relative_module_path(path: &str, source_module: &str) -> String {
+    if let Some(rest) = path.strip_prefix("crate::") {
+        return rest.to_string();
+    }
+    if let Some(rest) = path.strip_prefix("self::") {
+        return join_module_path(source_module, rest);
+    }
+
+    let mut rest = path;
+    let mut parent_levels = 0;
+    while let Some(next) = rest.strip_prefix("super::") {
+        parent_levels += 1;
+        rest = next;
+    }
+
+    if parent_levels == 0 {
+        return path.trim_start_matches("::").to_string();
+    }
+
+    let mut base: Vec<&str> = source_module.split("::").collect();
+    for _ in 0..parent_levels {
+        base.pop();
+    }
+    let prefix = base.join("::");
+    join_module_path(&prefix, rest)
+}
+
+fn join_module_path(prefix: &str, rest: &str) -> String {
+    if prefix.is_empty() {
+        rest.to_string()
+    } else if rest.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}::{rest}")
+    }
 }
 
 /// Check if a path looks like a valid module/type reference (not a local variable)
@@ -1883,6 +1944,28 @@ mod tests {
         assert_eq!(extract_target_module("crate::models::user"), "models");
         assert_eq!(extract_target_module("super::utils"), "utils");
         assert_eq!(extract_target_module("std::collections"), "std");
+    }
+
+    #[test]
+    fn test_resolve_target_module_prefers_longest_known_module() {
+        let known = HashSet::from([
+            "balance".to_string(),
+            "balance::issues".to_string(),
+            "balance::score".to_string(),
+        ]);
+
+        assert_eq!(
+            resolve_target_module("crate::balance::issues::CouplingIssue", "report", &known),
+            "balance::issues"
+        );
+        assert_eq!(
+            resolve_target_module("super::issues::IssueType", "balance::coupling", &known),
+            "balance::issues"
+        );
+        assert_eq!(
+            resolve_target_module("std::collections::HashMap", "balance::coupling", &known),
+            "std"
+        );
     }
 
     #[test]
