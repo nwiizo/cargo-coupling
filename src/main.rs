@@ -16,8 +16,8 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 
 use cargo_coupling::{
-    CompiledConfig, IssueThresholds, VolatilityAnalyzer, analyze_history,
-    analyze_workspace_with_config,
+    CompiledConfig, IssueThresholds, ManifestContext, VolatilityAnalyzer, analyze_history,
+    analyze_workspace_with_config, build_manifest,
     cli_output::{
         CheckConfig, generate_check_output, generate_history_output, generate_hotspots_output,
         generate_impact_output, generate_json_output, parse_grade, parse_severity,
@@ -309,6 +309,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     let analysis_time = analysis_start.elapsed();
 
     // Analyze git history for volatility (if not disabled)
+    let mut git_used = false;
     if !args.no_git {
         if args.verbose {
             eprintln!("Analyzing git history ({} months)...", args.git_months);
@@ -317,6 +318,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         let mut volatility = VolatilityAnalyzer::new(args.git_months);
         match volatility.analyze(&args.path) {
             Ok(()) => {
+                git_used = true;
                 if args.verbose {
                     let stats = volatility.statistics();
                     eprintln!(
@@ -393,6 +395,12 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         );
     }
 
+    let manifest = build_manifest(&ManifestContext {
+        git_used,
+        tests_excluded: config.exclude_tests,
+        parse_failures: 0,
+    });
+
     // Web visualization mode
     if args.web {
         let server_config = ServerConfig {
@@ -428,7 +436,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
 
     // --json: Machine-readable JSON output
     if args.json {
-        generate_json_output(&metrics, &thresholds, &mut writer)?;
+        generate_json_output(&metrics, &thresholds, &manifest, &mut writer)?;
         return Ok(0);
     }
 
@@ -466,11 +474,11 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
 
     // Default modes
     if args.ai {
-        generate_ai_output_with_thresholds(&metrics, &thresholds, &mut writer)?;
+        generate_ai_output_with_thresholds(&metrics, &thresholds, &manifest, &mut writer)?;
     } else if args.summary {
-        generate_summary_with_thresholds(&metrics, &thresholds, &mut writer)?;
+        generate_summary_with_thresholds(&metrics, &thresholds, &manifest, &mut writer)?;
     } else {
-        generate_report_with_thresholds(&metrics, &thresholds, &mut writer)?;
+        generate_report_with_thresholds(&metrics, &thresholds, &manifest, &mut writer)?;
     }
 
     // Notify about output file
@@ -683,5 +691,33 @@ mod tests {
         let error = run_coupling(args).unwrap_err().to_string();
 
         assert!(error.contains("--history must be greater than 0"));
+    }
+
+    #[test]
+    fn json_output_reports_no_git_and_excluded_tests() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        write_files(&src, false);
+        let output = tmp.path().join("manifest.json");
+
+        let mut args = base_args(src);
+        args.json = true;
+        args.exclude_tests = true;
+        args.output = Some(output.clone());
+
+        assert_eq!(run_coupling(args).unwrap(), 0);
+
+        let text = std::fs::read_to_string(output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let notes = parsed["analysis_manifest"]["notes"].as_array().unwrap();
+
+        assert!(notes.iter().any(|note| {
+            note.as_str()
+                .is_some_and(|note| note.contains("Git history was not analyzed"))
+        }));
+        assert!(notes.iter().any(|note| {
+            note.as_str()
+                .is_some_and(|note| note.contains("Test code was excluded"))
+        }));
     }
 }

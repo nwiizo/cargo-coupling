@@ -8,17 +8,20 @@ use crate::balance::{
     BalanceScore, IssueThresholds, ProjectBalanceReport, Severity,
     analyze_project_balance_with_thresholds,
 };
+use crate::manifest::{AnalysisManifest, ManifestContext, build_manifest};
 use crate::metrics::{Distance, IntegrationStrength, ProjectMetrics};
 
 /// Generate a summary report to the given writer
 pub fn generate_summary<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
-    generate_summary_with_thresholds(metrics, &IssueThresholds::default(), writer)
+    let manifest = default_manifest();
+    generate_summary_with_thresholds(metrics, &IssueThresholds::default(), &manifest, writer)
 }
 
 /// Generate a summary report with custom thresholds
 pub fn generate_summary_with_thresholds<W: Write>(
     metrics: &ProjectMetrics,
     thresholds: &IssueThresholds,
+    manifest: &AnalysisManifest,
     writer: &mut W,
 ) -> io::Result<()> {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
@@ -344,6 +347,8 @@ pub fn generate_summary_with_thresholds<W: Write>(
         )?;
     }
 
+    write_manifest_summary_section(manifest, jp, writer)?;
+
     Ok(())
 }
 
@@ -408,13 +413,15 @@ fn refactoring_action_japanese(action: &crate::balance::RefactoringAction) -> St
 
 /// Generate a full Markdown report with refactoring suggestions
 pub fn generate_report<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
-    generate_report_with_thresholds(metrics, &IssueThresholds::default(), writer)
+    let manifest = default_manifest();
+    generate_report_with_thresholds(metrics, &IssueThresholds::default(), &manifest, writer)
 }
 
 /// Generate a full Markdown report with custom thresholds
 pub fn generate_report_with_thresholds<W: Write>(
     metrics: &ProjectMetrics,
     thresholds: &IssueThresholds,
+    manifest: &AnalysisManifest,
     writer: &mut W,
 ) -> io::Result<()> {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
@@ -449,6 +456,9 @@ pub fn generate_report_with_thresholds<W: Write>(
 
     // Best practices
     write_best_practices(writer)?;
+
+    // Declared analysis blind spots
+    write_manifest_markdown_section(manifest, writer)?;
 
     Ok(())
 }
@@ -1108,13 +1118,15 @@ fn truncate_path(path: &str, max_len: usize) -> String {
 /// 2. Actionable with specific file/module references
 /// 3. Copy-paste ready for AI refactoring prompts
 pub fn generate_ai_output<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
-    generate_ai_output_with_thresholds(metrics, &IssueThresholds::default(), writer)
+    let manifest = default_manifest();
+    generate_ai_output_with_thresholds(metrics, &IssueThresholds::default(), &manifest, writer)
 }
 
 /// Generate AI-friendly output with custom thresholds
 pub fn generate_ai_output_with_thresholds<W: Write>(
     metrics: &ProjectMetrics,
     thresholds: &IssueThresholds,
+    manifest: &AnalysisManifest,
     writer: &mut W,
 ) -> io::Result<()> {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
@@ -1247,12 +1259,83 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
         writeln!(writer, "```")?;
     }
 
+    write_manifest_summary_section(manifest, false, writer)?;
+
+    Ok(())
+}
+
+fn default_manifest() -> AnalysisManifest {
+    build_manifest(&ManifestContext {
+        git_used: true,
+        tests_excluded: false,
+        parse_failures: 0,
+    })
+}
+
+fn write_manifest_markdown_section<W: Write>(
+    manifest: &AnalysisManifest,
+    writer: &mut W,
+) -> io::Result<()> {
+    writeln!(writer, "## Not Analyzed (blind spots)\n")?;
+
+    for blind_spot in &manifest.blind_spots {
+        writeln!(
+            writer,
+            "- **{}**: {}",
+            blind_spot.area, blind_spot.description
+        )?;
+    }
+
+    if !manifest.notes.is_empty() {
+        writeln!(writer)?;
+        writeln!(writer, "Run-specific notes:")?;
+        for note in &manifest.notes {
+            writeln!(writer, "- {}", note)?;
+        }
+    }
+
+    writeln!(writer)?;
+    Ok(())
+}
+
+fn write_manifest_summary_section<W: Write>(
+    manifest: &AnalysisManifest,
+    japanese: bool,
+    writer: &mut W,
+) -> io::Result<()> {
+    if japanese {
+        writeln!(writer, "未分析範囲 (blind spots):")?;
+    } else {
+        writeln!(writer, "Not Analyzed (blind spots):")?;
+    }
+
+    for blind_spot in &manifest.blind_spots {
+        writeln!(
+            writer,
+            "  - {}: {}",
+            blind_spot.area, blind_spot.description
+        )?;
+    }
+
+    if !manifest.notes.is_empty() {
+        if japanese {
+            writeln!(writer, "実行時の注意:")?;
+        } else {
+            writeln!(writer, "Run-specific notes:")?;
+        }
+        for note in &manifest.notes {
+            writeln!(writer, "  - {}", note)?;
+        }
+    }
+
+    writeln!(writer)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::{ManifestContext, build_manifest};
     use std::path::PathBuf;
 
     #[test]
@@ -1279,6 +1362,54 @@ mod tests {
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("# Coupling Analysis Report"));
         assert!(output_str.contains("Executive Summary"));
+        assert!(output_str.contains("## Not Analyzed (blind spots)"));
+        assert!(output_str.contains("dynamic-connascence"));
+    }
+
+    #[test]
+    fn test_generate_summary_includes_manifest_notes() {
+        let metrics = ProjectMetrics::new();
+        let thresholds = IssueThresholds::default();
+        let manifest = build_manifest(&ManifestContext {
+            git_used: false,
+            tests_excluded: true,
+            parse_failures: 0,
+        });
+        let mut output = Vec::new();
+
+        let result =
+            generate_summary_with_thresholds(&metrics, &thresholds, &manifest, &mut output);
+        assert!(result.is_ok());
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("Not Analyzed (blind spots):"));
+        assert!(output_str.contains("dynamic-connascence"));
+        assert!(output_str.contains("Git history was not analyzed"));
+        assert!(output_str.contains("Test code was excluded"));
+    }
+
+    #[test]
+    fn test_generate_ai_output_includes_manifest() {
+        let metrics = ProjectMetrics::new();
+        let manifest = build_manifest(&ManifestContext {
+            git_used: false,
+            tests_excluded: false,
+            parse_failures: 0,
+        });
+        let mut output = Vec::new();
+
+        let result = generate_ai_output_with_thresholds(
+            &metrics,
+            &IssueThresholds::default(),
+            &manifest,
+            &mut output,
+        );
+        assert!(result.is_ok());
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("Not Analyzed (blind spots):"));
+        assert!(output_str.contains("macro-and-cfg"));
+        assert!(output_str.contains("Git history was not analyzed"));
     }
 
     #[test]

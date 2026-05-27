@@ -653,11 +653,8 @@ These optimizations provide **5x-47x speedup** compared to naive implementation 
 
 ```rust
 use cargo_coupling::{
-    analyze_workspace_with_config,
-    generate_report_with_thresholds,
-    IssueThresholds,
-    VolatilityAnalyzer,
-    load_compiled_config,
+    analyze_workspace_with_config, build_manifest, generate_report_with_thresholds,
+    load_compiled_config, IssueThresholds, ManifestContext, VolatilityAnalyzer,
 };
 use std::path::Path;
 
@@ -687,7 +684,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_dependents: 25,
         ..Default::default()
     };
-    generate_report_with_thresholds(&metrics, &thresholds, &mut std::io::stdout())?;
+    let manifest = build_manifest(&ManifestContext {
+        git_used: !metrics.file_changes.is_empty(),
+        tests_excluded: config.exclude_tests,
+        parse_failures: 0,
+    });
+    generate_report_with_thresholds(&metrics, &thresholds, &manifest, &mut std::io::stdout())?;
 
     Ok(())
 }

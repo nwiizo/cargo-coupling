@@ -15,6 +15,7 @@ use crate::balance::{
     BalanceScore, HealthGrade, IssueThresholds, Severity, analyze_project_balance_with_thresholds,
 };
 use crate::history::HistoryReport;
+use crate::manifest::AnalysisManifest;
 use crate::metrics::{Distance, ProjectMetrics};
 
 // ============================================================================
@@ -923,6 +924,7 @@ pub struct JsonTemporalCoupling {
 #[derive(Debug, Clone, Serialize)]
 pub struct JsonOutput {
     pub summary: JsonSummary,
+    pub analysis_manifest: JsonAnalysisManifest,
     pub hotspots: Vec<Hotspot>,
     pub issues: Vec<JsonIssue>,
     pub circular_dependencies: Vec<Vec<String>>,
@@ -942,6 +944,20 @@ pub struct JsonSummary {
     pub critical_issues: usize,
     pub high_issues: usize,
     pub medium_issues: usize,
+}
+
+/// Declared analysis blind spots in JSON format
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonAnalysisManifest {
+    pub blind_spots: Vec<JsonBlindSpot>,
+    pub notes: Vec<String>,
+}
+
+/// Structural blind spot in JSON format
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonBlindSpot {
+    pub area: String,
+    pub description: String,
 }
 
 /// Issue in JSON format
@@ -971,6 +987,7 @@ pub struct JsonModule {
 pub fn generate_json_output<W: Write>(
     metrics: &ProjectMetrics,
     thresholds: &IssueThresholds,
+    manifest: &AnalysisManifest,
     writer: &mut W,
 ) -> io::Result<()> {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
@@ -1033,6 +1050,17 @@ pub fn generate_json_output<W: Write>(
             critical_issues: critical,
             high_issues: high,
             medium_issues: medium,
+        },
+        analysis_manifest: JsonAnalysisManifest {
+            blind_spots: manifest
+                .blind_spots
+                .iter()
+                .map(|blind_spot| JsonBlindSpot {
+                    area: blind_spot.area.to_string(),
+                    description: blind_spot.description.to_string(),
+                })
+                .collect(),
+            notes: manifest.notes.clone(),
         },
         hotspots,
         issues: report
@@ -1571,6 +1599,7 @@ fn describe_trend(from: f64, to: f64) -> &'static str {
 mod tests {
     use super::*;
     use crate::history::{HistoryPoint, HistoryReport};
+    use crate::manifest::{ManifestContext, build_manifest};
 
     fn sample_point(date: &str, grade: HealthGrade, score: f64) -> HistoryPoint {
         HistoryPoint {
@@ -1670,5 +1699,45 @@ mod tests {
         let config = CheckConfig::default();
         let result = run_check(&metrics, &thresholds, &config);
         assert!(result.passed);
+    }
+
+    #[test]
+    fn test_json_output_includes_analysis_manifest() {
+        let metrics = ProjectMetrics::new();
+        let thresholds = IssueThresholds::default();
+        let manifest = build_manifest(&ManifestContext {
+            git_used: false,
+            tests_excluded: true,
+            parse_failures: 0,
+        });
+        let mut buf = Vec::new();
+
+        generate_json_output(&metrics, &thresholds, &manifest, &mut buf).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let blind_spots = parsed["analysis_manifest"]["blind_spots"]
+            .as_array()
+            .unwrap();
+        let notes = parsed["analysis_manifest"]["notes"].as_array().unwrap();
+
+        assert!(blind_spots.iter().any(|spot| {
+            spot["area"]
+                .as_str()
+                .is_some_and(|area| area == "dynamic-connascence")
+        }));
+        assert!(blind_spots.iter().any(|spot| {
+            spot["area"]
+                .as_str()
+                .is_some_and(|area| area == "macro-and-cfg")
+        }));
+        assert!(notes.iter().any(|note| {
+            note.as_str()
+                .is_some_and(|note| note.contains("Git history was not analyzed"))
+        }));
+        assert!(notes.iter().any(|note| {
+            note.as_str()
+                .is_some_and(|note| note.contains("Test code was excluded"))
+        }));
     }
 }
