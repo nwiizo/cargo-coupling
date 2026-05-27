@@ -261,6 +261,7 @@ body {
 
 .segmented-control {
     display: flex;
+    flex-wrap: wrap;
     padding: 0.1875rem;
     border: 1px solid rgba(148, 163, 184, 0.28);
     border-radius: 0.5rem;
@@ -349,6 +350,242 @@ body {
 .axis-x { border-color: #ef4444; }
 .axis-y { border-color: #38bdf8; }
 .axis-z { border-color: #22c55e; }
+
+/* Markdown Report View */
+.report-view {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    overflow-y: auto;
+    background: #111827;
+    padding: 6.5rem 1.5rem 2.5rem;
+}
+
+.report-shell {
+    display: grid;
+    grid-template-columns: minmax(11rem, 15rem) minmax(0, 52rem);
+    gap: 1.25rem;
+    max-width: 1120px;
+    margin: 0 auto;
+    align-items: start;
+}
+
+.report-toc {
+    position: sticky;
+    top: 6.5rem;
+    max-height: calc(100vh - 8rem);
+    overflow-y: auto;
+    padding: 0.875rem;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 0.5rem;
+    background: rgba(15, 23, 42, 0.76);
+}
+
+.report-toc-title {
+    margin-bottom: 0.625rem;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.report-toc-list {
+    display: grid;
+    gap: 0.25rem;
+}
+
+.report-toc-link {
+    display: block;
+    padding: 0.25rem 0;
+    color: #cbd5e1;
+    font-size: 0.8125rem;
+    line-height: 1.35;
+    text-decoration: none;
+}
+
+.report-toc-link:hover {
+    color: #f8fafc;
+}
+
+.report-toc-link.h2 {
+    padding-left: 0.75rem;
+}
+
+.report-toc-link.h3 {
+    padding-left: 1.5rem;
+    color: #94a3b8;
+    font-size: 0.75rem;
+}
+
+.report-toc-empty {
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+}
+
+.report-panel {
+    min-width: 0;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 0.5rem;
+    background: #0b1220;
+    box-shadow: var(--panel-shadow);
+}
+
+.report-meta {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+
+.report-content {
+    padding: 1.5rem 1.75rem 2rem;
+    color: #dbeafe;
+    font-size: 0.9375rem;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+
+.report-content h1,
+.report-content h2,
+.report-content h3 {
+    position: relative;
+    color: #f8fafc;
+    line-height: 1.25;
+}
+
+.report-content h1 {
+    margin: 0 0 1.25rem;
+    font-size: 1.75rem;
+}
+
+.report-content h2 {
+    margin: 2rem 0 0.75rem;
+    padding-top: 0.25rem;
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+    font-size: 1.25rem;
+}
+
+.report-content h3 {
+    margin: 1.5rem 0 0.5rem;
+    font-size: 1rem;
+}
+
+.report-content p,
+.report-content ul,
+.report-content ol,
+.report-content table,
+.report-content pre {
+    margin-bottom: 1rem;
+}
+
+.report-content ul,
+.report-content ol {
+    padding-left: 1.4rem;
+}
+
+.report-content li + li {
+    margin-top: 0.25rem;
+}
+
+.report-content a {
+    color: #7dd3fc;
+}
+
+.report-heading-anchor {
+    margin-left: 0.5rem;
+    color: #64748b;
+    font-size: 0.8em;
+    text-decoration: none;
+    opacity: 0;
+}
+
+.report-content h1:hover .report-heading-anchor,
+.report-content h2:hover .report-heading-anchor,
+.report-content h3:hover .report-heading-anchor {
+    opacity: 1;
+}
+
+.report-content code {
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    background: rgba(30, 41, 59, 0.92);
+    color: #e0f2fe;
+    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    font-size: 0.875em;
+}
+
+.report-content pre {
+    overflow-x: auto;
+    padding: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 0.5rem;
+    background: #020617;
+}
+
+.report-content pre code {
+    padding: 0;
+    background: transparent;
+}
+
+.report-content table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+}
+
+.report-content th,
+.report-content td {
+    padding: 0.5rem 0.625rem;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    text-align: left;
+    vertical-align: top;
+}
+
+.report-content th {
+    background: rgba(30, 41, 59, 0.82);
+    color: #f8fafc;
+}
+
+.report-content blockquote {
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem;
+    border-left: 3px solid #38bdf8;
+    background: rgba(14, 165, 233, 0.1);
+    color: #cbd5e1;
+}
+
+.report-error {
+    display: grid;
+    gap: 0.375rem;
+    padding: 1rem;
+    border: 1px solid rgba(239, 68, 68, 0.45);
+    border-radius: 0.5rem;
+    background: rgba(127, 29, 29, 0.24);
+    color: #fecaca;
+}
+
+@media (max-width: 840px) {
+    .report-view {
+        padding: 6rem 0.875rem 1.5rem;
+    }
+
+    .report-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .report-toc {
+        position: static;
+        max-height: 12rem;
+    }
+
+    .report-content {
+        padding: 1.125rem;
+        font-size: 0.875rem;
+    }
+}
 
 /* Sidebar - toggle button */
 .sidebar {

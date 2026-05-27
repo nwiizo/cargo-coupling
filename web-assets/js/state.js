@@ -5,6 +5,7 @@
 export const CONFIG = {
     apiEndpoint: '',
     graphPath: '/api/graph',
+    reportPath: '/api/report',
     historyPath: '/api/history',
     configPath: '/api/config'
 };
