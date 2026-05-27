@@ -670,10 +670,14 @@ fn write_refactoring_priorities<W: Write>(
     // Show top 5 priority issues with concrete actions
     writeln!(writer, "### Immediate Actions\n")?;
 
+    // Deduplicate by (type, source, target): several couplings between the same
+    // module pair otherwise fill the list with identical "Immediate Actions".
+    let mut seen_priorities = std::collections::HashSet::new();
     let priority_issues: Vec<_> = report
         .issues
         .iter()
         .filter(|i| i.severity >= Severity::Medium)
+        .filter(|i| seen_priorities.insert((i.issue_type, i.source.clone(), i.target.clone())))
         .take(5)
         .collect();
 
