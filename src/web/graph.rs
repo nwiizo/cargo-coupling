@@ -308,7 +308,8 @@ fn paths_match(module_path: &str, git_path: &str) -> bool {
 pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) -> GraphData {
     // Use the caller's configured thresholds so the web grade matches the CLI grade
     // (the previous default-thresholds call produced an inconsistent grade).
-    let balance_report = crate::balance::analyze_project_balance_with_thresholds(metrics, thresholds);
+    let balance_report =
+        crate::balance::analyze_project_balance_with_thresholds(metrics, thresholds);
     let circular_deps = metrics.detect_circular_dependencies();
     let accidental_volatility_modules: HashSet<String> = balance_report
         .issues

@@ -25,7 +25,14 @@ pub(crate) fn analyze_hidden_temporal_coupling(metrics: &ProjectMetrics) -> Vec<
             continue;
         };
 
-        if source == target || has_code_coupling(metrics, &source, &target) {
+        // The binary entrypoint co-changes with whatever it wires up (it edits when
+        // any wired feature changes), so co-change involving it is expected, not
+        // hidden coupling.
+        if source == target
+            || has_code_coupling(metrics, &source, &target)
+            || super::coupling::is_entrypoint_module(&source)
+            || super::coupling::is_entrypoint_module(&target)
+        {
             continue;
         }
 
