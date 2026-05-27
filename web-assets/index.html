@@ -10,6 +10,7 @@
     <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
     <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
     <script src="https://unpkg.com/3d-force-graph"></script>
+    <script src="https://unpkg.com/marked@12.0.2/marked.min.js"></script>
 </head>
 <body>
     <!-- Trigger zones for auto-hide UI -->
@@ -44,6 +45,7 @@
                     <button id="canvas-view-2d" class="segment active" type="button">2D Graph</button>
                     <button id="canvas-view-3d" class="segment" type="button">3D Graph</button>
                     <button id="canvas-view-space" class="segment" type="button">Dimension-Space</button>
+                    <button id="canvas-view-report" class="segment" type="button">Report</button>
                 </div>
                 <button id="canvas-legend-toggle" class="canvas-tool-btn" type="button">Legend</button>
             </div>
@@ -55,6 +57,22 @@
                 <span class="axis-label axis-z">Z: Volatility</span>
             </div>
             <div class="tree-container" id="tree-view" style="display: none;"></div>
+            <section class="report-view" id="report-view" style="display: none;" aria-label="Markdown report">
+                <div class="report-shell">
+                    <nav class="report-toc" aria-label="Report sections">
+                        <div class="report-toc-title">Contents</div>
+                        <div class="report-toc-list" id="report-toc-list"></div>
+                    </nav>
+                    <article class="report-panel">
+                        <div class="report-meta">
+                            <span id="report-status">Report not loaded</span>
+                        </div>
+                        <div class="report-content" id="report-content">
+                            <p class="placeholder">Loading report...</p>
+                        </div>
+                    </article>
+                </div>
+            </section>
         </main>
 
         <!-- Sidebar - auto-hide (fixed positioned, outside main) -->

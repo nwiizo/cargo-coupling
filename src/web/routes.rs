@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli_output::JsonHistory;
 use crate::history::analyze_ref;
+use crate::manifest::{ManifestContext, build_manifest};
+use crate::report::{TextReportOptions, generate_report_with_options};
 
 use super::graph;
 use super::server::AppState;
@@ -82,6 +84,7 @@ struct ModuleQuery {
 pub fn api_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/graph", get(get_graph))
+        .route("/api/report", get(get_report))
         .route("/api/history", get(get_history))
         .route("/api/config", get(get_config))
         .route("/api/health", get(health_check))
@@ -127,6 +130,37 @@ async fn get_graph(
     } else {
         let graph = graph::project_to_graph(&state.metrics, &state.thresholds);
         Json(graph).into_response()
+    }
+}
+
+/// GET /api/report - Returns the current Markdown analysis report.
+async fn get_report(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let manifest = build_manifest(&ManifestContext {
+        git_used: !state.no_git
+            && (!state.metrics.file_changes.is_empty()
+                || !state.metrics.temporal_couplings.is_empty()),
+        tests_excluded: state.analysis_config.exclude_tests,
+        parse_failures: state.metrics.parse_failures,
+    });
+    let mut output = Vec::new();
+
+    match generate_report_with_options(
+        &state.metrics,
+        &state.thresholds,
+        &manifest,
+        TextReportOptions::default(),
+        &mut output,
+    ) {
+        Ok(()) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/markdown; charset=utf-8")
+            .body(axum::body::Body::from(output))
+            .unwrap(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 

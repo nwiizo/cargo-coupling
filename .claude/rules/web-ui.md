@@ -17,6 +17,7 @@
 | `panels-and-jobs.js` | Sidebar panels: issues, hotspots, temporal coupling, rankings, jobs |
 | `item-graph.js` | Item-level dependency graph |
 | `timeline.js` | History timeline chart and auto-play controls |
+| `report-view.js` | Markdown report fetch, render, ToC, and polling |
 | `main.js` | Entry point |
 
 ## Common Issues
@@ -37,6 +38,7 @@
 | Endpoint | Purpose |
 |----------|---------|
 | `/api/graph` | Full graph data |
+| `/api/report` | Markdown report generated from the loaded analysis metrics |
 | `/api/graph?ref=<commit>` | Graph data analyzed at a git revision |
 | `/api/history` | Precomputed git-history health timeline |
 | `/api/source` | Source code for file; can use `?ref=<commit>` for historical source |

@@ -48,6 +48,7 @@ import {
 import { graphQueue, runLayoutAsync, debounce } from './graph-queue.js';
 import { getInitialSelection, updateUrl, initUrlRouter } from './url-router.js';
 import { initTimeline } from './timeline.js';
+import { setupReportView, showReportView, hideReportView } from './report-view.js';
 
 // =====================================================
 // State Management
@@ -269,6 +270,7 @@ function initUI(data) {
     setupAutoHideTriggers();
     setupViewToggle();
     setupProjectionToggle();
+    setupReportView();
     setupLegendToggle();
     setupCenterModeToggle();
     setupItemToggle();
@@ -558,8 +560,11 @@ function setupViewToggle() {
         if (currentView === 'graph') return;
 
         currentView = 'graph';
+        hideReportView();
         showActiveGraphProjection();
+        syncCanvasProjectionButtons();
         document.getElementById('tree-view')?.style.setProperty('display', 'none');
+        document.getElementById('canvas-view-report')?.classList.remove('active');
 
         // Update button states
         graphBtn.classList.add('active');
@@ -577,9 +582,11 @@ function setupViewToggle() {
         if (currentView === 'tree') return;
 
         currentView = 'tree';
+        hideReportView();
         document.getElementById('cy').style.display = 'none';
         document.getElementById('graph-3d').style.display = 'none';
         document.getElementById('dimension-space-labels').style.display = 'none';
+        document.getElementById('canvas-view-report')?.classList.remove('active');
         const treeView = document.getElementById('tree-view');
         if (treeView) {
             treeView.style.display = 'block';
@@ -600,9 +607,20 @@ function setupProjectionToggle() {
     const canvas2dButton = document.getElementById('canvas-view-2d');
     const canvas3dButton = document.getElementById('canvas-view-3d');
     const canvasSpaceButton = document.getElementById('canvas-view-space');
+    const canvasReportButton = document.getElementById('canvas-view-report');
     const legendButton = document.getElementById('canvas-legend-toggle');
 
+    const activateGraphCanvas = () => {
+        currentView = 'graph';
+        hideReportView();
+        document.getElementById('tree-view')?.style.setProperty('display', 'none');
+        document.getElementById('view-graph')?.classList.add('active');
+        document.getElementById('view-tree')?.classList.remove('active');
+        canvasReportButton?.classList.remove('active');
+    };
+
     const activate2d = () => {
+        activateGraphCanvas();
         setGraphProjection('2d');
         twoDButton?.classList.add('active');
         canvas2dButton?.classList.add('active');
@@ -610,10 +628,11 @@ function setupProjectionToggle() {
         canvas3dButton?.classList.remove('active');
         canvasSpaceButton?.classList.remove('active');
         document.getElementById('graph-3d-mode-buttons').style.display = 'none';
-        if (currentView === 'graph') showActiveGraphProjection();
+        showActiveGraphProjection();
     };
 
     const activate3dNetwork = () => {
+        activateGraphCanvas();
         setGraphProjection('3d');
         set3dMode('network');
         threeDButton?.classList.add('active');
@@ -624,11 +643,12 @@ function setupProjectionToggle() {
         networkButton?.classList.add('active');
         spaceButton?.classList.remove('active');
         document.getElementById('graph-3d-mode-buttons').style.display = 'flex';
-        if (currentView === 'graph') showActiveGraphProjection();
+        showActiveGraphProjection();
         render3dMode(state.graphData, 'network');
     };
 
     const activateDimensionSpace = () => {
+        activateGraphCanvas();
         setGraphProjection('3d');
         set3dMode('dimension-space');
         threeDButton?.classList.add('active');
@@ -639,8 +659,26 @@ function setupProjectionToggle() {
         networkButton?.classList.remove('active');
         spaceButton?.classList.add('active');
         document.getElementById('graph-3d-mode-buttons').style.display = 'flex';
-        if (currentView === 'graph') showActiveGraphProjection();
+        showActiveGraphProjection();
         render3dMode(state.graphData, 'dimension-space');
+    };
+
+    const activateReport = () => {
+        currentView = 'report';
+        document.getElementById('cy').style.display = 'none';
+        document.getElementById('graph-3d').style.display = 'none';
+        document.getElementById('tree-view')?.style.setProperty('display', 'none');
+        document.getElementById('dimension-space-labels').style.display = 'none';
+        document.getElementById('graph-3d-mode-buttons').style.display = 'none';
+
+        canvas2dButton?.classList.remove('active');
+        canvas3dButton?.classList.remove('active');
+        canvasSpaceButton?.classList.remove('active');
+        canvasReportButton?.classList.add('active');
+        document.getElementById('view-graph')?.classList.remove('active');
+        document.getElementById('view-tree')?.classList.remove('active');
+
+        showReportView();
     };
 
     twoDButton?.addEventListener('click', activate2d);
@@ -648,6 +686,7 @@ function setupProjectionToggle() {
     threeDButton?.addEventListener('click', activate3dNetwork);
     canvas3dButton?.addEventListener('click', activate3dNetwork);
     canvasSpaceButton?.addEventListener('click', activateDimensionSpace);
+    canvasReportButton?.addEventListener('click', activateReport);
 
     networkButton?.addEventListener('click', () => {
         set3dMode('network');
@@ -684,6 +723,17 @@ function showActiveGraphProjection() {
         state.cy.resize();
         state.cy.fit(undefined, 50);
     }
+}
+
+function syncCanvasProjectionButtons() {
+    const show2d = state.currentGraphProjection === '2d';
+    const showNetwork = state.currentGraphProjection === '3d' && state.current3dMode === 'network';
+    const showSpace = state.currentGraphProjection === '3d' && state.current3dMode === 'dimension-space';
+
+    document.getElementById('canvas-view-2d')?.classList.toggle('active', show2d);
+    document.getElementById('canvas-view-3d')?.classList.toggle('active', showNetwork);
+    document.getElementById('canvas-view-space')?.classList.toggle('active', showSpace);
+    document.getElementById('canvas-view-report')?.classList.remove('active');
 }
 
 // =====================================================
@@ -1046,8 +1096,11 @@ function switchToGraphView() {
     const treeBtn = document.getElementById('view-tree');
 
     currentView = 'graph';
-    document.getElementById('cy').style.display = 'block';
+    hideReportView();
+    document.getElementById('canvas-view-report')?.classList.remove('active');
     document.getElementById('tree-view')?.style.setProperty('display', 'none');
+    showActiveGraphProjection();
+    syncCanvasProjectionButtons();
 
     graphBtn?.classList.add('active');
     treeBtn?.classList.remove('active');
