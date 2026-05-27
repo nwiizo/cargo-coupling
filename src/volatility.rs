@@ -181,18 +181,25 @@ impl VolatilityAnalyzer {
         // as they produce O(n²) noise rather than meaningful coupling signal
         const MAX_FILES_PER_COMMIT: usize = 50;
         let mut pair_counts: HashMap<(String, String), usize> = HashMap::new();
-        for files in &commits {
-            if files.len() > MAX_FILES_PER_COMMIT {
+        for changed_files in &commits {
+            if changed_files.len() > MAX_FILES_PER_COMMIT {
                 continue;
             }
-            for i in 0..files.len() {
-                for j in (i + 1)..files.len() {
-                    let (a, b) = if files[i] < files[j] {
-                        (files[i].clone(), files[j].clone())
-                    } else {
-                        (files[j].clone(), files[i].clone())
-                    };
-                    *pair_counts.entry((a, b)).or_default() += 1;
+            for left_index in 0..changed_files.len() {
+                for right_index in (left_index + 1)..changed_files.len() {
+                    let (first_file, second_file) =
+                        if changed_files[left_index] < changed_files[right_index] {
+                            (
+                                changed_files[left_index].clone(),
+                                changed_files[right_index].clone(),
+                            )
+                        } else {
+                            (
+                                changed_files[right_index].clone(),
+                                changed_files[left_index].clone(),
+                            )
+                        };
+                    *pair_counts.entry((first_file, second_file)).or_default() += 1;
                 }
             }
         }
@@ -279,13 +286,21 @@ impl TemporalCoupling {
 /// Statistics about volatility across the project
 #[derive(Debug, Default)]
 pub struct VolatilityStats {
+    /// Number of Rust files with git change data.
     pub total_files: usize,
+    /// Total observed file changes across the analysis window.
     pub total_changes: usize,
+    /// Highest change count for one file.
     pub max_changes: usize,
+    /// Lowest change count for one file.
     pub min_changes: usize,
+    /// Average change count per file.
     pub avg_changes: f64,
+    /// Number of files classified as low volatility.
     pub low_volatility_count: usize,
+    /// Number of files classified as medium volatility.
     pub medium_volatility_count: usize,
+    /// Number of files classified as high volatility.
     pub high_volatility_count: usize,
 }
 

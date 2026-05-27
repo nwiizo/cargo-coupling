@@ -1,8 +1,8 @@
-//! AST analysis for coupling detection
+//! Rust AST analysis for coupling detection.
 //!
-//! Uses `syn` to parse Rust source code and detect coupling patterns.
-//! Optionally uses `cargo metadata` for accurate workspace analysis.
-//! Supports parallel processing via Rayon for large projects.
+//! This module converts source files and workspace metadata into `ProjectMetrics`,
+//! giving the balance layer structural evidence about imports, type usage,
+//! calls, visibility, and item-level dependencies.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
@@ -24,6 +24,8 @@ use crate::metrics::{
     Volatility,
 };
 use crate::workspace::{WorkspaceError, WorkspaceInfo, resolve_crate_from_path};
+
+// ===== Syntax Helpers =====
 
 /// Convert syn's Visibility to our Visibility enum
 fn convert_visibility(vis: &syn::Visibility) -> Visibility {
@@ -91,8 +93,8 @@ fn file_path_to_module_path(file_path: &Path, src_root: &Path) -> String {
     let mut parts: Vec<String> = Vec::new();
 
     for component in relative.components() {
-        if let Some(s) = component.as_os_str().to_str() {
-            parts.push(s.to_string());
+        if let Some(component_name) = component.as_os_str().to_str() {
+            parts.push(component_name.to_string());
         }
     }
 
@@ -119,6 +121,8 @@ fn file_path_to_module_path(file_path: &Path, src_root: &Path) -> String {
 
     parts.join("::")
 }
+
+// ===== Public Analysis Model =====
 
 /// Errors that can occur during analysis
 #[derive(Error, Debug)]
@@ -215,6 +219,7 @@ impl UsageContext {
 }
 
 impl DependencyKind {
+    /// Convert coarse dependency kind to its default integration strength.
     pub fn to_strength(&self) -> IntegrationStrength {
         match self {
             DependencyKind::TraitImpl => IntegrationStrength::Contract,
@@ -260,11 +265,17 @@ pub struct CouplingAnalyzer {
 /// Statistics about usage patterns
 #[derive(Debug, Default, Clone)]
 pub struct UsageCounts {
+    /// Number of detected field access expressions.
     pub field_accesses: usize,
+    /// Number of detected method calls.
     pub method_calls: usize,
+    /// Number of detected associated or free function calls.
     pub function_calls: usize,
+    /// Number of detected struct construction expressions.
     pub struct_constructions: usize,
+    /// Number of trait bounds or trait implementations.
     pub trait_bounds: usize,
+    /// Number of type parameter or field type usages.
     pub type_parameters: usize,
 }
 
@@ -319,6 +330,8 @@ pub enum ItemDepType {
     /// Imports: use foo::Bar
     Import,
 }
+
+// ===== AST Visitor =====
 
 impl CouplingAnalyzer {
     /// Create a new analyzer for a module
@@ -1030,6 +1043,8 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
     }
 }
 
+// ===== Project Analysis Pipeline =====
+
 /// Analyzed file data
 #[derive(Debug, Clone)]
 struct AnalyzedFile {
@@ -1185,10 +1200,10 @@ pub fn analyze_project_parallel_with_config(
                     Ok(result) => {
                         // Use full module path instead of just file stem (Issue #14)
                         let module_path = file_path_to_module_path(file_path, path);
-                        let old_name = result.metrics.name.clone();
+                        let original_module_name = result.metrics.name.clone();
                         let module_name = if module_path.is_empty() {
                             // Crate root (lib.rs/main.rs) - use the original name
-                            old_name.clone()
+                            original_module_name.clone()
                         } else {
                             module_path
                         };
@@ -1198,7 +1213,7 @@ pub fn analyze_project_parallel_with_config(
                             .item_dependencies
                             .into_iter()
                             .map(|mut dep| {
-                                if dep.target_module.as_ref() == Some(&old_name) {
+                                if dep.target_module.as_ref() == Some(&original_module_name) {
                                     dep.target_module = Some(module_name.clone());
                                 }
                                 dep
@@ -1209,9 +1224,9 @@ pub fn analyze_project_parallel_with_config(
                             module_name: module_name.clone(),
                             file_path: file_path.clone(),
                             metrics: {
-                                let mut m = result.metrics;
-                                m.name = module_name;
-                                m
+                                let mut module_metrics = result.metrics;
+                                module_metrics.name = module_name;
+                                module_metrics
                             },
                             dependencies: result.dependencies,
                             type_visibility: result.type_visibility,
@@ -1400,10 +1415,10 @@ fn analyze_with_workspace(
                         Ok(result) => {
                             // Use full module path instead of just file stem (Issue #14)
                             let module_path = file_path_to_module_path(file_path, src_root);
-                            let old_name = result.metrics.name.clone();
+                            let original_module_name = result.metrics.name.clone();
                             let module_name = if module_path.is_empty() {
                                 // Crate root (lib.rs/main.rs) - use the original name
-                                old_name.clone()
+                                original_module_name.clone()
                             } else {
                                 module_path
                             };
@@ -1413,7 +1428,7 @@ fn analyze_with_workspace(
                                 .item_dependencies
                                 .into_iter()
                                 .map(|mut dep| {
-                                    if dep.target_module.as_ref() == Some(&old_name) {
+                                    if dep.target_module.as_ref() == Some(&original_module_name) {
                                         dep.target_module = Some(module_name.clone());
                                     }
                                     dep
@@ -1425,9 +1440,9 @@ fn analyze_with_workspace(
                                 crate_name: crate_name.clone(),
                                 file_path: file_path.clone(),
                                 metrics: {
-                                    let mut m = result.metrics;
-                                    m.name = module_name;
-                                    m
+                                    let mut module_metrics = result.metrics;
+                                    module_metrics.name = module_name;
+                                    module_metrics
                                 },
                                 dependencies: result.dependencies,
                                 item_dependencies,
@@ -1528,6 +1543,8 @@ fn analyze_with_workspace(
 
     Ok(project)
 }
+
+// ===== Dependency Resolution =====
 
 /// Calculate distance using workspace information
 fn calculate_distance_with_workspace(
@@ -1663,15 +1680,19 @@ fn calculate_distance(dep_path: &str, _known_modules: &HashSet<String>) -> Dista
     }
 }
 
-/// Analyze a single Rust file
-/// Result of analyzing a single Rust file
+/// Full result of analyzing a single Rust file.
 pub struct AnalyzedFileResult {
+    /// Module metrics collected from definitions and usage patterns.
     pub metrics: ModuleMetrics,
+    /// File-level dependencies detected by the AST visitor.
     pub dependencies: Vec<Dependency>,
+    /// Type name to visibility map collected from this file.
     pub type_visibility: HashMap<String, Visibility>,
+    /// Item-level dependency edges collected within function/type contexts.
     pub item_dependencies: Vec<ItemDependency>,
 }
 
+/// Analyze one Rust file and return module metrics plus file-level dependencies.
 pub fn analyze_rust_file(path: &Path) -> Result<(ModuleMetrics, Vec<Dependency>), AnalyzerError> {
     let result = analyze_rust_file_full(path)?;
     Ok((result.metrics, result.dependencies))

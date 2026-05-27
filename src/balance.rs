@@ -1,18 +1,15 @@
-//! Balance score calculation and refactoring recommendations
+//! Balance scoring and issue classification for coupling analysis.
 //!
-//! Implements the balance equation from "Balancing Coupling in Software Design":
-//! BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
-//!
-//! Key principle: The goal is NOT to eliminate coupling, but to balance it appropriately.
-//! - Strong coupling + close distance = Good (cohesion)
-//! - Weak coupling + far distance = Good (loose coupling)
-//! - Strong coupling + far distance = Bad (global complexity)
-//! - High volatility + strong coupling = Bad (cascading changes)
+//! This module turns raw coupling metrics into health grades, detected issues,
+//! and refactoring recommendations so reports can explain why a relationship is
+//! well-balanced or costly to change.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::config::Subdomain;
 use crate::metrics::{CouplingMetrics, Distance, IntegrationStrength, ProjectMetrics, Volatility};
+
+// ===== Issue Model =====
 
 /// Issue severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -266,6 +263,8 @@ impl std::fmt::Display for RefactoringAction {
     }
 }
 
+// ===== Balance Scoring =====
+
 /// Balance score for a coupling relationship
 #[derive(Debug, Clone)]
 pub struct BalanceScore {
@@ -426,6 +425,8 @@ impl Default for IssueThresholds {
     }
 }
 
+// ===== External Crate Heuristics =====
+
 /// Crate stability classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrateStability {
@@ -518,6 +519,8 @@ pub fn is_external_crate(target: &str, source: &str) -> bool {
         CrateStability::Fundamental | CrateStability::Stable | CrateStability::Infrastructure
     )
 }
+
+// ===== Issue Detection =====
 
 /// Identify issues in a coupling relationship
 pub fn identify_issues(coupling: &CouplingMetrics) -> Vec<CouplingIssue> {
@@ -679,15 +682,15 @@ pub fn analyze_project_balance_with_thresholds(
 
     let balanced_count = internal_balance_scores
         .iter()
-        .filter(|s| s.is_balanced())
+        .filter(|score| score.is_balanced())
         .count();
     let needs_review = internal_balance_scores
         .iter()
-        .filter(|s| s.interpretation == BalanceInterpretation::NeedsReview)
+        .filter(|score| score.interpretation == BalanceInterpretation::NeedsReview)
         .count();
     let needs_refactoring = internal_balance_scores
         .iter()
-        .filter(|s| s.needs_refactoring())
+        .filter(|score| score.needs_refactoring())
         .count();
 
     // Average score based on internal couplings only
@@ -727,6 +730,8 @@ pub fn analyze_project_balance_with_thresholds(
     }
     .with_top_priorities(5) // Increased from 3 to 5 for better actionability
 }
+
+// ===== Temporal and Subdomain Signals =====
 
 /// Analyze temporal co-change pairs that have no explicit code dependency.
 fn analyze_hidden_temporal_coupling(metrics: &ProjectMetrics) -> Vec<CouplingIssue> {
@@ -888,6 +893,8 @@ fn normalize_path_string(path: &std::path::Path) -> String {
 fn normalize_path_str(path: &str) -> String {
     path.replace('\\', "/").trim_start_matches("./").to_string()
 }
+
+// ===== Module Pattern Detectors =====
 
 /// Analyze module-level coupling (hub detection)
 fn analyze_module_coupling(
@@ -1091,15 +1098,23 @@ fn capitalize_first(s: &str) -> String {
     }
 }
 
+// ===== Health Grading =====
+
 /// Health grade for the overall project
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthGrade {
-    S, // Over-optimized - stop! you're doing too much
-    A, // Well-balanced - coupling is appropriate for the architecture
-    B, // Healthy - minor issues exist but manageable
-    C, // Room for improvement - some structural issues
-    D, // Attention needed - significant issues affecting maintainability
-    F, // Immediate action required - critical issues blocking development
+    /// Over-optimized signal; the project may be chasing too little coupling.
+    S,
+    /// Coupling is appropriate for the architecture.
+    A,
+    /// Minor issues exist but remain manageable.
+    B,
+    /// Structural issues need planned improvement.
+    C,
+    /// Significant issues are affecting maintainability.
+    D,
+    /// Critical issues are blocking safe change.
+    F,
 }
 
 impl HealthGrade {
@@ -1197,15 +1212,25 @@ fn calculate_health_grade(
 /// Complete project balance analysis report
 #[derive(Debug)]
 pub struct ProjectBalanceReport {
+    /// Total couplings considered in the report.
     pub total_couplings: usize,
+    /// Number of internal couplings considered balanced or acceptable.
     pub balanced_count: usize,
+    /// Number of internal couplings that need review.
     pub needs_review: usize,
+    /// Number of internal couplings that need refactoring.
     pub needs_refactoring: usize,
+    /// Average balance score across internal couplings.
     pub average_score: f64,
+    /// Overall project health grade derived from issue density.
     pub health_grade: HealthGrade,
+    /// Issue counts grouped by severity.
     pub issues_by_severity: HashMap<Severity, usize>,
+    /// Issue counts grouped by issue type.
     pub issues_by_type: HashMap<IssueType, usize>,
+    /// All detected issues after threshold and strict-mode filtering.
     pub issues: Vec<CouplingIssue>,
+    /// Highest-priority issues selected for concise reporting.
     pub top_priorities: Vec<CouplingIssue>,
 }
 
@@ -1246,7 +1271,7 @@ pub fn calculate_project_score(metrics: &ProjectMetrics) -> f64 {
     internal_scores.iter().sum::<f64>() / internal_scores.len() as f64
 }
 
-// Helper functions
+// ===== Labels and Formatting Helpers =====
 
 fn extract_type_name(path: &str) -> String {
     path.split("::")

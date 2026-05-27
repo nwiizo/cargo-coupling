@@ -261,8 +261,9 @@ impl CompiledConfig {
         let compile_patterns = |patterns: &[String]| -> Result<Vec<Pattern>, ConfigError> {
             patterns
                 .iter()
-                .map(|p| {
-                    Pattern::new(p).map_err(|e| ConfigError::PatternError(format!("{}: {}", p, e)))
+                .map(|pattern| {
+                    Pattern::new(pattern)
+                        .map_err(|err| ConfigError::PatternError(format!("{}: {}", pattern, err)))
                 })
                 .collect()
         };

@@ -1,7 +1,7 @@
-//! Coupling metrics data structures
+//! Core metric types shared by analysis, balance scoring, and reporting.
 //!
-//! This module defines the core data structures for measuring coupling
-//! based on Vlad Khononov's "Balancing Coupling in Software Design".
+//! It stores the structural facts collected from Rust source and exposes the
+//! aggregate calculations used to interpret coupling through Khononov's model.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 use crate::analyzer::ItemDependency;
 use crate::config::Subdomain;
+
+// ===== Coupling Dimensions =====
 
 /// Visibility level of a Rust item
 ///
@@ -159,6 +161,8 @@ impl Volatility {
         }
     }
 }
+
+// ===== Coupling Records =====
 
 /// Location information for a coupling
 #[derive(Debug, Clone, Default)]
@@ -314,6 +318,8 @@ impl CouplingMetrics {
         self.volatility.value()
     }
 }
+
+// ===== Module-Level Facts =====
 
 /// Information about a type definition in a module
 #[derive(Debug, Clone)]
@@ -507,9 +513,13 @@ impl DimensionStats {
 /// Counts for each strength level
 #[derive(Debug, Clone, Default)]
 pub struct StrengthCounts {
+    /// Number of intrusive-strength couplings.
     pub intrusive: usize,
+    /// Number of functional-strength couplings.
     pub functional: usize,
+    /// Number of model-strength couplings.
     pub model: usize,
+    /// Number of contract-strength couplings.
     pub contract: usize,
 }
 
@@ -523,26 +533,37 @@ impl StrengthCounts {
 /// Counts for each distance level
 #[derive(Debug, Clone, Default)]
 pub struct DistanceCounts {
+    /// Couplings within one module or function.
     pub same_module: usize,
+    /// Couplings across modules in the same crate/workspace.
     pub different_module: usize,
+    /// Couplings to external crates.
     pub different_crate: usize,
 }
 
 /// Counts for each volatility level
 #[derive(Debug, Clone, Default)]
 pub struct VolatilityCounts {
+    /// Couplings whose target rarely changes.
     pub low: usize,
+    /// Couplings whose target changes occasionally.
     pub medium: usize,
+    /// Couplings whose target changes frequently.
     pub high: usize,
 }
 
 /// Counts for each balance classification
 #[derive(Debug, Clone, Default)]
 pub struct BalanceCounts {
+    /// Strong and close couplings.
     pub high_cohesion: usize,
+    /// Weak and distant couplings.
     pub loose_coupling: usize,
+    /// Strong and distant couplings neutralized by low volatility.
     pub acceptable: usize,
+    /// Strong, distant, and volatile couplings.
     pub pain: usize,
+    /// Weak couplings kept unnecessarily close.
     pub local_complexity: usize,
 }
 
@@ -580,6 +601,7 @@ pub struct ModuleMetrics {
 }
 
 impl ModuleMetrics {
+    /// Create empty metrics for a module path/name pair.
     pub fn new(path: PathBuf, name: String) -> Self {
         Self {
             path,
@@ -765,6 +787,8 @@ impl ModuleMetrics {
     }
 }
 
+// ===== Project Aggregates =====
+
 /// Project-wide analysis results
 #[derive(Debug, Default)]
 pub struct ProjectMetrics {
@@ -791,6 +815,7 @@ pub struct ProjectMetrics {
 }
 
 impl ProjectMetrics {
+    /// Create an empty project metrics accumulator.
     pub fn new() -> Self {
         Self::default()
     }
@@ -919,10 +944,10 @@ impl ProjectMetrics {
             // - glob imports "crate::*" -> don't match specific files
 
             // Extract all path components from target
-            let target_parts: Vec<&str> = coupling.target.split("::").collect();
+            let target_segments: Vec<&str> = coupling.target.split("::").collect();
 
             // Find the best matching file
-            let mut max_changes = 0usize;
+            let mut max_target_changes = 0usize;
             for (file_path, &changes) in &self.file_changes {
                 // Get file name without .rs extension (e.g., "balance" from "src/balance.rs")
                 let file_name = file_path
@@ -932,7 +957,7 @@ impl ProjectMetrics {
                     .trim_end_matches(".rs");
 
                 // Check if any target path component matches the file name
-                let matches = target_parts.iter().any(|part| {
+                let target_matches_file = target_segments.iter().any(|part| {
                     let part_lower = part.to_lowercase();
                     let file_lower = file_name.to_lowercase();
 
@@ -946,7 +971,7 @@ impl ProjectMetrics {
                     if file_lower == "lib" && !part.is_empty() && *part != "*" {
                         // This could be the crate root reference
                         // We also match if the part is the crate name (same as first path component)
-                        if target_parts.len() >= 2 && target_parts[1] == *part {
+                        if target_segments.len() >= 2 && target_segments[1] == *part {
                             return true;
                         }
                     }
@@ -967,12 +992,12 @@ impl ProjectMetrics {
                     false
                 });
 
-                if matches {
-                    max_changes = max_changes.max(changes);
+                if target_matches_file {
+                    max_target_changes = max_target_changes.max(changes);
                 }
             }
 
-            coupling.volatility = Volatility::from_count(max_changes);
+            coupling.volatility = Volatility::from_count(max_target_changes);
         }
     }
 
