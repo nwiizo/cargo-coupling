@@ -640,6 +640,25 @@ pub fn is_external_crate(target: &str, source: &str) -> bool {
 
 // ===== Issue Detection =====
 
+/// Whether a module is the binary entrypoint (e.g. `crate::main`).
+///
+/// An entrypoint must wire the whole application together, so its high fan-out
+/// is expected by design, not a maintainability defect.
+fn is_entrypoint_module(name: &str) -> bool {
+    name.rsplit("::").next() == Some("main")
+}
+
+/// Whether a module is the crate-root re-export facade (module name == crate name).
+///
+/// `crate-name::crate_name` (i.e. `lib.rs`) is a stable Contract surface; coupling
+/// to it is not intrusive coupling to a volatile implementation.
+fn is_crate_root_facade(name: &str) -> bool {
+    match name.split_once("::") {
+        Some((krate, rest)) => !rest.contains("::") && rest == krate.replace('-', "_"),
+        None => false,
+    }
+}
+
 /// Identify issues in a coupling relationship
 pub fn identify_issues(coupling: &CouplingMetrics) -> Vec<CouplingIssue> {
     identify_issues_with_thresholds(coupling, &IssueThresholds::default())
@@ -660,10 +679,15 @@ pub fn identify_issues_with_thresholds(
 
     let balance = BalanceScore::calculate(coupling);
 
+    // The crate-root re-export facade is a stable Contract, not a volatile
+    // implementation — coupling to it is not an intrusive/cascading defect.
+    let target_is_facade = is_crate_root_facade(&coupling.target);
+
     // Pattern 1: Global Complexity (INTRUSIVE coupling + different module)
     // Only flag intrusive coupling across module boundaries - functional coupling is normal
     if coupling.strength == IntegrationStrength::Intrusive
         && coupling.distance == Distance::DifferentModule
+        && !target_is_facade
     {
         issues.push(CouplingIssue {
             issue_type: IssueType::GlobalComplexity,
@@ -686,6 +710,7 @@ pub fn identify_issues_with_thresholds(
     // Only flag if volatility is actually high (from Git data)
     if coupling.strength == IntegrationStrength::Intrusive
         && coupling.volatility == Volatility::High
+        && !target_is_facade
     {
         issues.push(CouplingIssue {
             issue_type: IssueType::CascadingChangeRisk,
@@ -708,6 +733,7 @@ pub fn identify_issues_with_thresholds(
     if coupling.strength == IntegrationStrength::Intrusive
         && coupling.distance == Distance::DifferentModule
         && balance.score < 0.5
+        && !target_is_facade
     {
         // Only add if not already added as GlobalComplexity
         if !issues
@@ -783,6 +809,25 @@ pub fn analyze_project_balance_with_thresholds(
     all_issues.extend(temporal_issues);
     let accidental_volatility_issues = analyze_accidental_volatility(metrics);
     all_issues.extend(accidental_volatility_issues);
+
+    // Tag each Cascading Change Risk with whether the target's volatility is
+    // essential (a Core subdomain that genuinely evolves) or accidental (recent
+    // git churn that may settle) so the reader can judge whether to act now.
+    for issue in &mut all_issues {
+        if issue.issue_type == IssueType::CascadingChangeRisk {
+            // The subdomain map is keyed by short module name; the issue target is fully qualified.
+            let target_key = issue.target.rsplit("::").next().unwrap_or(&issue.target);
+            let tag = if matches!(
+                target_subdomains.get(target_key),
+                Some(Some(Subdomain::Core))
+            ) {
+                " (essential volatility: target is a Core subdomain that genuinely evolves)"
+            } else {
+                " (accidental volatility: driven by recent churn — may settle as development stabilizes)"
+            };
+            issue.description.push_str(tag);
+        }
+    }
 
     // Strict mode: filter out Low severity issues to reduce noise
     if thresholds.strict_mode {
@@ -1292,25 +1337,48 @@ fn analyze_module_coupling(
     // Check for high efferent coupling (depends on too many things)
     for (module, count) in &efferent {
         if *count > thresholds.max_dependencies {
-            issues.push(CouplingIssue {
-                issue_type: IssueType::HighEfferentCoupling,
-                severity: if *count > thresholds.max_dependencies * 2 {
-                    Severity::High
-                } else {
-                    Severity::Medium
-                },
-                source: module.to_string(),
-                target: format!("{} dependencies", count),
-                description: format!(
+            // A binary entrypoint must wire the whole application together, so its
+            // fan-out is expected by design — report it as a Low informational note
+            // rather than a High-severity action item.
+            let entrypoint = is_entrypoint_module(module);
+            let severity = if entrypoint {
+                Severity::Low
+            } else if *count > thresholds.max_dependencies * 2 {
+                Severity::High
+            } else {
+                Severity::Medium
+            };
+            let description = if entrypoint {
+                format!(
+                    "Entrypoint {} wires {} components — expected for a binary entrypoint, not a defect",
+                    module, count
+                )
+            } else {
+                format!(
                     "Module {} depends on {} other components (threshold: {})",
                     module, count, thresholds.max_dependencies
-                ),
-                refactoring: RefactoringAction::SplitModule {
+                )
+            };
+            let refactoring = if entrypoint {
+                RefactoringAction::General {
+                    action: "No action needed: entrypoints are expected to have wide fan-out"
+                        .to_string(),
+                }
+            } else {
+                RefactoringAction::SplitModule {
                     suggested_modules: vec![
                         format!("{}_core", module),
                         format!("{}_integration", module),
                     ],
-                },
+                }
+            };
+            issues.push(CouplingIssue {
+                issue_type: IssueType::HighEfferentCoupling,
+                severity,
+                source: module.to_string(),
+                target: format!("{} dependencies", count),
+                description,
+                refactoring,
                 balance_score: 1.0
                     - (*count as f64 / (thresholds.max_dependencies * 3) as f64).min(1.0),
             });
