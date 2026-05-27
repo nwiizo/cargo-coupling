@@ -18,6 +18,9 @@ cargo run --release -- coupling --web --port 8080 ./src
 
 # Don't auto-open browser
 cargo run --release -- coupling --web --no-open ./src
+
+# Web timeline uses the same history sampling model as --history
+cargo run -- coupling --history=8 --git-months=12 ./src
 ```
 
 ## Keyboard Shortcuts
@@ -38,6 +41,18 @@ cargo run --release -- coupling --web --no-open ./src
 - **Click background**: Clear selection
 
 ## Panel Features
+
+### 2D / 3D Graphs
+Explore coupling relationships in 2D or 3D views.
+
+### Dimension-Space
+Inspect strength, distance, volatility, and balance score as separate trust dimensions.
+
+### Timeline
+Shows coupling health across git revisions with auto-play controls.
+
+### Trust
+Shows analysis confidence, run notes, and declared blind spots.
 
 ### Hotspots
 Top refactoring targets ranked by severity. Click to jump.

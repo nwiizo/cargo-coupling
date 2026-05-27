@@ -95,6 +95,7 @@ generic = ["src/web/*", "src/config.rs"]
 ```
 
 This informs volatility assessment from business context, complementing git history.
+The repository's own `.coupling.toml` is the canonical local example.
 
 ## Temporal Coupling
 
@@ -106,6 +107,13 @@ High temporal coupling between files without explicit code dependencies suggests
 - Shared business logic (functional coupling)
 - Shared assumptions (connascence of meaning/algorithm)
 - Missing abstraction layer
+
+When this is strong enough, `cargo-coupling` reports **Hidden Coupling**.
+When high churn appears in supporting/generic subdomains, it reports **Accidental Volatility**.
+
+## Blind-Spot Manifest
+
+Static analysis does not observe dynamic connascence, organizational/runtime distance, duplicated logic that does not co-change, or macro/inactive-cfg paths. `--blind-spots` expands this "Not Analyzed" declaration in text output; JSON and AI output include it by default.
 
 ## Connascence Types (Refined Strength)
 
