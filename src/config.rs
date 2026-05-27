@@ -52,7 +52,9 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
-use crate::metrics::Volatility;
+use crate::metrics::MetricsConfig;
+pub use crate::metrics::Subdomain;
+use crate::volatility::Volatility;
 
 /// Errors that can occur when loading configuration
 #[derive(Error, Debug)]
@@ -173,38 +175,6 @@ pub struct CouplingConfig {
     /// Threshold configuration
     #[serde(default)]
     pub thresholds: ThresholdsConfig,
-}
-
-/// DDD subdomain type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Subdomain {
-    /// Core subdomain - competitive advantage, high volatility
-    Core,
-    /// Supporting subdomain - stable business logic, low volatility
-    Supporting,
-    /// Generic subdomain - solved problems, low volatility
-    Generic,
-}
-
-impl Subdomain {
-    /// Map subdomain to expected volatility level
-    pub fn expected_volatility(&self) -> Volatility {
-        match self {
-            Subdomain::Core => Volatility::High,
-            Subdomain::Supporting => Volatility::Low,
-            Subdomain::Generic => Volatility::Low,
-        }
-    }
-}
-
-impl std::fmt::Display for Subdomain {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Subdomain::Core => write!(f, "Core"),
-            Subdomain::Supporting => write!(f, "Supporting"),
-            Subdomain::Generic => write!(f, "Generic"),
-        }
-    }
 }
 
 /// Compiled configuration with glob patterns
@@ -400,6 +370,28 @@ impl CompiledConfig {
         !self.high_patterns.is_empty()
             || !self.medium_patterns.is_empty()
             || !self.low_patterns.is_empty()
+    }
+}
+
+impl MetricsConfig for CompiledConfig {
+    fn config_root(&self) -> Option<&Path> {
+        CompiledConfig::config_root(self)
+    }
+
+    fn has_volatility_overrides(&self) -> bool {
+        CompiledConfig::has_volatility_overrides(self)
+    }
+
+    fn has_subdomain_config(&self) -> bool {
+        CompiledConfig::has_subdomain_config(self)
+    }
+
+    fn get_subdomain(&self, path: &str) -> Option<Subdomain> {
+        CompiledConfig::get_subdomain(self, path)
+    }
+
+    fn get_volatility_override(&mut self, path: &str) -> Option<Volatility> {
+        CompiledConfig::get_volatility_override(self, path)
     }
 }
 

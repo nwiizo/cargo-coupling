@@ -10,7 +10,36 @@ use std::process::{Command, Stdio};
 
 use thiserror::Error;
 
-use crate::metrics::Volatility;
+/// Volatility levels (how often a component changes)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Volatility {
+    /// Rarely changes (0-2 times)
+    Low,
+    /// Sometimes changes (3-10 times)
+    Medium,
+    /// Frequently changes (11+ times)
+    High,
+}
+
+impl Volatility {
+    /// Returns the numeric value (0.0 - 1.0, higher = more volatile)
+    pub fn value(&self) -> f64 {
+        match self {
+            Volatility::Low => 0.0,
+            Volatility::Medium => 0.5,
+            Volatility::High => 1.0,
+        }
+    }
+
+    /// Classify from change count
+    pub fn from_count(count: usize) -> Self {
+        match count {
+            0..=2 => Volatility::Low,
+            3..=10 => Volatility::Medium,
+            _ => Volatility::High,
+        }
+    }
+}
 
 /// Errors that can occur during volatility analysis
 #[derive(Error, Debug)]

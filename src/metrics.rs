@@ -8,7 +8,7 @@ use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 use crate::analyzer::ItemDependency;
-use crate::config::{CompiledConfig, Subdomain};
+pub use crate::volatility::{TemporalCoupling, Volatility};
 
 // ===== Coupling Dimensions =====
 
@@ -131,35 +131,50 @@ impl Distance {
     }
 }
 
-/// Volatility levels (how often a component changes)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Volatility {
-    /// Rarely changes (0-2 times)
-    Low,
-    /// Sometimes changes (3-10 times)
-    Medium,
-    /// Frequently changes (11+ times)
-    High,
+/// DDD subdomain type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subdomain {
+    /// Core subdomain - competitive advantage, high volatility
+    Core,
+    /// Supporting subdomain - stable business logic, low volatility
+    Supporting,
+    /// Generic subdomain - solved problems, stable implementations
+    Generic,
 }
 
-impl Volatility {
-    /// Returns the numeric value (0.0 - 1.0, higher = more volatile)
-    pub fn value(&self) -> f64 {
+impl Subdomain {
+    /// Map subdomain to expected volatility level
+    pub fn expected_volatility(&self) -> Volatility {
         match self {
-            Volatility::Low => 0.0,
-            Volatility::Medium => 0.5,
-            Volatility::High => 1.0,
+            Subdomain::Core => Volatility::High,
+            Subdomain::Supporting => Volatility::Low,
+            Subdomain::Generic => Volatility::Low,
         }
     }
+}
 
-    /// Classify from change count
-    pub fn from_count(count: usize) -> Self {
-        match count {
-            0..=2 => Volatility::Low,
-            3..=10 => Volatility::Medium,
-            _ => Volatility::High,
+impl fmt::Display for Subdomain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Subdomain::Core => write!(f, "Core"),
+            Subdomain::Supporting => write!(f, "Supporting"),
+            Subdomain::Generic => write!(f, "Generic"),
         }
     }
+}
+
+/// Minimal configuration surface needed by project metrics.
+pub trait MetricsConfig {
+    /// Directory containing the loaded config file, if any.
+    fn config_root(&self) -> Option<&Path>;
+    /// Whether path-based volatility overrides exist.
+    fn has_volatility_overrides(&self) -> bool;
+    /// Whether subdomain classification exists.
+    fn has_subdomain_config(&self) -> bool;
+    /// Resolve a path to its configured subdomain, if any.
+    fn get_subdomain(&self, path: &str) -> Option<Subdomain>;
+    /// Resolve a path to its explicit volatility override, if any.
+    fn get_volatility_override(&mut self, path: &str) -> Option<Volatility>;
 }
 
 // ===== Coupling Records =====
@@ -811,7 +826,7 @@ pub struct ProjectMetrics {
     /// Global type registry: type name -> (module name, visibility)
     pub type_registry: HashMap<String, (String, Visibility)>,
     /// Temporal coupling data (files that co-change frequently)
-    pub temporal_couplings: Vec<crate::volatility::TemporalCoupling>,
+    pub temporal_couplings: Vec<TemporalCoupling>,
 }
 
 impl ProjectMetrics {
@@ -895,7 +910,7 @@ impl ProjectMetrics {
     pub fn internal_coupling_count(&self) -> usize {
         self.couplings
             .iter()
-            .filter(|c| !crate::balance::is_external_crate(&c.target, &c.source))
+            .filter(|c| c.distance != Distance::DifferentCrate)
             .count()
     }
 
@@ -1006,7 +1021,7 @@ impl ProjectMetrics {
     /// Config patterns are path-based while couplings are module-name-based, so
     /// this resolves coupling targets through known module file paths before
     /// querying the config.
-    pub fn apply_config_volatility_overrides(&mut self, config: &mut CompiledConfig) -> usize {
+    pub fn apply_config_volatility_overrides<C: MetricsConfig>(&mut self, config: &mut C) -> usize {
         if !config.has_volatility_overrides() && !config.has_subdomain_config() {
             return 0;
         }
@@ -1326,7 +1341,7 @@ fn insert_module_path_aliases(
     }
 }
 
-fn path_for_config_matching(file_path: &Path, config: &CompiledConfig) -> String {
+fn path_for_config_matching(file_path: &Path, config: &impl MetricsConfig) -> String {
     let normalized_file = normalize_path_for_matching(file_path);
     let path = config
         .config_root()
