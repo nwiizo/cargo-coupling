@@ -14,6 +14,7 @@ use serde::Serialize;
 use crate::balance::{
     BalanceScore, HealthGrade, IssueThresholds, Severity, analyze_project_balance_with_thresholds,
 };
+use crate::diff::BaselineDiff;
 use crate::history::HistoryReport;
 use crate::manifest::AnalysisManifest;
 use crate::metrics::{Distance, ProjectMetrics};
@@ -906,6 +907,112 @@ pub fn generate_check_output<W: Write>(
     Ok(if result.passed { 0 } else { 1 })
 }
 
+/// Generate a readable baseline diff report.
+pub fn generate_baseline_diff_output<W: Write>(
+    diff: &BaselineDiff,
+    baseline_ref: &str,
+    writer: &mut W,
+) -> io::Result<()> {
+    writeln!(writer, "Coupling Baseline Diff")?;
+    writeln!(
+        writer,
+        "═══════════════════════════════════════════════════════════"
+    )?;
+    writeln!(writer, "Baseline: {}", baseline_ref)?;
+    writeln!(
+        writer,
+        "Grade: {} -> {}",
+        diff.baseline_grade.letter(),
+        diff.current_grade.letter()
+    )?;
+    writeln!(writer, "Score delta: {:+.3}", diff.score_delta)?;
+    writeln!(writer)?;
+    writeln!(writer, "Issues:")?;
+    writeln!(writer, "  New: {}", diff.new_issues.len())?;
+    writeln!(writer, "  Resolved: {}", diff.resolved_issues.len())?;
+    writeln!(writer, "  Unchanged: {}", diff.unchanged)?;
+
+    write_issue_section(writer, "New Issues", &diff.new_issues)?;
+    write_issue_section(writer, "Resolved Issues", &diff.resolved_issues)?;
+
+    Ok(())
+}
+
+/// Generate ratchet gate output and return exit code (0 = pass, 1 = fail).
+pub fn generate_ratchet_check_output<W: Write>(
+    diff: &BaselineDiff,
+    baseline_ref: &str,
+    fail_on: Severity,
+    writer: &mut W,
+) -> io::Result<i32> {
+    let failures = diff.ratchet_failures(fail_on);
+    let passed = failures.is_empty();
+
+    writeln!(writer, "Coupling Ratchet Gate")?;
+    writeln!(
+        writer,
+        "═══════════════════════════════════════════════════════════"
+    )?;
+    writeln!(writer, "Baseline: {}", baseline_ref)?;
+    writeln!(
+        writer,
+        "Grade: {} -> {}",
+        diff.baseline_grade.letter(),
+        diff.current_grade.letter()
+    )?;
+    writeln!(writer, "Score delta: {:+.3}", diff.score_delta)?;
+    writeln!(
+        writer,
+        "New issues: {} (fail-on: {} or higher)",
+        diff.new_issues.len(),
+        fail_on
+    )?;
+    writeln!(
+        writer,
+        "Status: {}",
+        if passed { "PASSED" } else { "FAILED" }
+    )?;
+
+    if !passed {
+        writeln!(writer)?;
+        writeln!(writer, "Blocking New Issues:")?;
+        for issue in failures {
+            write_issue_line(writer, issue)?;
+        }
+    }
+
+    Ok(if passed { 0 } else { 1 })
+}
+
+fn write_issue_section<W: Write>(
+    writer: &mut W,
+    title: &str,
+    issues: &[crate::balance::CouplingIssue],
+) -> io::Result<()> {
+    writeln!(writer)?;
+    writeln!(writer, "{}:", title)?;
+    if issues.is_empty() {
+        writeln!(writer, "  (none)")?;
+        return Ok(());
+    }
+
+    for issue in issues {
+        write_issue_line(writer, issue)?;
+    }
+    Ok(())
+}
+
+fn write_issue_line<W: Write>(
+    writer: &mut W,
+    issue: &crate::balance::CouplingIssue,
+) -> io::Result<()> {
+    writeln!(
+        writer,
+        "  - {} {}: {} -> {}",
+        issue.severity, issue.issue_type, issue.source, issue.target
+    )
+}
+
 // ============================================================================
 // JSON Output
 // ============================================================================
@@ -925,6 +1032,8 @@ pub struct JsonTemporalCoupling {
 pub struct JsonOutput {
     pub summary: JsonSummary,
     pub analysis_manifest: JsonAnalysisManifest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<JsonBaselineDiff>,
     pub hotspots: Vec<Hotspot>,
     pub issues: Vec<JsonIssue>,
     pub circular_dependencies: Vec<Vec<String>>,
@@ -983,11 +1092,49 @@ pub struct JsonModule {
     pub in_cycle: bool,
 }
 
+/// Baseline diff in JSON format.
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonBaselineDiff {
+    pub new_issues: Vec<JsonIssue>,
+    pub resolved_issues: Vec<JsonIssue>,
+    pub unchanged: usize,
+    pub score_delta: f64,
+    pub grade_change: JsonGradeChange,
+}
+
+/// Baseline/current grade transition in JSON format.
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonGradeChange {
+    pub baseline: String,
+    pub current: String,
+}
+
 /// Generate complete JSON output
 pub fn generate_json_output<W: Write>(
     metrics: &ProjectMetrics,
     thresholds: &IssueThresholds,
     manifest: &AnalysisManifest,
+    writer: &mut W,
+) -> io::Result<()> {
+    generate_json_output_with_optional_diff(metrics, thresholds, manifest, None, writer)
+}
+
+/// Generate complete JSON output with a top-level baseline diff object.
+pub fn generate_json_output_with_diff<W: Write>(
+    metrics: &ProjectMetrics,
+    thresholds: &IssueThresholds,
+    manifest: &AnalysisManifest,
+    diff: &BaselineDiff,
+    writer: &mut W,
+) -> io::Result<()> {
+    generate_json_output_with_optional_diff(metrics, thresholds, manifest, Some(diff), writer)
+}
+
+fn generate_json_output_with_optional_diff<W: Write>(
+    metrics: &ProjectMetrics,
+    thresholds: &IssueThresholds,
+    manifest: &AnalysisManifest,
+    diff: Option<&BaselineDiff>,
     writer: &mut W,
 ) -> io::Result<()> {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
@@ -1062,20 +1209,9 @@ pub fn generate_json_output<W: Write>(
                 .collect(),
             notes: manifest.notes.clone(),
         },
+        diff: diff.map(json_baseline_diff),
         hotspots,
-        issues: report
-            .issues
-            .iter()
-            .map(|i| JsonIssue {
-                issue_type: format!("{}", i.issue_type),
-                severity: format!("{}", i.severity),
-                source: i.source.clone(),
-                target: i.target.clone(),
-                description: i.description.clone(),
-                suggestion: format!("{}", i.refactoring),
-                balance_score: i.balance_score,
-            })
-            .collect(),
+        issues: report.issues.iter().map(json_issue).collect(),
         circular_dependencies: circular_deps,
         temporal_couplings,
         modules: metrics
@@ -1102,6 +1238,31 @@ pub fn generate_json_output<W: Write>(
     writeln!(writer, "{}", json)?;
 
     Ok(())
+}
+
+fn json_baseline_diff(diff: &BaselineDiff) -> JsonBaselineDiff {
+    JsonBaselineDiff {
+        new_issues: diff.new_issues.iter().map(json_issue).collect(),
+        resolved_issues: diff.resolved_issues.iter().map(json_issue).collect(),
+        unchanged: diff.unchanged,
+        score_delta: diff.score_delta,
+        grade_change: JsonGradeChange {
+            baseline: format!("{:?}", diff.baseline_grade),
+            current: format!("{:?}", diff.current_grade),
+        },
+    }
+}
+
+fn json_issue(issue: &crate::balance::CouplingIssue) -> JsonIssue {
+    JsonIssue {
+        issue_type: format!("{}", issue.issue_type),
+        severity: format!("{}", issue.severity),
+        source: issue.source.clone(),
+        target: issue.target.clone(),
+        description: issue.description.clone(),
+        suggestion: format!("{}", issue.refactoring),
+        balance_score: issue.balance_score,
+    }
 }
 
 // ============================================================================

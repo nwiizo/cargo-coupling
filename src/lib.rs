@@ -40,6 +40,7 @@ pub mod analyzer;
 pub mod balance;
 pub mod cli_output;
 pub mod config;
+pub mod diff;
 pub mod history;
 pub mod manifest;
 pub mod metrics;
@@ -62,8 +63,10 @@ pub use config::{
     AnalysisConfig, CompiledConfig, ConfigError, CouplingConfig, ThresholdsConfig,
     VolatilityConfig, load_compiled_config, load_config,
 };
+pub use diff::{BaselineDiff, IssueKey, diff_reports};
 pub use history::{
-    HistoryError, HistoryPoint, HistoryReport, SkippedRevision, analyze_history, sample_evenly,
+    HistoryError, HistoryPoint, HistoryReport, RefAnalysis, SkippedRevision, analyze_history,
+    analyze_ref, sample_evenly,
 };
 pub use manifest::{AnalysisManifest, BlindSpot, ManifestContext, build_manifest};
 pub use metrics::{

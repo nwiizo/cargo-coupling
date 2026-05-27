@@ -13,6 +13,8 @@ cargo run -- coupling ./src          # Analyze
 cargo run -- coupling --web ./src    # Web UI (:3000)
 cargo run -- coupling --history ./src        # Coupling health over git history (time-series)
 cargo run -- coupling --history=8 --json ./src  # Time-series as JSON (8 samples)
+cargo run -- coupling --baseline main ./src  # Diff current issues against a git ref
+cargo run -- coupling --check --baseline main ./src  # Ratchet gate: fail only on new High/Critical issues
 
 # Docker
 docker build -t cargo-coupling .
@@ -79,6 +81,10 @@ docker push ghcr.io/nwiizo/cargo-coupling:latest
 
 **History (`--history`)**:
 - Samples up to N commits (default 12) across the `--git-months` window and re-analyzes each in a disposable `git worktree` (auto-removed)
-- Per-revision analysis is **structural only** (AST + config overrides); git-churn volatility is skipped so points are comparable
+- Per-revision analysis uses the **same methodology as the snapshot** (AST + git-churn volatility + config/subdomain overrides), so a revision's grade matches `coupling <dir>` at that commit
 - Output is chronological (oldest first); supports `--json`. Revisions that fail to parse are reported under `skipped`
 - Needs a git repo with history; avoid extreme `--git-months` (git's approxidate misparses values like 1200 months)
+
+**Baseline / ratchet (`--baseline <ref>`)**:
+- Compares current issues against a baseline ref using `(issue_type, source, target)` as the stable key; `--json` adds a top-level `diff` object
+- With `--check --baseline <ref>`, fails only on new issues at `--fail-on` severity or higher; default ratchet threshold is High/Critical

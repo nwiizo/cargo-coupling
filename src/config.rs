@@ -317,6 +317,11 @@ impl CompiledConfig {
         self.config_root.as_deref()
     }
 
+    /// Update the config root when analyzing the same config in a git worktree.
+    pub(crate) fn set_config_root(&mut self, config_root: Option<PathBuf>) {
+        self.config_root = config_root;
+    }
+
     /// Check if a module is marked as "prelude-like" (exempt from afferent coupling warnings)
     pub fn is_prelude_module(&self, path: &str) -> bool {
         self.prelude_patterns.iter().any(|p| p.matches(path))

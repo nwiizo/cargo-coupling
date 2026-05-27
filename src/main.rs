@@ -16,13 +16,14 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 
 use cargo_coupling::{
-    CompiledConfig, IssueThresholds, ManifestContext, VolatilityAnalyzer, analyze_history,
-    analyze_workspace_with_config, build_manifest,
+    CompiledConfig, IssueThresholds, ManifestContext, Severity, VolatilityAnalyzer,
+    analyze_history, analyze_ref, analyze_workspace_with_config, build_manifest,
     cli_output::{
-        CheckConfig, generate_check_output, generate_history_output, generate_hotspots_output,
-        generate_impact_output, generate_json_output, parse_grade, parse_severity,
+        CheckConfig, generate_baseline_diff_output, generate_check_output, generate_history_output,
+        generate_hotspots_output, generate_impact_output, generate_json_output,
+        generate_json_output_with_diff, generate_ratchet_check_output, parse_grade, parse_severity,
     },
-    generate_ai_output_with_thresholds, generate_report_with_thresholds,
+    diff_reports, generate_ai_output_with_thresholds, generate_report_with_thresholds,
     generate_summary_with_thresholds, load_compiled_config,
     web::{ServerConfig, start_server},
 };
@@ -132,6 +133,10 @@ struct Args {
     #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "12")]
     history: Option<usize>,
 
+    /// Compare current issues against a baseline git ref (commit, branch, or tag)
+    #[arg(long, value_name = "GIT_REF")]
+    baseline: Option<String>,
+
     /// Run quality gate check (returns non-zero exit code on failure)
     #[arg(long)]
     check: bool,
@@ -184,7 +189,7 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
 }
 
 fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
-    let check_config = if args.check {
+    let check_config = if args.check && args.baseline.is_none() {
         Some(check_config_from_args(&args)?)
     } else {
         None
@@ -270,6 +275,9 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     // --history: time-series coupling health across git revisions. Independent of
     // the snapshot analysis below, so handle it here and return early.
     if let Some(max_points) = args.history {
+        if args.baseline.is_some() {
+            return Err(invalid_cli_input("--baseline cannot be combined with --history").into());
+        }
         if max_points == 0 {
             return Err(invalid_cli_input("--history must be greater than 0").into());
         }
@@ -434,6 +442,36 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
 
     // Job-focused CLI modes (mutually exclusive with other modes)
 
+    // --baseline: compare current issues against a git ref. With --check this
+    // is a ratchet gate that fails only for new issues at the configured severity.
+    if let Some(baseline_ref) = &args.baseline {
+        let baseline = analyze_ref(
+            &args.path,
+            &config,
+            &thresholds,
+            baseline_ref,
+            args.git_months,
+        )
+        .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
+        let current_report =
+            cargo_coupling::analyze_project_balance_with_thresholds(&metrics, &thresholds);
+        let diff = diff_reports(&baseline.report, &current_report);
+
+        if args.check {
+            let fail_on = ratchet_fail_on_from_args(&args)?;
+            let exit_code =
+                generate_ratchet_check_output(&diff, baseline_ref, fail_on, &mut writer)?;
+            return Ok(exit_code);
+        }
+
+        if args.json {
+            generate_json_output_with_diff(&metrics, &thresholds, &manifest, &diff, &mut writer)?;
+        } else {
+            generate_baseline_diff_output(&diff, baseline_ref, &mut writer)?;
+        }
+        return Ok(0);
+    }
+
     // --json: Machine-readable JSON output
     if args.json {
         generate_json_output(&metrics, &thresholds, &manifest, &mut writer)?;
@@ -537,6 +575,18 @@ fn check_config_from_args(args: &Args) -> Result<CheckConfig, std::io::Error> {
     })
 }
 
+fn ratchet_fail_on_from_args(args: &Args) -> Result<Severity, std::io::Error> {
+    match args.fail_on.as_deref() {
+        Some(value) => parse_severity(value).ok_or_else(|| {
+            invalid_cli_input(format!(
+                "invalid --fail-on '{}'; expected critical, high, medium, or low",
+                value
+            ))
+        }),
+        None => Ok(Severity::High),
+    }
+}
+
 fn invalid_cli_input(message: impl Into<String>) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, message.into())
 }
@@ -570,6 +620,7 @@ mod tests {
             impact: None,
             trace: None,
             history: None,
+            baseline: None,
             check: false,
             min_grade: None,
             max_critical: None,
@@ -640,6 +691,26 @@ mod tests {
         args.fail_on = Some("bogus".to_string());
         assert!(
             check_config_from_args(&args)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid --fail-on")
+        );
+    }
+
+    #[test]
+    fn ratchet_defaults_to_high_and_parses_fail_on() {
+        let mut args = base_args(PathBuf::from("src"));
+        args.check = true;
+        args.baseline = Some("HEAD~1".to_string());
+
+        assert_eq!(ratchet_fail_on_from_args(&args).unwrap(), Severity::High);
+
+        args.fail_on = Some("medium".to_string());
+        assert_eq!(ratchet_fail_on_from_args(&args).unwrap(), Severity::Medium);
+
+        args.fail_on = Some("bogus".to_string());
+        assert!(
+            ratchet_fail_on_from_args(&args)
                 .unwrap_err()
                 .to_string()
                 .contains("invalid --fail-on")

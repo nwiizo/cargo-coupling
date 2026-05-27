@@ -11,10 +11,13 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::balance::{HealthGrade, Severity, analyze_project_balance_with_thresholds};
 use crate::config::CompiledConfig;
 use crate::{IssueThresholds, VolatilityAnalyzer, analyze_workspace_with_config};
+
+static WORKTREE_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 /// One sampled point in the coupling timeline.
 #[derive(Debug, Clone)]
@@ -56,6 +59,21 @@ pub struct HistoryReport {
     pub months: usize,
 }
 
+/// Snapshot-equivalent analysis result for a single git ref.
+#[derive(Debug)]
+pub struct RefAnalysis {
+    /// The git ref that was analyzed.
+    pub git_ref: String,
+    /// Full balance report for the ref.
+    pub report: crate::balance::ProjectBalanceReport,
+    /// Number of Rust files analyzed.
+    pub total_files: usize,
+    /// Number of modules analyzed.
+    pub module_count: usize,
+    /// Number of couplings found.
+    pub total_couplings: usize,
+}
+
 impl HistoryReport {
     /// Oldest and newest analyzed points, if any exist.
     pub fn endpoints(&self) -> Option<(&HistoryPoint, &HistoryPoint)> {
@@ -77,6 +95,8 @@ pub enum HistoryError {
     Io(std::io::Error),
     /// No commits were found in the requested window.
     NoCommits,
+    /// Coupling analysis failed at a git revision/ref.
+    Analysis(String),
 }
 
 impl std::fmt::Display for HistoryError {
@@ -86,6 +106,7 @@ impl std::fmt::Display for HistoryError {
             HistoryError::Git(msg) => write!(f, "git command failed: {}", msg),
             HistoryError::Io(e) => write!(f, "I/O error: {}", e),
             HistoryError::NoCommits => write!(f, "no commits found in the requested time window"),
+            HistoryError::Analysis(msg) => write!(f, "analysis failed: {}", msg),
         }
     }
 }
@@ -150,6 +171,26 @@ pub fn analyze_history(
     }
 
     Ok(report)
+}
+
+/// Analyze a project at an arbitrary git ref using a disposable worktree.
+///
+/// The analysis path is mapped relative to the current repository root into the
+/// worktree, then analyzed with the same structural, git-volatility, and config
+/// override methodology used for history snapshots.
+pub fn analyze_ref(
+    path: &Path,
+    config: &CompiledConfig,
+    thresholds: &IssueThresholds,
+    git_ref: &str,
+    months: usize,
+) -> Result<RefAnalysis, HistoryError> {
+    let repo_root = repo_root(path)?;
+    let subpath = relative_subpath(&repo_root, path);
+    let seq = WORKTREE_SEQ.fetch_add(1, Ordering::Relaxed);
+    analyze_ref_in_repo(
+        &repo_root, &subpath, git_ref, config, thresholds, months, seq,
+    )
 }
 
 /// Resolve the git repository root containing `path`.
@@ -225,18 +266,53 @@ fn analyze_revision(
     months: usize,
     seq: usize,
 ) -> Result<HistoryPoint, String> {
-    let worktree = Worktree::add(repo_root, commit, seq).map_err(|e| e.to_string())?;
+    let analysis = analyze_ref_in_repo(repo_root, subpath, commit, config, thresholds, months, seq)
+        .map_err(|e| e.to_string())?;
+    let report = analysis.report;
+    let critical = *report
+        .issues_by_severity
+        .get(&Severity::Critical)
+        .unwrap_or(&0);
+    let high = *report.issues_by_severity.get(&Severity::High).unwrap_or(&0);
+
+    Ok(HistoryPoint {
+        commit: short_hash(commit),
+        date: String::new(), // filled in by caller
+        grade: report.health_grade,
+        average_score: report.average_score,
+        total_couplings: analysis.total_couplings,
+        module_count: analysis.module_count,
+        critical,
+        high,
+    })
+}
+
+fn analyze_ref_in_repo(
+    repo_root: &Path,
+    subpath: &Path,
+    git_ref: &str,
+    config: &CompiledConfig,
+    thresholds: &IssueThresholds,
+    months: usize,
+    seq: usize,
+) -> Result<RefAnalysis, HistoryError> {
+    let worktree = Worktree::add(repo_root, git_ref, seq)?;
 
     let analysis_path = worktree.dir.join(subpath);
     if !analysis_path.exists() {
-        return Err("analysis path does not exist at this revision".to_string());
+        return Err(HistoryError::Analysis(
+            "analysis path does not exist at this revision".to_string(),
+        ));
     }
 
-    let mut metrics = analyze_workspace_with_config(&analysis_path, config)
-        .map_err(|e| format!("analysis failed: {}", e))?;
+    let mut config = rebase_config_root(config, repo_root, &worktree.dir);
+    let mut metrics = analyze_workspace_with_config(&analysis_path, &config)
+        .map_err(|e| HistoryError::Analysis(e.to_string()))?;
 
     if metrics.modules.is_empty() {
-        return Err("no modules found at this revision".to_string());
+        return Err(HistoryError::Analysis(
+            "no modules found at this revision".to_string(),
+        ));
     }
 
     let mut volatility = VolatilityAnalyzer::new(months);
@@ -254,22 +330,31 @@ fn analyze_revision(
     }
 
     let report = analyze_project_balance_with_thresholds(&metrics, thresholds);
-    let critical = *report
-        .issues_by_severity
-        .get(&Severity::Critical)
-        .unwrap_or(&0);
-    let high = *report.issues_by_severity.get(&Severity::High).unwrap_or(&0);
 
-    Ok(HistoryPoint {
-        commit: short_hash(commit),
-        date: String::new(), // filled in by caller
-        grade: report.health_grade,
-        average_score: report.average_score,
-        total_couplings: metrics.couplings.len(),
+    Ok(RefAnalysis {
+        git_ref: git_ref.to_string(),
+        report,
+        total_files: metrics.total_files,
         module_count: metrics.modules.len(),
-        critical,
-        high,
+        total_couplings: metrics.couplings.len(),
     })
+}
+
+fn rebase_config_root(
+    config: &CompiledConfig,
+    repo_root: &Path,
+    worktree_root: &Path,
+) -> CompiledConfig {
+    let mut config = config.clone();
+    let Some(config_root) = config.config_root() else {
+        return config;
+    };
+
+    if let Ok(relative) = config_root.strip_prefix(repo_root) {
+        config.set_config_root(Some(worktree_root.join(relative)));
+    }
+
+    config
 }
 
 /// A git worktree that is removed when dropped.
