@@ -56,6 +56,8 @@ pub enum IssueType {
     HiddenCoupling,
     /// Supporting or generic module changing more often than expected
     AccidentalVolatility,
+    /// Direct coupling to a third-party crate is spread across many modules
+    ScatteredExternalCoupling,
 
     // === APOSD-inspired issues (A Philosophy of Software Design) ===
     /// Module with interface complexity close to implementation complexity
@@ -86,6 +88,7 @@ impl std::fmt::Display for IssueType {
             IssueType::CircularDependency => write!(f, "Circular Dependency"),
             IssueType::HiddenCoupling => write!(f, "Hidden Coupling"),
             IssueType::AccidentalVolatility => write!(f, "Accidental Volatility"),
+            IssueType::ScatteredExternalCoupling => write!(f, "Scattered External Coupling"),
             // APOSD-inspired
             IssueType::ShallowModule => write!(f, "Shallow Module"),
             IssueType::PassThroughMethod => write!(f, "Pass-Through Method"),
@@ -128,6 +131,9 @@ impl IssueType {
             }
             IssueType::AccidentalVolatility => {
                 "A supporting or generic subdomain changes frequently despite being expected to be stable. This suggests churn from design or ownership issues rather than essential business volatility."
+            }
+            IssueType::ScatteredExternalCoupling => {
+                "A third-party crate is used directly from many internal modules, spreading upgrade and API-change risk across code you control."
             }
             // APOSD-inspired descriptions
             IssueType::ShallowModule => {
@@ -933,6 +939,7 @@ fn dimension_for_issue(issue_type: IssueType) -> GradeDimension {
         | IssueType::ShallowModule
         | IssueType::PassThroughMethod => GradeDimension::Strength,
         IssueType::GlobalComplexity
+        | IssueType::ScatteredExternalCoupling
         | IssueType::HighEfferentCoupling
         | IssueType::HighAfferentCoupling
         | IssueType::UnnecessaryAbstraction

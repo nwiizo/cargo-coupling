@@ -17,15 +17,16 @@ use clap::{Parser, Subcommand};
 
 use cargo_coupling::{
     CompiledConfig, IssueThresholds, ManifestContext, Severity, TextReportOptions,
-    VolatilityAnalyzer, analyze_history, analyze_ref, analyze_workspace_with_config,
-    build_manifest,
+    VolatilityAnalyzer, analyze_external_dependencies, analyze_history, analyze_ref,
+    analyze_workspace_with_config, build_manifest,
     cli_output::{
-        CheckConfig, generate_baseline_diff_output, generate_check_output, generate_history_output,
-        generate_hotspots_output, generate_impact_output, generate_json_output,
-        generate_json_output_with_diff, generate_ratchet_check_output, parse_grade, parse_severity,
+        CheckConfig, generate_baseline_diff_output, generate_check_output,
+        generate_external_dependencies_output, generate_history_output, generate_hotspots_output,
+        generate_impact_output, generate_json_output, generate_json_output_with_diff,
+        generate_ratchet_check_output, parse_grade, parse_severity,
     },
     diff_reports, generate_ai_output_with_thresholds, generate_report_with_options,
-    generate_summary_with_options, load_compiled_config,
+    generate_summary_with_options, load_compiled_config, load_lock_versions_near,
     web::{DEFAULT_HISTORY_MAX_POINTS, ServerConfig, start_server},
 };
 
@@ -121,6 +122,10 @@ struct Args {
     /// Show top N refactoring hotspots (default: 5). Use --hotspots or --hotspots=N
     #[arg(long, value_name = "N", num_args = 0..=1, require_equals = true, default_missing_value = "5")]
     hotspots: Option<usize>,
+
+    /// Show third-party crate coupling breadth and scattered usage risks
+    #[arg(long)]
+    deps: bool,
 
     /// Analyze change impact for a specific module
     #[arg(long, value_name = "MODULE")]
@@ -466,6 +471,14 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         return Ok(0);
     }
 
+    // --deps: Show third-party dependency coupling exposure
+    if args.deps {
+        let versions = load_lock_versions_near(&args.path);
+        let report = analyze_external_dependencies(&metrics, &versions);
+        generate_external_dependencies_output(&report, args.json, &mut writer)?;
+        return Ok(0);
+    }
+
     // --json: Machine-readable JSON output
     if args.json {
         generate_json_output(&metrics, &thresholds, &manifest, &mut writer)?;
@@ -561,8 +574,11 @@ fn output_mode_conflict(args: &Args) -> Option<(&'static str, Vec<&'static str>)
     if args.web {
         modes.push("--web");
     }
-    if args.json && args.history.is_none() {
+    if args.json && args.history.is_none() && !args.deps {
         modes.push("--json");
+    }
+    if args.deps {
+        modes.push("--deps");
     }
     if args.check {
         modes.push("--check");
@@ -666,6 +682,7 @@ mod tests {
             no_open: true,
             api_endpoint: None,
             hotspots: None,
+            deps: false,
             impact: None,
             trace: None,
             history: None,

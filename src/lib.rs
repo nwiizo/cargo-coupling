@@ -41,6 +41,7 @@ pub mod balance;
 pub mod cli_output;
 pub mod config;
 pub mod diff;
+pub mod external;
 pub mod history;
 pub mod manifest;
 pub mod metrics;
@@ -65,6 +66,10 @@ pub use config::{
     VolatilityConfig, load_compiled_config, load_config,
 };
 pub use diff::{BaselineDiff, IssueKey, diff_reports};
+pub use external::{
+    ExternalDependencyReport, ExternalDependencyUsage, SCATTERED_EXTERNAL_BREADTH_THRESHOLD,
+    analyze_external_dependencies, detect_scattered_external_coupling, load_lock_versions_near,
+};
 pub use history::{
     HistoryError, HistoryPoint, HistoryReport, RefAnalysis, SkippedRevision, analyze_history,
     analyze_ref,

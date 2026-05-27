@@ -15,6 +15,9 @@ use crate::balance::{
     BalanceScore, HealthGrade, IssueThresholds, Severity, analyze_project_balance_with_thresholds,
 };
 use crate::diff::BaselineDiff;
+use crate::external::{
+    ExternalDependencyReport, ExternalDependencyUsage, analyze_external_dependencies,
+};
 use crate::history::HistoryReport;
 use crate::manifest::AnalysisManifest;
 use crate::metrics::{Distance, ProjectMetrics};
@@ -104,6 +107,16 @@ pub fn get_issue_explanation(issue_type: &str) -> IssueExplanation {
             ],
             how_to_fix: "Depend on a stable interface instead of implementation",
             example: None,
+        },
+        "Scattered External Coupling" => IssueExplanation {
+            what_it_means: "A third-party crate is used directly from many modules",
+            why_its_bad: vec![
+                "Crate API changes have a wide edit surface",
+                "Upgrade risk is spread across unrelated modules",
+                "Harder to replace or mock the dependency",
+            ],
+            how_to_fix: "Introduce a facade or wrapper module around the crate",
+            example: Some("e.g., reqwest calls go through http_client.rs"),
         },
         "Inappropriate Intimacy" | "InappropriateIntimacy" => IssueExplanation {
             what_it_means: "Directly accessing another module's internal details",
@@ -1014,6 +1027,96 @@ fn write_issue_line<W: Write>(
 }
 
 // ============================================================================
+// External Dependencies: Third-party coupling exposure
+// ============================================================================
+
+/// Render external dependency coupling as text or JSON.
+pub fn generate_external_dependencies_output<W: Write>(
+    report: &ExternalDependencyReport,
+    json: bool,
+    writer: &mut W,
+) -> io::Result<()> {
+    if json {
+        let output = JsonExternalDependenciesOutput {
+            external_dependencies: json_external_dependencies(report),
+        };
+        let text = serde_json::to_string_pretty(&output).map_err(io::Error::other)?;
+        writeln!(writer, "{}", text)?;
+        return Ok(());
+    }
+
+    writeln!(writer, "External Dependency Coupling")?;
+    writeln!(
+        writer,
+        "═══════════════════════════════════════════════════════════"
+    )?;
+    writeln!(
+        writer,
+        "External crates: {}  Direct references: {}",
+        report.dependencies.len(),
+        report
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.total_references)
+            .sum::<usize>()
+    )?;
+
+    if report.dependencies.is_empty() {
+        writeln!(writer)?;
+        writeln!(writer, "No external crate couplings detected.")?;
+        return Ok(());
+    }
+
+    writeln!(writer)?;
+    writeln!(writer, "Top Crates by Breadth:")?;
+    for (index, dependency) in report.dependencies.iter().take(10).enumerate() {
+        let version = if dependency.versions.is_empty() {
+            "version: unknown".to_string()
+        } else {
+            format!("version: {}", dependency.versions.join(", "))
+        };
+        writeln!(
+            writer,
+            "{}. {} ({}; {} modules, {} references, dominant: {})",
+            index + 1,
+            dependency.crate_name,
+            version,
+            dependency.breadth,
+            dependency.total_references,
+            dependency.dominant_strength
+        )?;
+        let sample_modules = dependency
+            .source_modules
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !sample_modules.is_empty() {
+            writeln!(writer, "   modules: {}", sample_modules)?;
+        }
+    }
+
+    writeln!(writer)?;
+    writeln!(writer, "Scattered Coupling Flags:")?;
+    if report.scattered_couplings.is_empty() {
+        writeln!(writer, "  (none)")?;
+    } else {
+        for issue in &report.scattered_couplings {
+            writeln!(
+                writer,
+                "  - {}: {} -> {}",
+                issue.severity, issue.source, issue.target
+            )?;
+            writeln!(writer, "    {}", issue.description)?;
+            writeln!(writer, "    Fix: {}", issue.refactoring)?;
+        }
+    }
+
+    Ok(())
+}
+
+// ============================================================================
 // JSON Output
 // ============================================================================
 
@@ -1035,11 +1138,27 @@ pub struct JsonOutput {
     pub analysis_manifest: JsonAnalysisManifest,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<JsonBaselineDiff>,
+    pub external_dependencies: JsonExternalDependencies,
     pub hotspots: Vec<Hotspot>,
     pub issues: Vec<JsonIssue>,
     pub circular_dependencies: Vec<Vec<String>>,
     pub temporal_couplings: Vec<JsonTemporalCoupling>,
     pub modules: Vec<JsonModule>,
+}
+
+/// Standalone external-dependency JSON output.
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonExternalDependenciesOutput {
+    pub external_dependencies: JsonExternalDependencies,
+}
+
+/// External dependency analysis in JSON format.
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonExternalDependencies {
+    pub total_crates: usize,
+    pub total_references: usize,
+    pub dependencies: Vec<ExternalDependencyUsage>,
+    pub scattered_couplings: Vec<JsonIssue>,
 }
 
 /// Summary in JSON format
@@ -1160,6 +1279,7 @@ fn generate_json_output_with_optional_diff<W: Write>(
     writer: &mut W,
 ) -> io::Result<()> {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
+    let external_dependencies = analyze_external_dependencies(metrics, &HashMap::new());
     let circular_deps = metrics.detect_circular_dependencies();
     let cycle_modules: HashSet<String> = circular_deps.iter().flatten().cloned().collect();
     let hotspots = calculate_hotspots(metrics, thresholds, 10);
@@ -1250,6 +1370,7 @@ fn generate_json_output_with_optional_diff<W: Write>(
             notes: manifest.notes.clone(),
         },
         diff: diff.map(json_baseline_diff),
+        external_dependencies: json_external_dependencies(&external_dependencies),
         hotspots,
         issues: report.issues.iter().map(json_issue).collect(),
         circular_dependencies: circular_deps,
@@ -1303,6 +1424,19 @@ fn json_issue(issue: &crate::balance::CouplingIssue) -> JsonIssue {
         description: issue.description.clone(),
         suggestion: format!("{}", issue.refactoring),
         balance_score: issue.balance_score,
+    }
+}
+
+fn json_external_dependencies(report: &ExternalDependencyReport) -> JsonExternalDependencies {
+    JsonExternalDependencies {
+        total_crates: report.dependencies.len(),
+        total_references: report
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.total_references)
+            .sum(),
+        dependencies: report.dependencies.clone(),
+        scattered_couplings: report.scattered_couplings.iter().map(json_issue).collect(),
     }
 }
 
@@ -1922,6 +2056,46 @@ mod tests {
         let thresholds = IssueThresholds::default();
         let hotspots = calculate_hotspots(&metrics, &thresholds, 5);
         assert!(hotspots.is_empty());
+    }
+
+    #[test]
+    fn test_external_dependencies_json_output_shape() {
+        use crate::external::{ExternalDependencyReport, ExternalDependencyUsage};
+
+        let dependencies = vec![ExternalDependencyUsage {
+            crate_name: "reqwest".to_string(),
+            versions: vec!["0.12.0".to_string()],
+            breadth: 4,
+            total_references: 8,
+            dominant_strength: "Functional".to_string(),
+            source_modules: vec![
+                "api".to_string(),
+                "client".to_string(),
+                "sync".to_string(),
+                "worker".to_string(),
+            ],
+        }];
+        let scattered_couplings =
+            crate::external::detect_scattered_external_coupling(&dependencies);
+        let report = ExternalDependencyReport {
+            dependencies,
+            scattered_couplings,
+        };
+        let mut buf = Vec::new();
+
+        generate_external_dependencies_output(&report, true, &mut buf).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let deps = &parsed["external_dependencies"];
+        assert_eq!(deps["total_crates"], 1);
+        assert_eq!(deps["total_references"], 8);
+        assert_eq!(deps["dependencies"][0]["crate_name"], "reqwest");
+        assert_eq!(deps["dependencies"][0]["versions"][0], "0.12.0");
+        assert_eq!(
+            deps["scattered_couplings"][0]["issue_type"],
+            "Scattered External Coupling"
+        );
     }
 
     #[test]

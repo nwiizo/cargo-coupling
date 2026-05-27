@@ -396,6 +396,7 @@ fn issue_type_japanese(issue_type: crate::balance::IssueType) -> &'static str {
         IssueType::CircularDependency => "循環依存",
         IssueType::HiddenCoupling => "隠れた結合 (共変更のみで発見)",
         IssueType::AccidentalVolatility => "偶発的な変更頻度",
+        IssueType::ScatteredExternalCoupling => "外部クレート結合の分散",
         IssueType::ShallowModule => "浅いモジュール",
         IssueType::PassThroughMethod => "パススルーメソッド",
         IssueType::HighCognitiveLoad => "高認知負荷",
