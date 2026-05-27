@@ -9,7 +9,6 @@ use std::collections::{HashMap, HashSet};
 use crate::analyzer::ItemDepType;
 use crate::balance::issue::CouplingIssue;
 use crate::balance::issue_type::IssueType;
-use crate::balance::project::analyze_project_balance;
 use crate::balance::score::{BalanceInterpretation, BalanceScore, IssueThresholds};
 use crate::balance::severity::Severity;
 use crate::manifest::{ManifestContext, build_manifest};
@@ -307,7 +306,9 @@ fn paths_match(module_path: &str, git_path: &str) -> bool {
 
 /// Convert ProjectMetrics to GraphData for visualization
 pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) -> GraphData {
-    let balance_report = analyze_project_balance(metrics);
+    // Use the caller's configured thresholds so the web grade matches the CLI grade
+    // (the previous default-thresholds call produced an inconsistent grade).
+    let balance_report = crate::balance::analyze_project_balance_with_thresholds(metrics, thresholds);
     let circular_deps = metrics.detect_circular_dependencies();
     let accidental_volatility_modules: HashSet<String> = balance_report
         .issues
