@@ -1843,6 +1843,25 @@ mod tests {
     use crate::metrics::{ModuleMetrics, Visibility};
     use crate::volatility::TemporalCoupling;
 
+    #[test]
+    fn entrypoint_module_detection() {
+        assert!(is_entrypoint_module("cargo-coupling::main"));
+        assert!(is_entrypoint_module("main"));
+        assert!(!is_entrypoint_module("cargo-coupling::balance"));
+        assert!(!is_entrypoint_module("cargo-coupling::main_loop"));
+    }
+
+    #[test]
+    fn crate_root_facade_detection() {
+        // crate name (hyphenated) -> root module (underscored) == the re-export facade.
+        assert!(is_crate_root_facade("cargo-coupling::cargo_coupling"));
+        assert!(is_crate_root_facade("myapp::myapp"));
+        // real submodules are not the facade.
+        assert!(!is_crate_root_facade("cargo-coupling::balance"));
+        assert!(!is_crate_root_facade("cargo-coupling::web::graph"));
+        assert!(!is_crate_root_facade("balance"));
+    }
+
     fn make_coupling(
         strength: IntegrationStrength,
         distance: Distance,
