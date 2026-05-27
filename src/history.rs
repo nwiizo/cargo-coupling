@@ -357,11 +357,7 @@ fn analyze_ref_in_repo(
     }
 
     if config.has_volatility_overrides() || config.has_subdomain_config() {
-        for coupling in &mut metrics.couplings {
-            if let Some(override_vol) = config.get_volatility_override(&coupling.target) {
-                coupling.volatility = override_vol;
-            }
-        }
+        metrics.apply_config_volatility_overrides(&mut config);
     }
 
     let report = analyze_project_balance_with_thresholds(&metrics, params.thresholds);

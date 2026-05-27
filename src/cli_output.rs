@@ -1031,6 +1031,7 @@ pub struct JsonTemporalCoupling {
 #[derive(Debug, Clone, Serialize)]
 pub struct JsonOutput {
     pub summary: JsonSummary,
+    pub grade_rationale: JsonGradeRationale,
     pub analysis_manifest: JsonAnalysisManifest,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<JsonBaselineDiff>,
@@ -1053,6 +1054,25 @@ pub struct JsonSummary {
     pub critical_issues: usize,
     pub high_issues: usize,
     pub medium_issues: usize,
+}
+
+/// Health-grade rationale in JSON format.
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonGradeRationale {
+    pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dominant_dimension: Option<String>,
+    pub top_issue_types: Vec<JsonIssueTypeContribution>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Issue-type contribution in JSON format.
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonIssueTypeContribution {
+    pub issue_type: String,
+    pub count: usize,
+    pub highest_severity: String,
 }
 
 /// Declared analysis blind spots in JSON format
@@ -1199,6 +1219,24 @@ fn generate_json_output_with_optional_diff<W: Write>(
             critical_issues: critical,
             high_issues: high,
             medium_issues: medium,
+        },
+        grade_rationale: JsonGradeRationale {
+            summary: report.grade_rationale.summary.clone(),
+            dominant_dimension: report
+                .grade_rationale
+                .dominant_dimension
+                .map(|dimension| dimension.to_string()),
+            top_issue_types: report
+                .grade_rationale
+                .top_issue_types
+                .iter()
+                .map(|item| JsonIssueTypeContribution {
+                    issue_type: item.issue_type.to_string(),
+                    count: item.count,
+                    highest_severity: item.highest_severity.to_string(),
+                })
+                .collect(),
+            note: report.grade_rationale.volatility_note.clone(),
         },
         analysis_manifest: JsonAnalysisManifest {
             blind_spots: manifest
@@ -1957,5 +1995,35 @@ mod tests {
         assert!(modules.iter().any(|module| {
             module["name"] == "report" && module["subdomain"].as_str() == Some("Supporting")
         }));
+    }
+
+    #[test]
+    fn test_json_output_includes_grade_rationale() {
+        use crate::metrics::{CouplingMetrics, IntegrationStrength, Volatility};
+
+        let mut metrics = ProjectMetrics::new();
+        metrics.add_coupling(CouplingMetrics::new(
+            "caller".to_string(),
+            "stable".to_string(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::High,
+        ));
+
+        let thresholds = IssueThresholds::default();
+        let manifest = build_manifest(&ManifestContext::default());
+        let mut buf = Vec::new();
+
+        generate_json_output(&metrics, &thresholds, &manifest, &mut buf).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let rationale = &parsed["grade_rationale"];
+        assert!(rationale["summary"].as_str().unwrap().contains("Driven by"));
+        assert_eq!(
+            rationale["top_issue_types"][0]["issue_type"].as_str(),
+            Some("Cascading Change Risk")
+        );
+        assert!(rationale["note"].as_str().is_some());
     }
 }

@@ -55,9 +55,10 @@ pub use analyzer::{
     analyze_rust_file, analyze_rust_file_full, analyze_workspace, analyze_workspace_with_config,
 };
 pub use balance::{
-    BalanceInterpretation, BalanceScore, CouplingIssue, HealthGrade, IssueThresholds, IssueType,
-    ProjectBalanceReport, RefactoringAction, Severity, analyze_project_balance,
-    analyze_project_balance_with_thresholds, calculate_project_score,
+    BalanceInterpretation, BalanceScore, CouplingIssue, GradeDimension, GradeRationale,
+    HealthGrade, IssueThresholds, IssueType, IssueTypeContribution, ProjectBalanceReport,
+    RefactoringAction, Severity, analyze_project_balance, analyze_project_balance_with_thresholds,
+    calculate_project_score,
 };
 pub use config::{
     AnalysisConfig, CompiledConfig, ConfigError, CouplingConfig, ThresholdsConfig,

@@ -373,34 +373,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         eprintln!("DDD subdomain classification configured (affects volatility)");
     }
     if config.has_volatility_overrides() || config.has_subdomain_config() {
-        // Couplings are keyed by module name (e.g. `crate::balance`), but volatility
-        // patterns and subdomains are keyed by file path (e.g. `src/balance.rs`).
-        // Resolve each target module to its path so the override actually matches.
-        let config_base = config.config_root().map(|p| p.to_path_buf());
-        let module_paths: std::collections::HashMap<String, String> = metrics
-            .modules
-            .iter()
-            .map(|(name, m)| {
-                // Patterns/subdomains are rooted at the config dir, but module paths
-                // are absolute; make them config-relative so the globs match.
-                let rel = config_base
-                    .as_ref()
-                    .and_then(|base| m.path.strip_prefix(base).ok())
-                    .unwrap_or(m.path.as_path());
-                (name.clone(), rel.to_string_lossy().into_owned())
-            })
-            .collect();
-        let mut override_count = 0;
-        for coupling in &mut metrics.couplings {
-            let lookup = module_paths
-                .get(&coupling.target)
-                .map(String::as_str)
-                .unwrap_or(coupling.target.as_str());
-            if let Some(override_vol) = config.get_volatility_override(lookup) {
-                coupling.volatility = override_vol;
-                override_count += 1;
-            }
-        }
+        let override_count = metrics.apply_config_volatility_overrides(&mut config);
         if args.verbose && override_count > 0 {
             eprintln!(
                 "Applied {} volatility overrides from config",

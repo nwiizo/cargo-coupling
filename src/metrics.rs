@@ -5,10 +5,10 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use crate::analyzer::ItemDependency;
-use crate::config::Subdomain;
+use crate::config::{CompiledConfig, Subdomain};
 
 // ===== Coupling Dimensions =====
 
@@ -1001,6 +1001,55 @@ impl ProjectMetrics {
         }
     }
 
+    /// Apply config-derived subdomain classifications and volatility overrides.
+    ///
+    /// Config patterns are path-based while couplings are module-name-based, so
+    /// this resolves coupling targets through known module file paths before
+    /// querying the config.
+    pub fn apply_config_volatility_overrides(&mut self, config: &mut CompiledConfig) -> usize {
+        if !config.has_volatility_overrides() && !config.has_subdomain_config() {
+            return 0;
+        }
+
+        let mut module_paths = HashMap::new();
+        let has_subdomain_config = config.has_subdomain_config();
+        for (name, module) in &mut self.modules {
+            let relative_path = path_for_config_matching(&module.path, config);
+            if has_subdomain_config {
+                module.subdomain = config.get_subdomain(&relative_path);
+            }
+
+            insert_module_path_aliases(&mut module_paths, name, module, &relative_path);
+        }
+
+        let mut override_count = 0;
+        for coupling in &mut self.couplings {
+            let target_short = coupling
+                .target
+                .rsplit("::")
+                .next()
+                .unwrap_or(&coupling.target);
+            let lookup = module_paths
+                .get(&coupling.target)
+                .or_else(|| module_paths.get(target_short))
+                .or_else(|| {
+                    coupling
+                        .target
+                        .rsplit("::")
+                        .find_map(|segment| module_paths.get(segment))
+                })
+                .map(String::as_str)
+                .unwrap_or(coupling.target.as_str());
+
+            if let Some(override_vol) = config.get_volatility_override(lookup) {
+                coupling.volatility = override_vol;
+                override_count += 1;
+            }
+        }
+
+        override_count
+    }
+
     /// Build a dependency graph from couplings
     fn build_dependency_graph(&self) -> HashMap<String, HashSet<String>> {
         let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
@@ -1253,6 +1302,66 @@ impl ProjectMetrics {
             })
             .collect()
     }
+}
+
+fn insert_module_path_aliases(
+    module_paths: &mut HashMap<String, String>,
+    key_name: &str,
+    module: &ModuleMetrics,
+    relative_path: &str,
+) {
+    module_paths.insert(key_name.to_string(), relative_path.to_string());
+    module_paths.insert(module.name.clone(), relative_path.to_string());
+
+    if let Some(short_name) = key_name.rsplit("::").next() {
+        module_paths.insert(short_name.to_string(), relative_path.to_string());
+    }
+
+    if let Some(short_name) = module.name.rsplit("::").next() {
+        module_paths.insert(short_name.to_string(), relative_path.to_string());
+    }
+
+    if let Some(file_stem) = module.path.file_stem().and_then(|stem| stem.to_str()) {
+        module_paths.insert(file_stem.to_string(), relative_path.to_string());
+    }
+}
+
+fn path_for_config_matching(file_path: &Path, config: &CompiledConfig) -> String {
+    let normalized_file = normalize_path_for_matching(file_path);
+    let path = config
+        .config_root()
+        .map(normalize_path_for_matching)
+        .and_then(|base| {
+            normalized_file
+                .strip_prefix(base)
+                .ok()
+                .map(Path::to_path_buf)
+        })
+        .unwrap_or(normalized_file);
+
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn normalize_path_for_matching(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 /// Summary of circular dependencies

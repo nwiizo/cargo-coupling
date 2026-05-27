@@ -172,6 +172,63 @@ pub struct CouplingIssue {
     pub balance_score: f64,
 }
 
+/// Coupling dimension that most explains the current grade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GradeDimension {
+    /// Coupling strength is the dominant issue driver.
+    Strength,
+    /// Coupling distance is the dominant issue driver.
+    Distance,
+    /// Volatility or churn is the dominant issue driver.
+    Volatility,
+}
+
+impl std::fmt::Display for GradeDimension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GradeDimension::Strength => write!(f, "strength"),
+            GradeDimension::Distance => write!(f, "distance"),
+            GradeDimension::Volatility => write!(f, "volatility"),
+        }
+    }
+}
+
+/// Top issue-type contribution used to explain a project grade.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueTypeContribution {
+    /// Issue type contributing to the grade.
+    pub issue_type: IssueType,
+    /// Number of surfaced issues of this type.
+    pub count: usize,
+    /// Highest severity observed for this issue type.
+    pub highest_severity: Severity,
+}
+
+/// Short explanation of why a project received its health grade.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GradeRationale {
+    /// Human-readable one-line explanation.
+    pub summary: String,
+    /// Highest-impact issue types by severity-weighted count.
+    pub top_issue_types: Vec<IssueTypeContribution>,
+    /// Dominant coupling dimension behind the surfaced issues.
+    pub dominant_dimension: Option<GradeDimension>,
+    /// Extra note when git churn or accidental volatility dominates.
+    pub volatility_note: Option<String>,
+}
+
+impl GradeRationale {
+    /// Empty rationale for hand-built test fixtures.
+    pub fn empty() -> Self {
+        Self {
+            summary: "No surfaced coupling issues; grade reflects low issue density.".to_string(),
+            top_issue_types: Vec::new(),
+            dominant_dimension: None,
+            volatility_note: None,
+        }
+    }
+}
+
 /// Specific refactoring actions
 #[derive(Debug, Clone)]
 pub enum RefactoringAction {
@@ -671,9 +728,11 @@ pub fn analyze_project_balance_with_thresholds(
 
     // Sort by severity (critical first), then by balance score (worst first)
     all_issues.sort_by(|a, b| {
-        b.severity
-            .cmp(&a.severity)
-            .then_with(|| a.balance_score.partial_cmp(&b.balance_score).unwrap())
+        b.severity.cmp(&a.severity).then_with(|| {
+            a.balance_score
+                .partial_cmp(&b.balance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
 
     // Calculate summary statistics based on INTERNAL couplings only
@@ -715,6 +774,7 @@ pub fn analyze_project_balance_with_thresholds(
 
     // Determine overall health grade based on INTERNAL coupling issues
     let health_grade = calculate_health_grade(&issues_by_severity, internal_couplings.max(1));
+    let grade_rationale = build_grade_rationale(&all_issues, internal_couplings);
 
     ProjectBalanceReport {
         total_couplings,
@@ -727,8 +787,159 @@ pub fn analyze_project_balance_with_thresholds(
         issues_by_type,
         issues: all_issues,
         top_priorities: Vec::new(), // Will be filled below
+        grade_rationale,
     }
     .with_top_priorities(5) // Increased from 3 to 5 for better actionability
+}
+
+fn build_grade_rationale(issues: &[CouplingIssue], internal_couplings: usize) -> GradeRationale {
+    if issues.is_empty() {
+        let summary = if internal_couplings == 0 {
+            "No internal couplings were available for issue-density scoring.".to_string()
+        } else {
+            format!(
+                "No surfaced coupling issues across {} internal coupling(s); grade reflects low issue density.",
+                internal_couplings
+            )
+        };
+        return GradeRationale {
+            summary,
+            ..GradeRationale::empty()
+        };
+    }
+
+    let mut by_type: HashMap<IssueType, (usize, Severity, usize)> = HashMap::new();
+    let mut by_dimension: HashMap<GradeDimension, usize> = HashMap::new();
+    let mut high_or_critical = 0;
+
+    for issue in issues {
+        let weight = severity_weight(issue.severity);
+        let entry = by_type
+            .entry(issue.issue_type)
+            .or_insert((0, issue.severity, 0));
+        entry.0 += 1;
+        entry.1 = entry.1.max(issue.severity);
+        entry.2 += weight;
+        *by_dimension
+            .entry(dimension_for_issue(issue.issue_type))
+            .or_default() += weight;
+
+        if issue.severity >= Severity::High {
+            high_or_critical += 1;
+        }
+    }
+
+    let mut ranked_types: Vec<_> = by_type
+        .into_iter()
+        .map(|(issue_type, (count, highest_severity, weighted_score))| {
+            (
+                IssueTypeContribution {
+                    issue_type,
+                    count,
+                    highest_severity,
+                },
+                weighted_score,
+            )
+        })
+        .collect();
+    ranked_types.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| b.0.count.cmp(&a.0.count))
+            .then_with(|| a.0.issue_type.to_string().cmp(&b.0.issue_type.to_string()))
+    });
+
+    let top_issue_types: Vec<_> = ranked_types
+        .into_iter()
+        .take(3)
+        .map(|(contribution, _)| contribution)
+        .collect();
+
+    let dominant_dimension = by_dimension
+        .into_iter()
+        .max_by_key(|(_, score)| *score)
+        .map(|(dimension, _)| dimension);
+
+    let volatility_issue_count = issues
+        .iter()
+        .filter(|issue| dimension_for_issue(issue.issue_type) == GradeDimension::Volatility)
+        .count();
+    let accidental_count = issues
+        .iter()
+        .filter(|issue| issue.issue_type == IssueType::AccidentalVolatility)
+        .count();
+    let volatility_note = if volatility_issue_count > 0 {
+        let accidental_suffix = if accidental_count > 0 {
+            format!(
+                ", including {} accidental-volatility finding(s)",
+                accidental_count
+            )
+        } else {
+            String::new()
+        };
+        Some(format!(
+            "Volatility/churn contributes through {} issue(s){}.",
+            volatility_issue_count, accidental_suffix
+        ))
+    } else {
+        None
+    };
+
+    let top_phrase = top_issue_types
+        .iter()
+        .map(|item| format!("{} ({})", item.issue_type, item.count))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let severity_phrase = if high_or_critical > 0 {
+        format!("{} high/critical issue(s)", high_or_critical)
+    } else {
+        format!("{} medium/low issue(s)", issues.len())
+    };
+    let dimension_phrase = dominant_dimension
+        .map(|dimension| format!("; {} is the largest contributor", dimension))
+        .unwrap_or_default();
+    let note_phrase = volatility_note
+        .as_ref()
+        .map(|note| format!(" {}", note))
+        .unwrap_or_default();
+
+    GradeRationale {
+        summary: format!(
+            "Driven by {}, led by {}{}.{note_phrase}",
+            severity_phrase, top_phrase, dimension_phrase
+        ),
+        top_issue_types,
+        dominant_dimension,
+        volatility_note,
+    }
+}
+
+fn severity_weight(severity: Severity) -> usize {
+    match severity {
+        Severity::Critical => 4,
+        Severity::High => 3,
+        Severity::Medium => 2,
+        Severity::Low => 1,
+    }
+}
+
+fn dimension_for_issue(issue_type: IssueType) -> GradeDimension {
+    match issue_type {
+        IssueType::CascadingChangeRisk
+        | IssueType::HiddenCoupling
+        | IssueType::AccidentalVolatility => GradeDimension::Volatility,
+        IssueType::InappropriateIntimacy
+        | IssueType::PublicFieldExposure
+        | IssueType::PrimitiveObsession
+        | IssueType::ShallowModule
+        | IssueType::PassThroughMethod => GradeDimension::Strength,
+        IssueType::GlobalComplexity
+        | IssueType::HighEfferentCoupling
+        | IssueType::HighAfferentCoupling
+        | IssueType::UnnecessaryAbstraction
+        | IssueType::CircularDependency
+        | IssueType::HighCognitiveLoad
+        | IssueType::GodModule => GradeDimension::Distance,
+    }
 }
 
 // ===== Temporal and Subdomain Signals =====
@@ -786,7 +997,7 @@ fn analyze_hidden_temporal_coupling(metrics: &ProjectMetrics) -> Vec<CouplingIss
 
 /// Analyze modules whose git churn contradicts their expected subdomain volatility.
 fn analyze_accidental_volatility(metrics: &ProjectMetrics) -> Vec<CouplingIssue> {
-    if metrics.file_changes.is_empty() {
+    if metrics.file_changes.len() < 4 {
         return Vec::new();
     }
 
@@ -807,7 +1018,7 @@ fn analyze_accidental_volatility(metrics: &ProjectMetrics) -> Vec<CouplingIssue>
             issue_type: IssueType::AccidentalVolatility,
             severity: Severity::Medium,
             source: module_name.clone(),
-            target: subdomain.to_string(),
+            target: module_name.clone(),
             description: format!(
                 "Accidental volatility: {} is {} but changed {} times (top-quartile threshold: {})",
                 module_name, subdomain, change_count, threshold
@@ -839,6 +1050,8 @@ fn module_for_file(file_path: &str, file_to_module: &[(String, String)]) -> Opti
         .map(|(_, module_name)| module_name.clone())
 }
 
+/// Checks explicit couplings by assuming coupling source/target names end with
+/// the short module name stored in `ProjectMetrics::modules`.
 fn has_code_coupling(metrics: &ProjectMetrics, module_a: &str, module_b: &str) -> bool {
     metrics.couplings.iter().any(|coupling| {
         module_names_match(&coupling.source, module_a)
@@ -1232,6 +1445,8 @@ pub struct ProjectBalanceReport {
     pub issues: Vec<CouplingIssue>,
     /// Highest-priority issues selected for concise reporting.
     pub top_priorities: Vec<CouplingIssue>,
+    /// Concise explanation of why the health grade was assigned.
+    pub grade_rationale: GradeRationale,
 }
 
 impl ProjectBalanceReport {
@@ -1567,8 +1782,72 @@ mod tests {
             .find(|issue| issue.issue_type == IssueType::AccidentalVolatility)
             .expect("supporting subdomain in top churn quartile should be flagged");
         assert_eq!(issue.source, "report");
-        assert_eq!(issue.target, "Supporting");
+        assert_eq!(issue.target, "report");
+        assert!(issue.description.contains("Supporting"));
         assert_eq!(issue.severity, Severity::Medium);
+    }
+
+    #[test]
+    fn test_accidental_volatility_skips_tiny_change_samples() {
+        let mut metrics = ProjectMetrics::new();
+        let mut report_module =
+            ModuleMetrics::new(PathBuf::from("src/report.rs"), "report".to_string());
+        report_module.subdomain = Some(Subdomain::Supporting);
+        metrics.add_module(report_module);
+        metrics.file_changes.insert("src/report.rs".to_string(), 12);
+        metrics.file_changes.insert("src/lib.rs".to_string(), 1);
+        metrics.file_changes.insert("src/config.rs".to_string(), 2);
+
+        let report = analyze_project_balance(&metrics);
+
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| issue.issue_type == IssueType::AccidentalVolatility),
+            "fewer than four tracked files should not trigger top-quartile accidental volatility"
+        );
+    }
+
+    #[test]
+    fn test_grade_rationale_names_top_issue_and_volatility_driver() {
+        let mut metrics = ProjectMetrics::new();
+        let mut stable_module =
+            ModuleMetrics::new(PathBuf::from("src/stable.rs"), "stable".to_string());
+        stable_module.subdomain = Some(Subdomain::Supporting);
+        metrics.add_module(stable_module);
+        metrics.file_changes.insert("src/stable.rs".to_string(), 12);
+        metrics.file_changes.insert("src/lib.rs".to_string(), 1);
+        metrics.file_changes.insert("src/config.rs".to_string(), 2);
+        metrics.file_changes.insert("src/report.rs".to_string(), 3);
+        metrics.add_coupling(CouplingMetrics::new(
+            "caller".to_string(),
+            "stable".to_string(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::High,
+        ));
+
+        let report = analyze_project_balance(&metrics);
+
+        assert!(
+            report
+                .grade_rationale
+                .top_issue_types
+                .iter()
+                .any(|item| item.issue_type == IssueType::CascadingChangeRisk && item.count == 1)
+        );
+        assert_eq!(
+            report.grade_rationale.dominant_dimension,
+            Some(GradeDimension::Volatility)
+        );
+        assert!(
+            report
+                .grade_rationale
+                .summary
+                .contains("Cascading Change Risk")
+        );
+        assert!(report.grade_rationale.volatility_note.is_some());
     }
 
     #[test]

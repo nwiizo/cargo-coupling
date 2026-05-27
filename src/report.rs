@@ -68,6 +68,7 @@ pub fn generate_summary_with_options<W: Write>(
             report.average_score,
             metrics.module_count()
         )?;
+        writeln!(writer, "理由: {}", report.grade_rationale.summary)?;
     } else {
         writeln!(writer, "Balanced Coupling Analysis: {}", project_name)?;
         writeln!(writer, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")?;
@@ -79,6 +80,7 @@ pub fn generate_summary_with_options<W: Write>(
             report.average_score,
             metrics.module_count()
         )?;
+        writeln!(writer, "Why this grade: {}", report.grade_rationale.summary)?;
     }
     writeln!(writer)?;
 
@@ -535,6 +537,11 @@ fn write_executive_summary<W: Write>(
         "**Health Grade**: {} {}\n",
         grade_emoji, report.health_grade
     )?;
+    writeln!(
+        writer,
+        "**Why this grade**: {}\n",
+        report.grade_rationale.summary
+    )?;
 
     writeln!(writer, "| Metric | Value |")?;
     writeln!(writer, "|--------|-------|")?;
@@ -840,7 +847,11 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
         .map(|c| (c, BalanceScore::calculate(c)))
         .collect();
 
-    couplings_with_scores.sort_by(|a, b| a.1.score.partial_cmp(&b.1.score).unwrap());
+    couplings_with_scores.sort_by(|a, b| {
+        a.1.score
+            .partial_cmp(&b.1.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     writeln!(
         writer,
@@ -1031,7 +1042,11 @@ fn write_temporal_coupling_section<W: Write>(
         .iter()
         .filter(|tc| tc.is_strong())
         .collect();
-    strong.sort_by(|a, b| b.coupling_ratio.partial_cmp(&a.coupling_ratio).unwrap());
+    strong.sort_by(|a, b| {
+        b.coupling_ratio
+            .partial_cmp(&a.coupling_ratio)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     if !show_all && strong.is_empty() {
         return Ok(());
@@ -1254,6 +1269,7 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
             .get(&Severity::Medium)
             .unwrap_or(&0)
     )?;
+    writeln!(writer, "Why this grade: {}", report.grade_rationale.summary)?;
     writeln!(writer)?;
 
     // List issues in a structured format
@@ -1487,6 +1503,7 @@ mod tests {
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("Balanced Coupling Analysis"));
         assert!(output_str.contains("Grade:"));
+        assert!(output_str.contains("Why this grade:"));
     }
 
     #[test]
@@ -1500,6 +1517,7 @@ mod tests {
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("# Coupling Analysis Report"));
         assert!(output_str.contains("Executive Summary"));
+        assert!(output_str.contains("**Why this grade**:"));
         assert!(output_str.contains("## Not Analyzed (blind spots)"));
         assert!(output_str.contains("4 structural blind spots not analyzed"));
         assert!(!output_str.contains("Dynamic connascence (Execution"));

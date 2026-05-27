@@ -157,6 +157,7 @@ mod tests {
             issues_by_type: Default::default(),
             issues,
             top_priorities: Vec::new(),
+            grade_rationale: crate::balance::GradeRationale::empty(),
         }
     }
 
