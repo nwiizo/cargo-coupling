@@ -683,21 +683,38 @@ pub fn identify_issues_with_thresholds(
     // implementation — coupling to it is not an intrusive/cascading defect.
     let target_is_facade = is_crate_root_facade(&coupling.target);
 
-    // Pattern 1: Global Complexity (INTRUSIVE coupling + different module)
-    // Only flag intrusive coupling across module boundaries - functional coupling is normal
+    // Pattern 1: Strong (Intrusive) + Far (DifferentModule). Per the Balanced
+    // Coupling model, the dangerous quadrant (Strong+Far+High volatility) is owned
+    // by Cascading Change Risk below; here we classify the lower-volatility cases:
+    // Low volatility = "Acceptable" (Minor), Medium = Global Complexity (review).
     if coupling.strength == IntegrationStrength::Intrusive
         && coupling.distance == Distance::DifferentModule
+        && coupling.volatility != Volatility::High
         && !target_is_facade
     {
+        let (severity, description) = if coupling.volatility == Volatility::Low {
+            (
+                Severity::Low,
+                format!(
+                    "Acceptable: intrusive coupling to stable {} across a module boundary (low volatility neutralizes the distance)",
+                    coupling.target
+                ),
+            )
+        } else {
+            (
+                Severity::Medium,
+                format!(
+                    "Intrusive coupling to {} across a module boundary",
+                    coupling.target
+                ),
+            )
+        };
         issues.push(CouplingIssue {
             issue_type: IssueType::GlobalComplexity,
-            severity: Severity::Medium, // Medium, not High - it's internal
+            severity,
             source: coupling.source.clone(),
             target: coupling.target.clone(),
-            description: format!(
-                "Intrusive coupling to {} across module boundary",
-                coupling.target,
-            ),
+            description,
             refactoring: RefactoringAction::IntroduceTrait {
                 suggested_name: format!("{}Trait", extract_type_name(&coupling.target)),
                 methods: vec!["// Extract required methods".to_string()],
