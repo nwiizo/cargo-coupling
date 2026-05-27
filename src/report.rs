@@ -6,7 +6,7 @@
 use std::io::{self, Write};
 
 use crate::balance::{
-    BalanceScore, IssueThresholds, ProjectBalanceReport, Severity,
+    BalanceScore, CouplingIssue, IssueThresholds, IssueType, ProjectBalanceReport, Severity,
     analyze_project_balance_with_thresholds,
 };
 use crate::manifest::{AnalysisManifest, ManifestContext, build_manifest};
@@ -739,6 +739,82 @@ fn write_refactoring_priorities<W: Write>(
     Ok(())
 }
 
+/// Whether an issue is driven by volatility/churn (may settle) rather than structure.
+fn issue_is_volatility_driven(issue: &CouplingIssue) -> bool {
+    match issue.issue_type {
+        IssueType::AccidentalVolatility => true,
+        IssueType::CascadingChangeRisk => issue.description.contains("accidental volatility"),
+        _ => false,
+    }
+}
+
+/// Triage surfaced issues by nature: structural (act now) vs volatility-driven
+/// (may settle). Expected-by-design patterns are downgraded elsewhere and omitted.
+fn write_issue_triage<W: Write>(
+    report: &ProjectBalanceReport,
+    japanese: bool,
+    writer: &mut W,
+) -> io::Result<()> {
+    let (volatility, structural): (Vec<_>, Vec<_>) = report
+        .issues
+        .iter()
+        .partition(|i| issue_is_volatility_driven(i));
+
+    let label = |i: &CouplingIssue| -> String {
+        let name = if japanese {
+            issue_type_japanese(i.issue_type)
+        } else {
+            // IssueType Display is English.
+            return format!("**{}** `{}` → `{}`", i.issue_type, i.source, i.target);
+        };
+        format!("**{}** `{}` → `{}`", name, i.source, i.target)
+    };
+
+    if japanese {
+        writeln!(writer, "## 課題のトリアージ\n")?;
+        writeln!(
+            writer,
+            "### 構造的な課題 — 今すぐ対応 ({} 件)\n",
+            structural.len()
+        )?;
+        for i in &structural {
+            writeln!(writer, "- {}", label(i))?;
+        }
+        writeln!(
+            writer,
+            "\n### 変更頻度由来 — 落ち着く可能性あり ({} 件)\n",
+            volatility.len()
+        )?;
+        for i in &volatility {
+            writeln!(writer, "- {}", label(i))?;
+        }
+        writeln!(
+            writer,
+            "\n> エントリポイントの広い依存や安定した中心モジュールなど、設計上想定される項目は重大度を下げて一覧から除外しています。\n"
+        )?;
+    } else {
+        writeln!(writer, "## Issue Triage\n")?;
+        writeln!(writer, "### Structural — act now ({})\n", structural.len())?;
+        for i in &structural {
+            writeln!(writer, "- {}", label(i))?;
+        }
+        writeln!(
+            writer,
+            "\n### Volatility-driven — may settle ({})\n",
+            volatility.len()
+        )?;
+        for i in &volatility {
+            writeln!(writer, "- {}", label(i))?;
+        }
+        writeln!(
+            writer,
+            "\n> Expected-by-design patterns (entrypoint fan-out, stable central abstractions) are downgraded and omitted here.\n"
+        )?;
+    }
+
+    Ok(())
+}
+
 fn write_issues_by_type<W: Write>(
     report: &ProjectBalanceReport,
     japanese: bool,
@@ -747,6 +823,8 @@ fn write_issues_by_type<W: Write>(
     if report.issues.is_empty() {
         return Ok(());
     }
+
+    write_issue_triage(report, japanese, writer)?;
 
     writeln!(writer, "## Issues by Category\n")?;
 

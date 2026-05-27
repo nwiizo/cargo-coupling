@@ -1318,6 +1318,7 @@ fn analyze_module_coupling(
     thresholds: &IssueThresholds,
 ) -> Vec<CouplingIssue> {
     let mut issues = Vec::new();
+    let target_subdomains = build_target_subdomain_map(metrics);
 
     // Count outgoing (efferent) and incoming (afferent) couplings per module
     // Only count INTERNAL dependencies (within workspace), not external crates
@@ -1389,23 +1390,61 @@ fn analyze_module_coupling(
     // Only internal modules are counted (external crates already filtered above)
     for (module, count) in &afferent {
         if *count > thresholds.max_dependents {
+            // A widely-depended-on module is only risky if it is VOLATILE; a STABLE
+            // central abstraction with many dependents is good design (the balance
+            // rule: strong + far + low volatility = Acceptable). Scale severity by
+            // the module's essential volatility.
+            let short = module.rsplit("::").next().unwrap_or(module);
+            let subdomain = target_subdomains.get(short).copied().flatten();
+            let base_severity = if *count > thresholds.max_dependents * 2 {
+                Severity::High
+            } else {
+                Severity::Medium
+            };
+            let (severity, description, refactoring) = match subdomain {
+                // Stable central abstraction: high afferent is acceptable, not a defect.
+                Some(Subdomain::Supporting) | Some(Subdomain::Generic) => (
+                    Severity::Low,
+                    format!(
+                        "Module {} is a stable central abstraction with {} dependents — acceptable; only risky if it becomes volatile",
+                        module, count
+                    ),
+                    RefactoringAction::General {
+                        action: "No action needed while this module stays stable".to_string(),
+                    },
+                ),
+                // Volatile core: many dependents AND it genuinely evolves -> changes cascade widely.
+                Some(Subdomain::Core) => (
+                    base_severity,
+                    format!(
+                        "Core module {} is depended on by {} components AND genuinely evolves — changes cascade widely; stabilize its public contract",
+                        module, count
+                    ),
+                    RefactoringAction::IntroduceTrait {
+                        suggested_name: format!("{}Interface", extract_type_name(module)),
+                        methods: vec!["// Define a stable public contract".to_string()],
+                    },
+                ),
+                // Unclassified: keep prior behavior.
+                None => (
+                    base_severity,
+                    format!(
+                        "Module {} is depended on by {} other components (threshold: {})",
+                        module, count, thresholds.max_dependents
+                    ),
+                    RefactoringAction::IntroduceTrait {
+                        suggested_name: format!("{}Interface", extract_type_name(module)),
+                        methods: vec!["// Define stable public API".to_string()],
+                    },
+                ),
+            };
             issues.push(CouplingIssue {
                 issue_type: IssueType::HighAfferentCoupling,
-                severity: if *count > thresholds.max_dependents * 2 {
-                    Severity::High
-                } else {
-                    Severity::Medium
-                },
+                severity,
                 source: format!("{} dependents", count),
                 target: module.to_string(),
-                description: format!(
-                    "Module {} is depended on by {} other components (threshold: {})",
-                    module, count, thresholds.max_dependents
-                ),
-                refactoring: RefactoringAction::IntroduceTrait {
-                    suggested_name: format!("{}Interface", extract_type_name(module)),
-                    methods: vec!["// Define stable public API".to_string()],
-                },
+                description,
+                refactoring,
                 balance_score: 1.0
                     - (*count as f64 / (thresholds.max_dependents * 3) as f64).min(1.0),
             });
