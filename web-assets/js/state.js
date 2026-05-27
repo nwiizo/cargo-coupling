@@ -24,7 +24,10 @@ export const state = {
     itemCy: null,
     currentModuleForItemGraph: null,
     showItems: false,  // Show item-level nodes (functions, types)
-    historyData: null
+    historyData: null,
+    graphCache: new Map(),
+    activeRevision: null,
+    selectedEdge: null
 };
 
 // Setters for state (to maintain encapsulation where needed)
@@ -82,4 +85,12 @@ export function setShowItems(show) {
 
 export function setHistoryData(data) {
     state.historyData = data;
+}
+
+export function setActiveRevision(revision) {
+    state.activeRevision = revision;
+}
+
+export function setSelectedEdge(edge) {
+    state.selectedEdge = edge;
 }

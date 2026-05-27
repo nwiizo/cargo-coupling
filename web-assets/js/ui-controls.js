@@ -2,10 +2,10 @@
 // UI Components Module
 // =====================================================
 
-import { state, setSelectedNode, setCenterMode } from './state.js';
+import { state, setSelectedNode, setSelectedEdge, setCenterMode } from './state.js';
 import { t } from './i18n.js';
 import { applyLayout, clearHighlights, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, analyzeCoupling, getHealthColor } from './coupling-graph-2d.js';
-import { refresh3dGraph } from './coupling-graph-3d.js';
+import { refresh3dGraph, focusLink3d, focusNode3d } from './coupling-graph-3d.js';
 import { debounce, escapeHtml, estimateVolatility } from './utils.js';
 import { updateUrl } from './url-router.js';
 
@@ -30,15 +30,76 @@ export function updateHeaderStats(summary, graphData) {
     }
 
     const counts = summary.issues_by_severity || {};
+    const rationale = buildHealthRationale(summary, graphData);
     container.innerHTML = `
-        <span class="stat health-summary">Grade <span class="health-grade ${summary.health_grade}">${summary.health_grade}</span></span>
-        <span class="stat">Score <span class="stat-value">${(summary.health_score * 100).toFixed(1)}%</span></span>
-        <span class="stat issue-critical">Critical <span class="stat-value">${counts.critical || 0}</span></span>
-        <span class="stat issue-high">High <span class="stat-value">${counts.high || 0}</span></span>
-        <span class="stat issue-medium">Medium <span class="stat-value">${counts.medium || 0}</span></span>
-        <span class="stat">Modules <span class="stat-value">${summary.total_modules}</span></span>
-        <span class="stat">Items <span class="stat-value">${totalFunctions}fn ${totalTypes}ty ${totalImpls}impl</span></span>
+        <div class="health-header-card">
+            <div class="health-grade-block">
+                <span class="health-label">${t('health_grade')}</span>
+                <span class="health-grade ${summary.health_grade}">${summary.health_grade}</span>
+            </div>
+            <div class="health-rationale">
+                <strong>${(summary.health_score * 100).toFixed(1)}%</strong>
+                <span>${escapeHtml(rationale)}</span>
+                ${state.activeRevision ? `<span class="revision-chip">${escapeHtml(state.activeRevision)}</span>` : ''}
+            </div>
+            <div class="health-counts" aria-label="Issue counts">
+                <button class="health-count critical" type="button" data-severity="Critical">
+                    <span>${t('severity_critical')}</span><strong>${counts.critical || 0}</strong>
+                </button>
+                <button class="health-count high" type="button" data-severity="High">
+                    <span>${t('severity_high')}</span><strong>${counts.high || 0}</strong>
+                </button>
+                <button class="health-count medium" type="button" data-severity="Medium">
+                    <span>${t('severity_medium')}</span><strong>${counts.medium || 0}</strong>
+                </button>
+            </div>
+            <div class="health-meta">
+                <span>${summary.total_modules} modules</span>
+                <span>${summary.total_couplings} couplings</span>
+                <span>${totalFunctions}fn ${totalTypes}ty ${totalImpls}impl</span>
+            </div>
+        </div>
     `;
+}
+
+function buildHealthRationale(summary, graphData) {
+    const counts = summary.issues_by_severity || {};
+    const issues = graphData?.issues || [];
+    const criticalHigh = issues.filter(issue => ['Critical', 'High'].includes(issue.severity));
+    if ((counts.critical || 0) > 0) {
+        const top = mostCommon(criticalHigh.map(issue => formatIssueType(issue.type || issue.issue_type)));
+        return top ? `Critical ${top} issues are driving the grade.` : 'Critical coupling issues are driving the grade.';
+    }
+    if ((counts.high || 0) > 0) {
+        const top = mostCommon(criticalHigh.map(issue => formatIssueType(issue.type || issue.issue_type)));
+        return top ? `High ${top} issues are the main concern.` : 'High-severity coupling issues are the main concern.';
+    }
+    if ((counts.medium || 0) > 0) {
+        return 'Medium maintenance risks remain, but no high-severity blockers were detected.';
+    }
+    if (summary.health_grade === 'S') {
+        return 'Very few issues detected; S is a warning to avoid over-optimizing healthy code.';
+    }
+    return 'No significant coupling issues detected in the current graph.';
+}
+
+function mostCommon(values) {
+    const counts = new Map();
+    for (const value of values.filter(Boolean)) {
+        counts.set(value, (counts.get(value) || 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+}
+
+export function setupHealthHeaderInteractions() {
+    const container = document.getElementById('header-stats');
+    if (!container || container.dataset.bound === 'true') return;
+    container.dataset.bound = 'true';
+    container.addEventListener('click', (event) => {
+        const button = event.target.closest('.health-count[data-severity]');
+        if (!button) return;
+        focusIssuesBySeverity(button.dataset.severity);
+    });
 }
 
 export function updateFooterStats(summary) {
@@ -402,6 +463,7 @@ export function setupTrustPanelToggle() {
 // =====================================================
 
 export function showNodeDetails(data) {
+    setSelectedEdge(null);
     const container = document.getElementById('node-details');
     if (!container) return;
 
@@ -416,10 +478,13 @@ export function showNodeDetails(data) {
     const isExternal = filePath && filePath.startsWith('[external]');
     const items = data.items || fullNode?.items || [];
     const inCycle = data.in_cycle || fullNode?.in_cycle || false;
-    const volatility = data.volatility || metrics.volatility || 'Medium';
+    const volatility = volatilityLabel(data.volatility ?? metrics.volatility ?? 'Medium');
     const subdomain = data.subdomain || fullNode?.subdomain;
     const expectedVolatility = data.expected_volatility || fullNode?.expected_volatility;
     const flags = data.flags || fullNode?.flags || [];
+    const relatedIssues = (state.graphData?.issues || []).filter(issue =>
+        issue.source === data.id || issue.target === data.id || (issue.focus?.node_ids || []).includes(data.id)
+    );
 
     // Group items by kind
     const types = items.filter(i => i.kind === 'type' || i.kind === 'struct' || i.kind === 'enum');
@@ -458,29 +523,34 @@ export function showNodeDetails(data) {
     };
 
     container.innerHTML = `
+        <div class="inspector-title">${escapeHtml(data.label)}</div>
         ${inCycle ? `
             <div class="warning-banner critical">
-                ⚠️ This module is part of a circular dependency
+                This module is part of a circular dependency
             </div>
         ` : ''}
-        <div class="detail-header">${escapeHtml(data.label)}</div>
-        <div class="detail-stats">
-            <span class="stat-badge fn">${fnCount} fn</span>
-            <span class="stat-badge type">${typeCount} type</span>
-            <span class="stat-badge impl">${implCount} impl</span>
-        </div>
-        <div class="detail-row">
-            <span class="detail-label">Health:</span>
-            <span class="health-indicator ${data.health || 'good'}">${data.health || 'good'}</span>
-        </div>
-        <div class="detail-row">
-            <span class="detail-label">Balance Score:</span>
-            <span>${((data.balance_score || 0) * 100).toFixed(0)}%</span>
-        </div>
-        <div class="detail-row">
-            <span class="detail-label">Volatility:</span>
-            <span class="volatility-badge ${getVolatilityClass(volatility)}">${volatility}</span>
-        </div>
+        <details class="inspector-section" open>
+            <summary>Module health</summary>
+            <div class="detail-stats">
+                <span class="stat-badge fn">${fnCount} fn</span>
+                <span class="stat-badge type">${typeCount} type</span>
+                <span class="stat-badge impl">${implCount} impl</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Health:</span>
+                <span class="health-indicator ${data.health || 'good'}">${data.health || 'good'}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Balance Score:</span>
+                <span>${((data.balance_score || 0) * 100).toFixed(0)}%</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Volatility:</span>
+                <span class="volatility-badge ${getVolatilityClass(volatility)}">${volatility}</span>
+            </div>
+        </details>
+        <details class="inspector-section" open>
+            <summary>Domain and dimensions</summary>
         ${subdomain ? `
         <div class="detail-row">
             <span class="detail-label">Subdomain:</span>
@@ -514,6 +584,23 @@ export function showNodeDetails(data) {
                 </div>
             </div>
         ` : ''}
+        </details>
+        ${relatedIssues.length > 0 ? `
+            <details class="inspector-section" open>
+                <summary>Issues affecting this module</summary>
+                <div class="overview-issue-list">
+                    ${relatedIssues.slice(0, 8).map(issue => `
+                        <button type="button" class="overview-issue severity-${issue.severity?.toLowerCase()}" data-issue-id="${issue.id}">
+                            <span>${escapeHtml(issue.severity)}</span>
+                            <strong>${escapeHtml(formatIssueType(issue.type || issue.issue_type))}</strong>
+                            <small>${escapeHtml(issue.source)}${issue.target ? ` -> ${escapeHtml(issue.target)}` : ''}</small>
+                        </button>
+                    `).join('')}
+                </div>
+            </details>
+        ` : ''}
+        <details class="inspector-section" open>
+            <summary>Source</summary>
         ${filePath && !isExternal ? `
             <div class="file-path-display">
                 <span class="file-path-label">File:</span>
@@ -522,18 +609,22 @@ export function showNodeDetails(data) {
             <button class="btn-view-code" data-path="${escapeHtml(filePath)}">
                 <span class="icon">📄</span> View Source Code
             </button>
-        ` : ''}
-        <div id="source-code-panel"></div>
+        ` : '<div class="no-data">No local Rust source is available for this module.</div>'}
+            <div id="source-code-panel"></div>
+        </details>
         ${items.length > 0 ? `
+            <details class="inspector-section">
+            <summary>Module contents</summary>
             <div class="module-items-section">
                 <div class="module-items-header">
-                    <span>📦 Module Contents</span>
+                    <span>Module Contents</span>
                     <span class="hint">(click to focus in graph)</span>
                 </div>
                 ${renderItemList(types, 'Types', 'S')}
                 ${renderItemList(traits, 'Traits', 'T')}
                 ${renderItemList(functions, 'Functions', 'ƒ')}
             </div>
+            </details>
         ` : ''}
         <button class="btn-expand-details" data-module-id="${data.id}">
             <span>⤢</span> Full Details (Modal)
@@ -562,6 +653,17 @@ export function showNodeDetails(data) {
             focusOnItem(moduleId, itemName);
         });
     });
+
+    container.querySelectorAll('[data-issue-id]').forEach(button => {
+        button.addEventListener('click', () => {
+            const issue = relatedIssues.find(item => item.id === button.dataset.issueId);
+            focusIssueInGraph(issue);
+        });
+    });
+
+    if (filePath && !isExternal) {
+        loadSourceCode(filePath, null, 20);
+    }
 }
 
 /**
@@ -624,6 +726,8 @@ function selectAndFocusItem(node) {
 }
 
 export function showEdgeDetails(data) {
+    setSelectedNode(null);
+    setSelectedEdge(data);
     const container = document.getElementById('node-details');
     if (!container) return;
 
@@ -654,10 +758,12 @@ export function showEdgeDetails(data) {
     container.innerHTML = `
         ${inCycle ? `
             <div class="warning-banner critical">
-                ⚠️ Part of a circular dependency chain
+                Part of a circular dependency chain
             </div>
         ` : ''}
-        <div class="detail-header">Coupling Details</div>
+        <div class="inspector-title">Coupling Details</div>
+        <details class="inspector-section" open>
+            <summary>Relationship</summary>
         <div class="detail-row">
             <span class="detail-label">Source:</span>
             <span>${escapeHtml(data.source)}</span>
@@ -672,7 +778,9 @@ export function showEdgeDetails(data) {
             <span>${data.coChangeCount || 0} commits, ${Math.round((data.couplingRatio || 0) * 100)}%</span>
         </div>
         ` : ''}
-        <hr class="detail-divider">
+        </details>
+        <details class="inspector-section" open>
+            <summary>Balanced Coupling dimensions</summary>
         <div class="detail-row">
             <span class="detail-label">${t('strength')}:</span>
             <span class="strength-badge ${(data.strengthLabel || '').toLowerCase()}">${data.strengthLabel || 'Model'}</span>
@@ -689,13 +797,19 @@ export function showEdgeDetails(data) {
             <span class="detail-label">${t('balance')}:</span>
             <span>${((data.balance || 0) * 100).toFixed(0)}%</span>
         </div>
+        <div class="detail-row">
+            <span class="detail-label">Classification:</span>
+            <span>${escapeHtml(state.currentLang === 'ja' ? (data.classificationJa || data.classification || '-') : (data.classification || '-'))}</span>
+        </div>
         ${connascence ? `
             <div class="connascence-info">
-                <span class="connascence-type">${connascence.type || 'Identity'}</span>
+                <span class="connascence-type">${escapeHtml(connascence.type || connascence.connascence_type || 'Identity')}</span>
                 <span class="connascence-strength">${connascence.strength || 'Weak'}</span>
             </div>
-        ` : ''}
-        <hr class="detail-divider">
+        ` : '<div class="connascence-info"><span class="connascence-type">Connascence not detected for this coupling</span></div>'}
+        </details>
+        <details class="inspector-section" open>
+            <summary>Assessment</summary>
         <div class="analysis-result ${analysis.status}">
             <span class="analysis-icon">${analysis.icon}</span>
             <span class="analysis-text">${analysis.statusText}</span>
@@ -712,13 +826,16 @@ export function showEdgeDetails(data) {
                 <div class="issue-description">${escapeHtml(issue.description || issue.message || '')}</div>
             </div>
         ` : ''}
-        ${data.classification ? `<div class="classification-badge">${state.currentLang === 'ja' ? data.classificationJa : data.classification}</div>` : ''}
+        </details>
+        <details class="inspector-section" open>
+            <summary>Source location</summary>
         ${hasLocation ? `
             <button class="btn-view-code" data-path="${escapeHtml(location.file_path)}" data-line="${location.line || 0}">
                 <span class="icon">📄</span> View Coupling Location
             </button>
-        ` : ''}
-        <div id="source-code-panel"></div>
+        ` : '<div class="no-data">No precise source location is available for this coupling.</div>'}
+            <div id="source-code-panel"></div>
+        </details>
     `;
 
     // Setup view code button for edge
@@ -727,14 +844,219 @@ export function showEdgeDetails(data) {
         btn?.addEventListener('click', () => {
             loadSourceCode(location.file_path, location.line || null, 10);
         });
+        loadSourceCode(location.file_path, location.line || null, 10);
     }
 }
 
 export function clearDetails() {
+    setSelectedEdge(null);
     const container = document.getElementById('node-details');
     if (container) {
-        container.innerHTML = '<div class="detail-placeholder">Select a node or edge to view details</div>';
+        renderProjectOverview(container);
     }
+}
+
+export function renderProjectOverview(container = document.getElementById('node-details')) {
+    if (!container || !state.graphData) return;
+
+    const data = state.graphData;
+    const summary = data.summary || {};
+    const counts = summary.issues_by_severity || {};
+    const topIssues = [...(data.issues || [])]
+        .sort((a, b) => getSeverityOrder(a.severity) - getSeverityOrder(b.severity))
+        .slice(0, 5);
+    const subdomains = countBy((data.nodes || []), node => node.subdomain || 'Unclassified');
+
+    container.innerHTML = `
+        <div class="inspector-title">
+            <span>${t('project_overview')}</span>
+            ${state.activeRevision ? `<span class="revision-chip">${escapeHtml(state.activeRevision)}</span>` : ''}
+        </div>
+        <details class="inspector-section" open>
+            <summary>${t('health_summary')}</summary>
+            <div class="overview-health-row">
+                <span class="health-grade ${summary.health_grade || 'B'}">${summary.health_grade || '-'}</span>
+                <div>
+                    <div class="overview-score">${summary.health_score != null ? (summary.health_score * 100).toFixed(1) : '-'}%</div>
+                    <div class="overview-rationale">${escapeHtml(buildHealthRationale(summary, data))}</div>
+                </div>
+            </div>
+            <div class="overview-count-grid">
+                <button type="button" data-severity="Critical" class="overview-count critical">${counts.critical || 0}<span>Critical</span></button>
+                <button type="button" data-severity="High" class="overview-count high">${counts.high || 0}<span>High</span></button>
+                <button type="button" data-severity="Medium" class="overview-count medium">${counts.medium || 0}<span>Medium</span></button>
+            </div>
+        </details>
+        <details class="inspector-section" open>
+            <summary>${t('subdomains')}</summary>
+            <div class="subdomain-legend-list">
+                ${Object.entries(subdomains).map(([name, count]) => `
+                    <div class="subdomain-row">
+                        <span class="subdomain-swatch ${name.toLowerCase()}"></span>
+                        <span>${escapeHtml(name)}</span>
+                        <strong>${count}</strong>
+                    </div>
+                `).join('')}
+            </div>
+        </details>
+        <details class="inspector-section" open>
+            <summary>${t('top_issues')}</summary>
+            ${topIssues.length > 0 ? `
+                <div class="overview-issue-list">
+                    ${topIssues.map(issue => `
+                        <button type="button" class="overview-issue severity-${issue.severity?.toLowerCase()}" data-issue-id="${issue.id}">
+                            <span>${escapeHtml(issue.severity)}</span>
+                            <strong>${escapeHtml(formatIssueType(issue.type || issue.issue_type))}</strong>
+                            <small>${escapeHtml(issue.source)}${issue.target ? ` -> ${escapeHtml(issue.target)}` : ''}</small>
+                        </button>
+                    `).join('')}
+                </div>
+            ` : '<div class="no-data">No issues detected</div>'}
+        </details>
+    `;
+
+    container.querySelectorAll('[data-severity]').forEach(button => {
+        button.addEventListener('click', () => focusIssuesBySeverity(button.dataset.severity));
+    });
+    container.querySelectorAll('[data-issue-id]').forEach(button => {
+        button.addEventListener('click', () => {
+            const issue = (state.graphData.issues || []).find(item => item.id === button.dataset.issueId);
+            focusIssueInGraph(issue);
+        });
+    });
+}
+
+export function focusIssuesBySeverity(severity) {
+    if (!state.graphData || !state.cy) return;
+    const issues = (state.graphData.issues || []).filter(issue => issue.severity === severity);
+    if (issues.length === 0) {
+        renderProjectOverview();
+        return;
+    }
+
+    clearHighlights();
+    state.cy.elements().addClass('dimmed');
+
+    const focused = collectIssueElements(issues);
+    focused.nodes.forEach(node => node.removeClass('dimmed').addClass('highlighted'));
+    focused.edges.forEach(edge => edge.removeClass('dimmed').addClass('highlighted'));
+
+    const eles = [...focused.nodes, ...focused.edges].reduce((acc, ele) => acc ? acc.union(ele) : ele, null);
+    if (eles?.length) {
+        state.cy.fit(eles, 80);
+    }
+
+    const first = issues[0];
+    if (first?.focus?.edge_id) {
+        focusLink3d(first.focus.edge_id, first.focus.node_ids || []);
+    } else if (first?.focus?.node_ids?.[0]) {
+        focusNode3d(first.focus.node_ids[0]);
+    }
+
+    const container = document.getElementById('node-details');
+    if (container) {
+        container.innerHTML = `
+            <div class="inspector-title">${escapeHtml(severity)} issue focus</div>
+            <div class="issue-focus-summary">
+                <p>${issues.length} ${severity.toLowerCase()} issue${issues.length === 1 ? '' : 's'} highlighted with their involved modules and dependency edges.</p>
+            </div>
+            <div class="overview-issue-list">
+                ${issues.map(issue => `
+                    <button type="button" class="overview-issue severity-${issue.severity?.toLowerCase()}" data-issue-id="${issue.id}">
+                        <span>${escapeHtml(issue.severity)}</span>
+                        <strong>${escapeHtml(formatIssueType(issue.type || issue.issue_type))}</strong>
+                        <small>${escapeHtml(issue.source)}${issue.target ? ` -> ${escapeHtml(issue.target)}` : ''}</small>
+                    </button>
+                `).join('')}
+            </div>
+        `;
+        container.querySelectorAll('[data-issue-id]').forEach(button => {
+            button.addEventListener('click', () => {
+                const issue = issues.find(item => item.id === button.dataset.issueId);
+                focusIssueInGraph(issue);
+            });
+        });
+    }
+}
+
+function focusIssueInGraph(issue) {
+    if (!issue || !state.cy) return;
+    const focused = collectIssueElements([issue]);
+    clearHighlights();
+    state.cy.elements().addClass('dimmed');
+    focused.nodes.forEach(node => node.removeClass('dimmed').addClass('highlighted'));
+    focused.edges.forEach(edge => edge.removeClass('dimmed').addClass('highlighted'));
+
+    const firstEdge = focused.edges[0];
+    if (firstEdge) {
+        highlightDependencyPath(firstEdge);
+        showEdgeDetails(firstEdge.data());
+        return;
+    }
+
+    const firstNode = focused.nodes[0];
+    if (firstNode) {
+        focusOnNode(firstNode);
+        showNodeDetails(firstNode.data());
+    }
+}
+
+function collectIssueElements(issues) {
+    const nodes = [];
+    const edges = [];
+    for (const issue of issues) {
+        const focus = issue.focus || {};
+        if (focus.edge_id) {
+            let edge = state.cy.getElementById(focus.edge_id);
+            if (!edge.length && focus.node_ids?.length >= 2) {
+                edge = state.cy.edges().filter(e =>
+                    e.data('source') === focus.node_ids[0] && e.data('target') === focus.node_ids[1]
+                );
+            }
+            edge.forEach(e => edges.push(e));
+        }
+        (focus.node_ids || []).forEach(id => {
+            const node = state.cy.getElementById(id);
+            if (node.length) nodes.push(node);
+        });
+    }
+    return { nodes: uniqueElements(nodes), edges: uniqueElements(edges) };
+}
+
+function uniqueElements(elements) {
+    const seen = new Set();
+    return elements.filter(element => {
+        const id = element.id();
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+    });
+}
+
+function countBy(items, keyFn) {
+    return items.reduce((acc, item) => {
+        const key = keyFn(item);
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+    }, {});
+}
+
+function getSeverityOrder(severity) {
+    const order = { critical: 0, high: 1, medium: 2, low: 3 };
+    return order[severity?.toLowerCase()] ?? 4;
+}
+
+function formatIssueType(type) {
+    return type?.replace(/([A-Z])/g, ' $1').trim() || 'Issue';
+}
+
+function volatilityLabel(value) {
+    if (typeof value === 'number') {
+        if (value >= 0.75) return 'High';
+        if (value >= 0.25) return 'Medium';
+        return 'Low';
+    }
+    return value || 'Medium';
 }
 
 // =====================================================
@@ -856,6 +1178,7 @@ async function loadSourceCode(filePath, line = null, context = 15) {
         const params = new URLSearchParams({ path: filePath });
         if (line) params.append('line', line.toString());
         params.append('context', context.toString());
+        if (state.activeRevision) params.append('ref', state.activeRevision);
 
         const response = await fetch(`/api/source?${params}`);
         if (!response.ok) {

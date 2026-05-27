@@ -27,14 +27,19 @@
 - **3D assets**: Use CDN-loaded browser globals only; do not add npm, bundlers, or generated assets
 - **Model fidelity**: Strength, distance, and volatility must remain independent visual dimensions; dimension-space plots use x=strength, y=distance, z=volatility
 - **Trust signals**: Keep `/api/graph` issue lists, hidden temporal coupling, subdomains, and Not Analyzed manifest visible in the UI when available
+- **Health first**: Keep the persistent health header visible. It must show grade, short rationale, and clickable Critical/High/Medium counts that focus the graph on the related modules and dependency edges.
+- **Inspector first**: The sidebar's primary job is the context-sensitive inspector. Default shows project overview; node selection shows module dimensions/issues/source; edge selection shows coupling dimensions/classification/connascence/source location.
+- **Explain encodings**: The legend must remain reachable from the canvas and explain node color/size, edge color/width/style/length, hidden temporal coupling, balance quadrants, and Dimension-Space axes.
+- **Timeline drives graph**: Timeline scrub/play must lazy-load or swap per-revision graph data via `/api/graph?ref=<commit>` and update both 2D and 3D views. Do not make timeline stats-only.
 
 ## API Endpoints
 
 | Endpoint | Purpose |
 |----------|---------|
 | `/api/graph` | Full graph data |
+| `/api/graph?ref=<commit>` | Graph data analyzed at a git revision |
 | `/api/history` | Precomputed git-history health timeline |
-| `/api/source` | Source code for file |
+| `/api/source` | Source code for file; can use `?ref=<commit>` for historical source |
 | `/api/module` | Single module details |
 
 ## Testing

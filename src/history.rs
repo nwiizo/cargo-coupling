@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::balance::{HealthGrade, Severity, analyze_project_balance_with_thresholds};
 use crate::config::CompiledConfig;
+use crate::metrics::ProjectMetrics;
 use crate::{IssueThresholds, VolatilityAnalyzer, analyze_workspace_with_config};
 
 static WORKTREE_SEQ: AtomicUsize = AtomicUsize::new(0);
@@ -67,6 +68,8 @@ pub struct HistoryReport {
 pub struct RefAnalysis {
     /// The git ref that was analyzed.
     pub git_ref: String,
+    /// Snapshot-equivalent project metrics for the ref.
+    pub metrics: crate::metrics::ProjectMetrics,
     /// Full balance report for the ref.
     pub report: crate::balance::ProjectBalanceReport,
     /// Number of Rust files analyzed.
@@ -362,14 +365,36 @@ fn analyze_ref_in_repo(
     }
 
     let report = analyze_project_balance_with_thresholds(&metrics, params.thresholds);
+    rebase_metrics_paths(&mut metrics, &worktree.dir, repo_root);
+
+    let total_files = metrics.total_files;
+    let module_count = metrics.modules.len();
+    let total_couplings = metrics.couplings.len();
 
     Ok(RefAnalysis {
         git_ref: git_ref.to_string(),
+        metrics,
         report,
-        total_files: metrics.total_files,
-        module_count: metrics.modules.len(),
-        total_couplings: metrics.couplings.len(),
+        total_files,
+        module_count,
+        total_couplings,
     })
+}
+
+fn rebase_metrics_paths(metrics: &mut ProjectMetrics, worktree_root: &Path, repo_root: &Path) {
+    for module in metrics.modules.values_mut() {
+        if let Ok(relative) = module.path.strip_prefix(worktree_root) {
+            module.path = repo_root.join(relative);
+        }
+    }
+
+    for coupling in &mut metrics.couplings {
+        if let Some(path) = &coupling.location.file_path
+            && let Ok(relative) = path.strip_prefix(worktree_root)
+        {
+            coupling.location.file_path = Some(repo_root.join(relative));
+        }
+    }
 }
 
 fn rebase_config_root(

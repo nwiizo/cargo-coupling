@@ -12,10 +12,12 @@ const CHART_PADDING = 20;
 
 let activeIndex = 0;
 let playTimer = null;
+let revisionSelectedCallback = null;
 
-export async function initTimeline() {
+export async function initTimeline(options = {}) {
     const chart = document.getElementById('timeline-chart');
     if (!chart) return;
+    revisionSelectedCallback = options.onRevisionSelected || null;
 
     try {
         const history = await fetchHistoryData();
@@ -102,11 +104,11 @@ function buildChart(points) {
         title.textContent = `${point.date} ${point.commit}: ${formatScore(point.average_score)} (${point.grade})`;
         circle.appendChild(title);
 
-        circle.addEventListener('click', () => setActiveIndex(index));
+        circle.addEventListener('click', () => setActiveIndex(index, { loadGraph: true }));
         circle.addEventListener('keydown', (event) => {
             if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
-                setActiveIndex(index);
+                setActiveIndex(index, { loadGraph: true });
             }
         });
 
@@ -134,7 +136,7 @@ function setupTimelineControls() {
     const playButton = document.getElementById('timeline-play');
 
     scrubber?.addEventListener('input', (event) => {
-        setActiveIndex(Number(event.target.value));
+        setActiveIndex(Number(event.target.value), { loadGraph: true });
     });
 
     playButton?.addEventListener('click', () => {
@@ -158,7 +160,7 @@ function startPlayback() {
 
     playTimer = window.setInterval(() => {
         const next = activeIndex + 1 >= points.length ? 0 : activeIndex + 1;
-        setActiveIndex(next);
+        setActiveIndex(next, { loadGraph: true });
     }, PLAY_INTERVAL_MS);
 }
 
@@ -175,7 +177,7 @@ function stopPlayback() {
     }
 }
 
-function setActiveIndex(index) {
+function setActiveIndex(index, options = {}) {
     const points = state.historyData?.points || [];
     if (points.length === 0) return;
 
@@ -200,6 +202,9 @@ function setActiveIndex(index) {
     }
 
     updateStats(points[activeIndex]);
+    if (options.loadGraph) {
+        revisionSelectedCallback?.(points[activeIndex], activeIndex);
+    }
 }
 
 function updateStats(point) {

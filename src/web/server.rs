@@ -26,6 +26,10 @@ pub struct AppState {
     pub thresholds: IssueThresholds,
     pub api_endpoint: Option<String>,
     pub history: JsonHistory,
+    pub analysis_path: PathBuf,
+    pub analysis_config: CompiledConfig,
+    pub git_months: usize,
+    pub no_git: bool,
 }
 
 /// Configuration for the web server
@@ -68,6 +72,10 @@ pub async fn start_server(
         thresholds,
         api_endpoint: config.api_endpoint.clone(),
         history,
+        analysis_path: config.analysis_path.clone(),
+        analysis_config: config.analysis_config.clone(),
+        git_months: config.git_months,
+        no_git: config.no_git,
     });
 
     let app = Router::new()

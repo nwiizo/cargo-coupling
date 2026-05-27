@@ -106,10 +106,18 @@ export function populateCriticalIssues() {
     container.querySelectorAll('.critical-issue-item').forEach(item => {
         item.addEventListener('click', () => {
             const edgeId = item.dataset.edgeId;
-            const edge = state.cy.getElementById(edgeId);
+            const edgeData = criticalEdges.find(edge => edge.id === edgeId);
+            let edge = state.cy.getElementById(edgeId);
+            if (!edge.length && edgeData) {
+                edge = state.cy.edges().filter(e =>
+                    e.data('source') === edgeData.source && e.data('target') === edgeData.target
+                );
+            }
             if (edge.length) {
-                highlightDependencyPath(edge);
-                showEdgeDetails(edge.data());
+                const selectedEdge = edge.first();
+                highlightDependencyPath(selectedEdge);
+                showEdgeDetails(selectedEdge.data());
+                focusLink3d(edgeId, [selectedEdge.data('source'), selectedEdge.data('target')]);
             }
         });
     });

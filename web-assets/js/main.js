@@ -2,7 +2,7 @@
 // cargo-coupling Web Visualization - Main Entry Point
 // =====================================================
 
-import { CONFIG, state, setGraphData, setSelectedNode, setShowItems, setCy, setGraphProjection, set3dMode } from './state.js';
+import { CONFIG, state, setGraphData, setSelectedNode, setSelectedEdge, setShowItems, setCy, setGraphProjection, set3dMode, setActiveRevision } from './state.js';
 import { setupLanguageToggle, updateUILanguage } from './i18n.js';
 import { initCytoscape, buildElements, getCytoscapeStyle, getLayoutConfig, applyLayout, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, clearHighlights } from './coupling-graph-2d.js';
 import { initCouplingGraph3d, render3dMode, focusLink3d, focusNode3d, clear3dFocus } from './coupling-graph-3d.js';
@@ -20,6 +20,7 @@ import {
     populateTrustPanel,
     setupTrustPanelToggle,
     setupResizableSidebar,
+    setupHealthHeaderInteractions,
     showNodeDetails,
     showEdgeDetails,
     clearDetails,
@@ -71,11 +72,12 @@ async function init() {
         await loadConfig();
         const data = await fetchGraphData();
         setGraphData(data);
+        state.graphCache.set('current', data);
 
         initGraph(data);
         initUI(data);
         initJobFeatures();
-        await initTimeline();
+        await initTimeline({ onRevisionSelected: handleTimelineRevisionSelected });
 
         // Initialize URL router for browser navigation
         initUrlRouter(handleUrlNavigation);
@@ -238,11 +240,14 @@ function setupItemToggle() {
 function initUI(data) {
     setupLanguageToggle(() => {
         // Re-populate dynamic content on language change
+        updateHeaderStats(state.graphData?.summary, state.graphData);
+        clearDetails();
         populateCriticalIssues();
     });
 
     updateHeaderStats(data.summary, data);
     updateFooterStats(data.summary);
+    setupHealthHeaderInteractions();
 
     setupFilters();
     setupSearch();
@@ -267,6 +272,7 @@ function initUI(data) {
     setupLegendToggle();
     setupCenterModeToggle();
     setupItemToggle();
+    clearDetails();
 
     // Set up callback for feature module
     setSelectNodeCallback((node) => selectNode(node));
@@ -300,13 +306,78 @@ async function loadConfig() {
     }
 }
 
-async function fetchGraphData() {
-    const url = CONFIG.apiEndpoint + CONFIG.graphPath;
+async function fetchGraphData(gitRef = null) {
+    const params = gitRef ? `?ref=${encodeURIComponent(gitRef)}` : '';
+    const url = CONFIG.apiEndpoint + CONFIG.graphPath + params;
     const response = await fetch(url);
     if (!response.ok) {
         throw new Error(`HTTP ${response.status} from ${url}`);
     }
     return response.json();
+}
+
+async function handleTimelineRevisionSelected(point) {
+    if (!point?.commit) return;
+    await loadGraphRevision(point.commit);
+}
+
+async function loadGraphRevision(commit) {
+    const cacheKey = `ref:${commit}`;
+    const timelineStatus = document.getElementById('timeline-graph-status');
+    if (timelineStatus) {
+        timelineStatus.textContent = `Loading graph ${commit}...`;
+    }
+
+    try {
+        let data = state.graphCache.get(cacheKey);
+        if (!data) {
+            data = await fetchGraphData(commit);
+            state.graphCache.set(cacheKey, data);
+        }
+        setActiveRevision(commit);
+        await replaceGraphData(data);
+        if (timelineStatus) {
+            timelineStatus.textContent = `Graph loaded for ${commit}`;
+        }
+    } catch (error) {
+        console.error('Failed to load revision graph:', error);
+        if (timelineStatus) {
+            timelineStatus.textContent = `Graph unavailable for ${commit}`;
+        }
+    }
+}
+
+async function replaceGraphData(data) {
+    setGraphData(data);
+    setSelectedNode(null);
+    setSelectedEdge(null);
+
+    if (state.cy) {
+        const positions = new Map();
+        state.cy.nodes().forEach(node => positions.set(node.id(), node.position()));
+        const elements = buildElements(data, { showItems: state.showItems });
+        state.cy.elements().remove();
+        state.cy.add(elements);
+        state.cy.nodes().forEach(node => {
+            const previous = positions.get(node.id());
+            if (previous) node.position(previous);
+        });
+        await runLayoutAsync(state.cy, getLayoutConfig(state.currentLayout));
+        applyFilters();
+        state.cy.fit(undefined, 50);
+    }
+
+    render3dMode(data, state.current3dMode);
+    updateHeaderStats(data.summary, data);
+    updateFooterStats(data.summary);
+    populateCriticalIssues();
+    populateHotspots();
+    populateTemporalCouplings();
+    populateModuleRankings();
+    populateIssueList();
+    populateTrustPanel();
+    populatePathFinderSelects();
+    clearDetails();
 }
 
 // =====================================================
@@ -317,6 +388,7 @@ function selectNode(node) {
     // Use queue to prevent selection conflicts during animations
     graphQueue.enqueue('select', async () => {
         setSelectedNode(node);
+        setSelectedEdge(null);
 
         if (state.centerMode) {
             await new Promise(resolve => {
@@ -346,6 +418,7 @@ function selectNode(node) {
 function clearSelection() {
     graphQueue.enqueue('clearSelection', async () => {
         setSelectedNode(null);
+        setSelectedEdge(null);
 
         if (state.cy) {
             state.cy.elements().removeClass('hidden highlighted dimmed dependency-source dependency-target search-match');
@@ -524,36 +597,74 @@ function setupProjectionToggle() {
     const threeDButton = document.getElementById('projection-3d');
     const networkButton = document.getElementById('mode-3d-network');
     const spaceButton = document.getElementById('mode-3d-space');
+    const canvas2dButton = document.getElementById('canvas-view-2d');
+    const canvas3dButton = document.getElementById('canvas-view-3d');
+    const canvasSpaceButton = document.getElementById('canvas-view-space');
+    const legendButton = document.getElementById('canvas-legend-toggle');
 
-    twoDButton?.addEventListener('click', () => {
+    const activate2d = () => {
         setGraphProjection('2d');
-        twoDButton.classList.add('active');
+        twoDButton?.classList.add('active');
+        canvas2dButton?.classList.add('active');
         threeDButton?.classList.remove('active');
+        canvas3dButton?.classList.remove('active');
+        canvasSpaceButton?.classList.remove('active');
         document.getElementById('graph-3d-mode-buttons').style.display = 'none';
         if (currentView === 'graph') showActiveGraphProjection();
-    });
+    };
 
-    threeDButton?.addEventListener('click', () => {
+    const activate3dNetwork = () => {
         setGraphProjection('3d');
-        threeDButton.classList.add('active');
+        set3dMode('network');
+        threeDButton?.classList.add('active');
+        canvas3dButton?.classList.add('active');
         twoDButton?.classList.remove('active');
+        canvas2dButton?.classList.remove('active');
+        canvasSpaceButton?.classList.remove('active');
+        networkButton?.classList.add('active');
+        spaceButton?.classList.remove('active');
         document.getElementById('graph-3d-mode-buttons').style.display = 'flex';
         if (currentView === 'graph') showActiveGraphProjection();
-        render3dMode(state.graphData, state.current3dMode);
-    });
+        render3dMode(state.graphData, 'network');
+    };
+
+    const activateDimensionSpace = () => {
+        setGraphProjection('3d');
+        set3dMode('dimension-space');
+        threeDButton?.classList.add('active');
+        twoDButton?.classList.remove('active');
+        canvas2dButton?.classList.remove('active');
+        canvas3dButton?.classList.remove('active');
+        canvasSpaceButton?.classList.add('active');
+        networkButton?.classList.remove('active');
+        spaceButton?.classList.add('active');
+        document.getElementById('graph-3d-mode-buttons').style.display = 'flex';
+        if (currentView === 'graph') showActiveGraphProjection();
+        render3dMode(state.graphData, 'dimension-space');
+    };
+
+    twoDButton?.addEventListener('click', activate2d);
+    canvas2dButton?.addEventListener('click', activate2d);
+    threeDButton?.addEventListener('click', activate3dNetwork);
+    canvas3dButton?.addEventListener('click', activate3dNetwork);
+    canvasSpaceButton?.addEventListener('click', activateDimensionSpace);
 
     networkButton?.addEventListener('click', () => {
         set3dMode('network');
         networkButton.classList.add('active');
         spaceButton?.classList.remove('active');
+        canvas3dButton?.classList.add('active');
+        canvasSpaceButton?.classList.remove('active');
         render3dMode(state.graphData, 'network');
     });
 
-    spaceButton?.addEventListener('click', () => {
-        set3dMode('dimension-space');
-        spaceButton.classList.add('active');
-        networkButton?.classList.remove('active');
-        render3dMode(state.graphData, 'dimension-space');
+    spaceButton?.addEventListener('click', activateDimensionSpace);
+    legendButton?.addEventListener('click', () => {
+        const sidebar = document.getElementById('sidebar');
+        const legend = document.getElementById('legend-panel');
+        sidebar?.classList.add('visible');
+        sidebar?.classList.remove('collapsed');
+        legend?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
 }
 
@@ -957,8 +1068,9 @@ function setupAutoHideTriggers() {
 
     if (toggleBtn && sidebar) {
         toggleBtn.addEventListener('click', () => {
-            sidebar.classList.toggle('collapsed');
-            toggleBtn.textContent = sidebar.classList.contains('collapsed') ? '◀' : '▶';
+            sidebar.classList.toggle('visible');
+            const icon = toggleBtn.querySelector('.icon') || toggleBtn;
+            icon.textContent = sidebar.classList.contains('visible') ? '▶' : '◀';
         });
     }
 }

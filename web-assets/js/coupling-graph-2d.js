@@ -110,6 +110,8 @@ export function buildElements(data, options = {}) {
                 balanceLabel: dims.balance?.label ?? 'Acceptable',
                 classification: dims.balance?.classification ?? '',
                 classificationJa: dims.balance?.classification_ja ?? '',
+                interpretation: dims.balance?.interpretation ?? '',
+                connascence: dims.connascence ?? null,
                 issue: edge.issue,
                 inCycle: edge.in_cycle,
                 location: edge.location,
@@ -126,6 +128,7 @@ export function buildElements(data, options = {}) {
             existing.balance = Math.min(existing.balance, dims.balance?.value ?? 0.5);
             existing.inCycle = existing.inCycle || edge.in_cycle;
             existing.issue = existing.issue || edge.issue;
+            existing.connascence = existing.connascence || dims.connascence || null;
             existing.count++;
             existing.originalIds.push(edge.id);
         }
@@ -145,6 +148,8 @@ export function buildElements(data, options = {}) {
             balanceLabel: data.balanceLabel,
             classification: data.classification,
             classificationJa: data.classificationJa,
+            interpretation: data.interpretation,
+            connascence: data.connascence,
             issue: data.issue,
             inCycle: data.inCycle,
             location: data.location,

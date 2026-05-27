@@ -3,7 +3,8 @@
 //! Provides API endpoints for graph data and static file serving.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 
 use axum::{
@@ -18,8 +19,9 @@ use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 
 use crate::cli_output::JsonHistory;
+use crate::history::analyze_ref;
 
-use super::graph::{self, GraphData};
+use super::graph;
 use super::server::AppState;
 
 /// Embedded static assets
@@ -33,12 +35,21 @@ struct FrontendConfig {
     api_endpoint: Option<String>,
 }
 
+/// Query parameters for graph request
+#[derive(Deserialize)]
+struct GraphQuery {
+    #[serde(rename = "ref")]
+    git_ref: Option<String>,
+}
+
 /// Query parameters for source code request
 #[derive(Deserialize)]
 struct SourceQuery {
     path: String,
     line: Option<usize>,
     context: Option<usize>,
+    #[serde(rename = "ref")]
+    git_ref: Option<String>,
 }
 
 /// Source code response
@@ -86,10 +97,37 @@ pub fn static_routes() -> Router<Arc<AppState>> {
         .route("/{*path}", get(static_handler))
 }
 
-/// GET /api/graph - Returns the complete coupling graph
-async fn get_graph(State(state): State<Arc<AppState>>) -> Json<GraphData> {
-    let graph = graph::project_to_graph(&state.metrics, &state.thresholds);
-    Json(graph)
+/// GET /api/graph - Returns the complete coupling graph.
+///
+/// With `?ref=<git-ref>`, analyzes that revision in a disposable worktree so
+/// the timeline can lazy-load graph snapshots without bloating `/api/history`.
+async fn get_graph(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<GraphQuery>,
+) -> impl IntoResponse {
+    if let Some(git_ref) = query.git_ref.filter(|value| !value.trim().is_empty()) {
+        match analyze_ref(
+            &state.analysis_path,
+            &state.analysis_config,
+            &state.thresholds,
+            git_ref.trim(),
+            state.git_months,
+            !state.no_git,
+        ) {
+            Ok(analysis) => {
+                let graph = graph::project_to_graph(&analysis.metrics, &state.thresholds);
+                Json(graph).into_response()
+            }
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response(),
+        }
+    } else {
+        let graph = graph::project_to_graph(&state.metrics, &state.thresholds);
+        Json(graph).into_response()
+    }
 }
 
 /// GET /api/history - Returns precomputed coupling health timeline
@@ -122,8 +160,8 @@ async fn get_source(Query(query): Query<SourceQuery>) -> impl IntoResponse {
             .into_response();
     }
 
-    // Read the file
-    let content = match fs::read_to_string(&path) {
+    // Read the file from the current worktree or from a git revision.
+    let content = match read_source_content(&path, query.git_ref.as_deref()) {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -184,6 +222,50 @@ async fn get_source(Query(query): Query<SourceQuery>) -> impl IntoResponse {
         total_lines,
     })
     .into_response()
+}
+
+fn read_source_content(path: &Path, git_ref: Option<&str>) -> Result<String, String> {
+    let Some(git_ref) = git_ref.filter(|value| !value.trim().is_empty()) else {
+        return fs::read_to_string(path).map_err(|e| e.to_string());
+    };
+
+    let repo_root = git_repo_root(path)?;
+    let relative = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .strip_prefix(&repo_root)
+        .map_err(|_| "source path is outside the git repository".to_string())?
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    let object = format!("{}:{}", git_ref.trim(), relative);
+    let output = Command::new("git")
+        .args(["show", &object])
+        .current_dir(&repo_root)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+fn git_repo_root(path: &Path) -> Result<PathBuf, String> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    Ok(root.canonicalize().unwrap_or(root))
 }
 
 /// GET /api/module - Returns module details including items
