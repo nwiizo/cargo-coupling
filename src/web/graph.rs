@@ -66,6 +66,7 @@ pub struct IssueFocus {
 pub struct AnalysisManifestData {
     pub blind_spots: Vec<BlindSpotData>,
     pub notes: Vec<String>,
+    pub notes_ja: Vec<String>,
 }
 
 /// One blind spot in the web manifest.
@@ -73,6 +74,7 @@ pub struct AnalysisManifestData {
 pub struct BlindSpotData {
     pub area: String,
     pub description: String,
+    pub description_ja: String,
 }
 
 /// Complete graph data for visualization
@@ -724,9 +726,11 @@ fn build_not_analyzed_manifest(metrics: &ProjectMetrics) -> AnalysisManifestData
             .map(|spot| BlindSpotData {
                 area: spot.area.to_string(),
                 description: spot.description.to_string(),
+                description_ja: spot.description_ja.to_string(),
             })
             .collect(),
         notes: manifest.notes,
+        notes_ja: manifest.notes_ja,
     }
 }
 

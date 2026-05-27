@@ -1034,6 +1034,7 @@ fn write_issue_line<W: Write>(
 pub fn generate_external_dependencies_output<W: Write>(
     report: &ExternalDependencyReport,
     json: bool,
+    japanese: bool,
     writer: &mut W,
 ) -> io::Result<()> {
     if json {
@@ -1045,46 +1046,87 @@ pub fn generate_external_dependencies_output<W: Write>(
         return Ok(());
     }
 
-    writeln!(writer, "External Dependency Coupling")?;
+    if japanese {
+        writeln!(writer, "外部依存の結合")?;
+    } else {
+        writeln!(writer, "External Dependency Coupling")?;
+    }
     writeln!(
         writer,
         "═══════════════════════════════════════════════════════════"
     )?;
-    writeln!(
-        writer,
-        "External crates: {}  Direct references: {}",
-        report.dependencies.len(),
-        report
-            .dependencies
-            .iter()
-            .map(|dependency| dependency.total_references)
-            .sum::<usize>()
-    )?;
+    let total_references = report
+        .dependencies
+        .iter()
+        .map(|dependency| dependency.total_references)
+        .sum::<usize>();
+    if japanese {
+        writeln!(
+            writer,
+            "外部クレート: {}  直接参照: {}",
+            report.dependencies.len(),
+            total_references
+        )?;
+    } else {
+        writeln!(
+            writer,
+            "External crates: {}  Direct references: {}",
+            report.dependencies.len(),
+            total_references
+        )?;
+    }
 
     if report.dependencies.is_empty() {
         writeln!(writer)?;
-        writeln!(writer, "No external crate couplings detected.")?;
+        if japanese {
+            writeln!(writer, "外部クレートへの結合は検出されませんでした。")?;
+        } else {
+            writeln!(writer, "No external crate couplings detected.")?;
+        }
         return Ok(());
     }
 
     writeln!(writer)?;
-    writeln!(writer, "Top Crates by Breadth:")?;
+    if japanese {
+        writeln!(writer, "利用モジュール数が多いクレート:")?;
+    } else {
+        writeln!(writer, "Top Crates by Breadth:")?;
+    }
     for (index, dependency) in report.dependencies.iter().take(10).enumerate() {
         let version = if dependency.versions.is_empty() {
-            "version: unknown".to_string()
+            if japanese {
+                "バージョン: 不明".to_string()
+            } else {
+                "version: unknown".to_string()
+            }
+        } else if japanese {
+            format!("バージョン: {}", dependency.versions.join(", "))
         } else {
             format!("version: {}", dependency.versions.join(", "))
         };
-        writeln!(
-            writer,
-            "{}. {} ({}; {} modules, {} references, dominant: {})",
-            index + 1,
-            dependency.crate_name,
-            version,
-            dependency.breadth,
-            dependency.total_references,
-            dependency.dominant_strength
-        )?;
+        if japanese {
+            writeln!(
+                writer,
+                "{}. {} ({}; {} モジュール, {} 参照, 主な強度: {})",
+                index + 1,
+                dependency.crate_name,
+                version,
+                dependency.breadth,
+                dependency.total_references,
+                dependency.dominant_strength
+            )?;
+        } else {
+            writeln!(
+                writer,
+                "{}. {} ({}; {} modules, {} references, dominant: {})",
+                index + 1,
+                dependency.crate_name,
+                version,
+                dependency.breadth,
+                dependency.total_references,
+                dependency.dominant_strength
+            )?;
+        }
         let sample_modules = dependency
             .source_modules
             .iter()
@@ -1093,27 +1135,121 @@ pub fn generate_external_dependencies_output<W: Write>(
             .collect::<Vec<_>>()
             .join(", ");
         if !sample_modules.is_empty() {
-            writeln!(writer, "   modules: {}", sample_modules)?;
+            if japanese {
+                writeln!(writer, "   モジュール: {}", sample_modules)?;
+            } else {
+                writeln!(writer, "   modules: {}", sample_modules)?;
+            }
         }
     }
 
     writeln!(writer)?;
-    writeln!(writer, "Scattered Coupling Flags:")?;
+    if japanese {
+        writeln!(writer, "分散した外部結合の警告:")?;
+    } else {
+        writeln!(writer, "Scattered Coupling Flags:")?;
+    }
     if report.scattered_couplings.is_empty() {
-        writeln!(writer, "  (none)")?;
+        if japanese {
+            writeln!(writer, "  (なし)")?;
+        } else {
+            writeln!(writer, "  (none)")?;
+        }
     } else {
         for issue in &report.scattered_couplings {
+            let source = if japanese {
+                issue_source_japanese(issue)
+            } else {
+                issue.source.clone()
+            };
             writeln!(
                 writer,
                 "  - {}: {} -> {}",
-                issue.severity, issue.source, issue.target
+                severity_label(issue.severity, japanese),
+                source,
+                issue.target
             )?;
-            writeln!(writer, "    {}", issue.description)?;
-            writeln!(writer, "    Fix: {}", issue.refactoring)?;
+            if japanese {
+                writeln!(writer, "    {}", issue_instance_description_japanese(issue))?;
+                writeln!(writer, "    修正: {}", issue_refactoring_japanese(issue))?;
+            } else {
+                writeln!(writer, "    {}", issue.description)?;
+                writeln!(writer, "    Fix: {}", issue.refactoring)?;
+            }
         }
     }
 
     Ok(())
+}
+
+fn severity_label(severity: crate::balance::Severity, japanese: bool) -> String {
+    if !japanese {
+        return severity.to_string();
+    }
+    match severity {
+        crate::balance::Severity::Critical => "緊急",
+        crate::balance::Severity::High => "高",
+        crate::balance::Severity::Medium => "中",
+        crate::balance::Severity::Low => "低",
+    }
+    .to_string()
+}
+
+fn issue_source_japanese(issue: &crate::balance::CouplingIssue) -> String {
+    if issue.issue_type == crate::balance::IssueType::ScatteredExternalCoupling
+        && issue.source.ends_with(" internal modules")
+    {
+        let count = issue.source.split_whitespace().next().unwrap_or_default();
+        return format!("{} 個の内部モジュール", count);
+    }
+    issue.source.clone()
+}
+
+fn issue_instance_description_japanese(issue: &crate::balance::CouplingIssue) -> String {
+    match issue.issue_type {
+        crate::balance::IssueType::ScatteredExternalCoupling => {
+            let source = issue_source_japanese(issue);
+            format!(
+                "{} は、{}から直接使われています。サードパーティ更新時のリスクがコードベース全体に広がっています。",
+                issue.target, source
+            )
+        }
+        crate::balance::IssueType::HiddenCoupling => {
+            "明示的なコード依存はありませんが、ファイルが頻繁に一緒に変更されています。暗黙の知識や不足した抽象化を示している可能性があります。"
+                .to_string()
+        }
+        crate::balance::IssueType::AccidentalVolatility => {
+            "安定しているはずのサブドメインが頻繁に変更されています。本質的な業務変化ではなく、設計や所有権の問題によるチャーンの可能性があります。"
+                .to_string()
+        }
+        _ => issue.description.clone(),
+    }
+}
+
+fn issue_refactoring_japanese(issue: &crate::balance::CouplingIssue) -> String {
+    match issue.issue_type {
+        crate::balance::IssueType::ScatteredExternalCoupling => {
+            let facade = issue.target.replace('-', "_");
+            format!(
+                "`{}_facade` モジュールを導入し、直接利用をそこに集約する",
+                facade
+            )
+        }
+        crate::balance::IssueType::HiddenCoupling => {
+            "共有されている知識を明示的な抽象化や境界に切り出す".to_string()
+        }
+        crate::balance::IssueType::AccidentalVolatility => {
+            "変更理由を分離し、安定サブドメインを高頻度変更から守る".to_string()
+        }
+        _ => {
+            let action = issue.refactoring.to_string();
+            if action == "Extract a shared abstraction or make the dependency explicit" {
+                "共有された抽象化を抽出するか、依存関係を明示する".to_string()
+            } else {
+                action
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -1364,10 +1500,14 @@ fn generate_json_output_with_optional_diff<W: Write>(
                 .iter()
                 .map(|blind_spot| JsonBlindSpot {
                     area: blind_spot.area.to_string(),
-                    description: blind_spot.description.to_string(),
+                    description: if thresholds.japanese {
+                        blind_spot.description_ja.to_string()
+                    } else {
+                        blind_spot.description.to_string()
+                    },
                 })
                 .collect(),
-            notes: manifest.notes.clone(),
+            notes: manifest.localized_notes(thresholds.japanese).to_vec(),
         },
         diff: diff.map(json_baseline_diff),
         external_dependencies: json_external_dependencies(&external_dependencies),
@@ -2083,7 +2223,7 @@ mod tests {
         };
         let mut buf = Vec::new();
 
-        generate_external_dependencies_output(&report, true, &mut buf).unwrap();
+        generate_external_dependencies_output(&report, true, false, &mut buf).unwrap();
 
         let text = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();

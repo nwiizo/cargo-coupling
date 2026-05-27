@@ -3,6 +3,7 @@
 // =====================================================
 
 import { state, setGraph3d, set3dMode } from './state.js';
+import { t } from './i18n.js';
 import { escapeHtml } from './utils.js';
 
 const COLORS = {
@@ -350,9 +351,9 @@ function nodeTooltip(node) {
     return `
         <div class="graph-tooltip">
             <strong>${escapeHtml(node.label)}</strong><br>
-            Subdomain: ${escapeHtml(node.subdomain || 'Not configured')}<br>
-            Volatility: ${Number(node.metrics?.volatility || 0).toFixed(2)}<br>
-            Balance: ${Math.round((node.metrics?.balance_score || 0) * 100)}%
+            ${t('subdomain')}: ${escapeHtml(labelSubdomain(node.subdomain))}<br>
+            ${t('volatility')}: ${Number(node.metrics?.volatility || 0).toFixed(2)}<br>
+            ${t('balance')}: ${Math.round((node.metrics?.balance_score || 0) * 100)}%
         </div>
     `;
 }
@@ -361,12 +362,12 @@ function edgeTooltip(edge, hidden) {
     const dims = edge.dimensions || {};
     return `
         <div class="graph-tooltip">
-            <strong>${hidden ? 'Hidden coupling' : 'Code coupling'}</strong><br>
+            <strong>${hidden ? t('hidden_coupling') : t('code_coupling')}</strong><br>
             ${escapeHtml(edge.source)} -> ${escapeHtml(edge.target)}<br>
-            Strength: ${escapeHtml(dims.strength?.label || 'Model')}<br>
-            Distance: ${escapeHtml(dims.distance?.label || 'DifferentModule')}<br>
-            Volatility: ${escapeHtml(dims.volatility?.label || 'Low')}<br>
-            Classification: ${escapeHtml(dims.balance?.classification || '')}
+            ${t('strength')}: ${escapeHtml(labelValue(dims.strength?.label || 'Model'))}<br>
+            ${t('distance')}: ${escapeHtml(labelValue(dims.distance?.label || 'DifferentModule'))}<br>
+            ${t('volatility')}: ${escapeHtml(labelValue(dims.volatility?.label || 'Low'))}<br>
+            ${t('classification')}: ${escapeHtml(state.currentLang === 'ja' ? (dims.balance?.classification_ja || dims.balance?.classification || '') : (dims.balance?.classification || ''))}
         </div>
     `;
 }
@@ -376,12 +377,36 @@ function dimensionTooltip(edge) {
     return `
         <div class="graph-tooltip">
             <strong>${escapeHtml(edge.source)} -> ${escapeHtml(edge.target)}</strong><br>
-            x strength: ${dims.strength?.value ?? 0}<br>
-            y distance: ${dims.distance?.value ?? 0}<br>
-            z volatility: ${dims.volatility?.value ?? 0}<br>
-            ${escapeHtml(dims.balance?.classification || '')}
+            ${t('legend_x_axis')}: ${dims.strength?.value ?? 0}<br>
+            ${t('legend_y_axis')}: ${dims.distance?.value ?? 0}<br>
+            ${t('legend_z_axis')}: ${dims.volatility?.value ?? 0}<br>
+            ${escapeHtml(state.currentLang === 'ja' ? (dims.balance?.classification_ja || dims.balance?.classification || '') : (dims.balance?.classification || ''))}
         </div>
     `;
+}
+
+function labelSubdomain(subdomain) {
+    return {
+        Core: t('subdomain_core'),
+        Supporting: t('subdomain_supporting'),
+        Generic: t('subdomain_generic')
+    }[subdomain] || t('subdomain_not_configured');
+}
+
+function labelValue(value) {
+    return {
+        Intrusive: t('legend_intrusive'),
+        Functional: t('legend_functional'),
+        Model: t('legend_model'),
+        Contract: t('legend_contract'),
+        Low: t('severity_low'),
+        Medium: t('severity_medium'),
+        High: t('severity_high'),
+        SameFunction: t('distance_same_function'),
+        SameModule: t('distance_same_module'),
+        DifferentModule: t('distance_different_module'),
+        DifferentCrate: t('distance_different_crate')
+    }[value] || value;
 }
 
 function resize3dGraph() {

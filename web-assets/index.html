@@ -42,33 +42,33 @@
         <main class="main">
             <div class="canvas-toolbar" aria-label="Canvas view controls">
                 <div class="segmented-control">
-                    <button id="canvas-view-2d" class="segment active" type="button">2D Graph</button>
-                    <button id="canvas-view-3d" class="segment" type="button">3D Graph</button>
-                    <button id="canvas-view-space" class="segment" type="button">Dimension-Space</button>
-                    <button id="canvas-view-report" class="segment" type="button">Report</button>
+                    <button id="canvas-view-2d" class="segment active" type="button" data-i18n="view_2d_graph">2D Graph</button>
+                    <button id="canvas-view-3d" class="segment" type="button" data-i18n="view_3d_graph">3D Graph</button>
+                    <button id="canvas-view-space" class="segment" type="button" data-i18n="view_dimension_space">Dimension-Space</button>
+                    <button id="canvas-view-report" class="segment" type="button" data-i18n="view_report">Report</button>
                 </div>
-                <button id="canvas-legend-toggle" class="canvas-tool-btn" type="button">Legend</button>
+                <button id="canvas-legend-toggle" class="canvas-tool-btn" type="button" data-i18n="legend">Legend</button>
             </div>
             <div class="graph-container" id="cy"></div>
             <div class="graph-container graph-3d-container" id="graph-3d" style="display: none;"></div>
             <div class="dimension-space-labels" id="dimension-space-labels" style="display: none;">
-                <span class="axis-label axis-x">X: Integration Strength</span>
-                <span class="axis-label axis-y">Y: Distance</span>
-                <span class="axis-label axis-z">Z: Volatility</span>
+                <span class="axis-label axis-x" data-i18n="axis_integration_strength">X: Integration Strength</span>
+                <span class="axis-label axis-y" data-i18n="axis_distance">Y: Distance</span>
+                <span class="axis-label axis-z" data-i18n="axis_volatility">Z: Volatility</span>
             </div>
             <div class="tree-container" id="tree-view" style="display: none;"></div>
             <section class="report-view" id="report-view" style="display: none;" aria-label="Markdown report">
                 <div class="report-shell">
                     <nav class="report-toc" aria-label="Report sections">
-                        <div class="report-toc-title">Contents</div>
+                        <div class="report-toc-title" data-i18n="contents">Contents</div>
                         <div class="report-toc-list" id="report-toc-list"></div>
                     </nav>
                     <article class="report-panel">
                         <div class="report-meta">
-                            <span id="report-status">Report not loaded</span>
+                            <span id="report-status" data-i18n="report_not_loaded">Report not loaded</span>
                         </div>
                         <div class="report-content" id="report-content">
-                            <p class="placeholder">Loading report...</p>
+                            <p class="placeholder" data-i18n="loading_report">Loading report...</p>
                         </div>
                     </article>
                 </div>
@@ -257,48 +257,48 @@
 
                 <!-- Legend -->
                 <section class="panel legend-panel">
-                    <h2>Legend <button id="toggle-legend" class="btn-toggle">[?]</button></h2>
+                    <h2><span data-i18n="legend">Legend</span> <button id="toggle-legend" class="btn-toggle">[?]</button></h2>
                     <div id="legend-content" style="display: none;">
                         <div class="legend-section">
-                            <h4>Edge Colors (Coupling Balance)</h4>
+                            <h4 data-i18n="legend_edge_colors">Edge Colors (Coupling Balance)</h4>
                             <div class="legend-items">
                                 <div class="legend-item">
                                     <span class="legend-color" style="background: #22c55e;"></span>
-                                    <span class="legend-label">Good: 凝集性/疎結合</span>
+                                    <span class="legend-label" data-i18n="legend_good_detail">Good: cohesion / loose coupling</span>
                                 </div>
                                 <div class="legend-item">
                                     <span class="legend-color" style="background: #3b82f6;"></span>
-                                    <span class="legend-label">Stable: 低変動性</span>
+                                    <span class="legend-label" data-i18n="legend_stable_detail">Stable: low volatility</span>
                                 </div>
                                 <div class="legend-item">
                                     <span class="legend-color" style="background: #eab308;"></span>
-                                    <span class="legend-label">Review: 確認推奨</span>
+                                    <span class="legend-label" data-i18n="legend_review_detail">Review: needs attention</span>
                                 </div>
                                 <div class="legend-item">
                                     <span class="legend-color" style="background: #ef4444;"></span>
-                                    <span class="legend-label">Critical: 問題あり</span>
+                                    <span class="legend-label" data-i18n="legend_critical_detail">Critical: problematic</span>
                                 </div>
                             </div>
                         </div>
                         <div class="legend-section">
-                            <h4>Edge Style (Distance)</h4>
+                            <h4 data-i18n="legend_edge_style">Edge Style (Distance)</h4>
                             <div class="legend-items">
                                 <div class="legend-item">
                                     <span class="legend-line solid"></span>
-                                    <span class="legend-label">Same Module</span>
+                                    <span class="legend-label" data-i18n="distance_same_module">Same Module</span>
                                 </div>
                                 <div class="legend-item">
                                     <span class="legend-line dashed"></span>
-                                    <span class="legend-label">Different Module</span>
+                                    <span class="legend-label" data-i18n="distance_different_module">Different Module</span>
                                 </div>
                                 <div class="legend-item">
                                     <span class="legend-line dotted"></span>
-                                    <span class="legend-label">External Crate</span>
+                                    <span class="legend-label" data-i18n="distance_different_crate">External Crate</span>
                                 </div>
                             </div>
                         </div>
                         <div class="legend-section balance-rules">
-                            <h4>バランス方程式</h4>
+                            <h4 data-i18n="legend_balance_equation">Balance Equation</h4>
                             <code>BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY</code>
                             <table class="balance-table">
                                 <tr><td>強結合 + 近距離</td><td class="good">✅ OK</td></tr>
@@ -402,8 +402,8 @@
 
                 <!-- Trust Panel -->
                 <section class="panel trust-panel" id="trust-panel">
-                    <h2>Not Analyzed <span id="blind-spot-count" class="badge">0</span></h2>
-                    <button id="toggle-trust-panel" class="btn trust-toggle">Show blind spots</button>
+                    <h2><span data-i18n="not_analyzed">Not Analyzed</span> <span id="blind-spot-count" class="badge">0</span></h2>
+                    <button id="toggle-trust-panel" class="btn trust-toggle" data-i18n="show_blind_spots">Show blind spots</button>
                     <div id="trust-panel-content" class="trust-panel-content" style="display: none;"></div>
                 </section>
 
@@ -418,9 +418,9 @@
 
                 <!-- Details -->
                 <section class="panel" id="details-panel">
-                    <h2>Details</h2>
+                    <h2 data-i18n="details">Details</h2>
                     <div id="node-details">
-                        <p class="placeholder">Click a node or edge to see details</p>
+                        <p class="placeholder" data-i18n="click_details">Click a node or edge to see details</p>
                     </div>
                 </section>
 
@@ -445,41 +445,41 @@
 
                 <!-- Legend -->
                 <section class="panel" id="legend-panel">
-                    <h2>Legend</h2>
+                    <h2 data-i18n="legend">Legend</h2>
                     <div class="legend">
                         <div class="legend-section">
-                            <h4>Nodes</h4>
-                            <div class="legend-item"><span class="color-box" style="background: #ef4444;"></span> Core subdomain: high essential volatility</div>
-                            <div class="legend-item"><span class="color-box" style="background: #38bdf8;"></span> Supporting subdomain: expected stable</div>
-                            <div class="legend-item"><span class="color-box" style="background: #94a3b8;"></span> Generic subdomain or unknown</div>
-                            <div class="legend-item"><span class="size-sample"></span> Larger node: more dependencies and/or churn</div>
+                            <h4 data-i18n="legend_nodes">Nodes</h4>
+                            <div class="legend-item"><span class="color-box" style="background: #ef4444;"></span> <span data-i18n="legend_core_subdomain">Core subdomain: high essential volatility</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: #38bdf8;"></span> <span data-i18n="legend_supporting_subdomain">Supporting subdomain: expected stable</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: #94a3b8;"></span> <span data-i18n="legend_generic_subdomain">Generic subdomain or unknown</span></div>
+                            <div class="legend-item"><span class="size-sample"></span> <span data-i18n="legend_larger_node">Larger node: more dependencies and/or churn</span></div>
                         </div>
                         <div class="legend-section">
-                            <h4>Edges</h4>
-                            <div class="legend-item"><span class="color-box" style="background: #ef4444;"></span> Intrusive / high-risk strength</div>
-                            <div class="legend-item"><span class="color-box" style="background: #f97316;"></span> Functional strength</div>
-                            <div class="legend-item"><span class="color-box" style="background: #eab308;"></span> Model strength</div>
-                            <div class="legend-item"><span class="color-box" style="background: #22c55e;"></span> Contract strength</div>
-                            <div class="legend-item"><span class="line-style solid"></span> Close distance: same function/module</div>
-                            <div class="legend-item"><span class="line-style dashed"></span> Far distance or hidden temporal coupling</div>
-                            <div class="legend-item"><span class="line-style dotted"></span> Different crate / external lifecycle</div>
-                            <div class="legend-item">Wider edge: stronger integration knowledge</div>
+                            <h4 data-i18n="legend_edges">Edges</h4>
+                            <div class="legend-item"><span class="color-box" style="background: #ef4444;"></span> <span data-i18n="legend_intrusive_strength">Intrusive / high-risk strength</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: #f97316;"></span> <span data-i18n="legend_functional_strength">Functional strength</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: #eab308;"></span> <span data-i18n="legend_model_strength">Model strength</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: #22c55e;"></span> <span data-i18n="legend_contract_strength">Contract strength</span></div>
+                            <div class="legend-item"><span class="line-style solid"></span> <span data-i18n="legend_close_distance">Close distance: same function/module</span></div>
+                            <div class="legend-item"><span class="line-style dashed"></span> <span data-i18n="legend_far_distance">Far distance or hidden temporal coupling</span></div>
+                            <div class="legend-item"><span class="line-style dotted"></span> <span data-i18n="legend_external_lifecycle">Different crate / external lifecycle</span></div>
+                            <div class="legend-item" data-i18n="legend_wider_edge">Wider edge: stronger integration knowledge</div>
                         </div>
                         <div class="legend-section">
-                            <h4>Balance Model</h4>
-                            <div class="legend-item"><span class="color-box" style="background: #22c55e;"></span> High Cohesion: strong + close</div>
-                            <div class="legend-item"><span class="color-box" style="background: #10b981;"></span> Loose Coupling: weak + far</div>
-                            <div class="legend-item"><span class="color-box" style="background: #3b82f6;"></span> Acceptable: strong + far but stable</div>
-                            <div class="legend-item"><span class="color-box" style="background: #eab308;"></span> Local Complexity: weak + close</div>
-                            <div class="legend-item"><span class="color-box" style="background: #ef4444;"></span> Global Complexity: strong + far + volatile</div>
+                            <h4 data-i18n="legend_balance_model">Balance Model</h4>
+                            <div class="legend-item"><span class="color-box" style="background: #22c55e;"></span> <span data-i18n="legend_high_cohesion_rule">High Cohesion: strong + close</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: #10b981;"></span> <span data-i18n="legend_loose_coupling_rule">Loose Coupling: weak + far</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: #3b82f6;"></span> <span data-i18n="legend_acceptable_rule">Acceptable: strong + far but stable</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: #eab308;"></span> <span data-i18n="legend_local_complexity_rule">Local Complexity: weak + close</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: #ef4444;"></span> <span data-i18n="legend_global_complexity_rule">Global Complexity: strong + far + volatile</span></div>
                             <code>BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY</code>
                         </div>
                         <div class="legend-section">
-                            <h4>Dimension-Space</h4>
-                            <div class="legend-item">X axis: integration strength</div>
-                            <div class="legend-item">Y axis: distance / cost of change</div>
-                            <div class="legend-item">Z axis: volatility / probability of change</div>
-                            <div class="legend-item">Each point is a coupling relationship at those coordinates.</div>
+                            <h4 data-i18n="legend_dimension_space">Dimension-Space</h4>
+                            <div class="legend-item" data-i18n="legend_x_axis">X axis: integration strength</div>
+                            <div class="legend-item" data-i18n="legend_y_axis">Y axis: distance / cost of change</div>
+                            <div class="legend-item" data-i18n="legend_z_axis">Z axis: volatility / probability of change</div>
+                            <div class="legend-item" data-i18n="legend_point">Each point is a coupling relationship at those coordinates.</div>
                         </div>
                     </div>
                 </section>

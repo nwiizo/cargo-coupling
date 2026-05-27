@@ -3,6 +3,7 @@
 // =====================================================
 
 import { state, setCy, setCurrentLayout } from './state.js';
+import { t } from './i18n.js';
 import { STABLE_CRATES, isExternalCrate, estimateVolatility } from './utils.js';
 
 /**
@@ -691,7 +692,7 @@ export function analyzeCoupling(strength, distance, volatility, targetName = '')
             return {
                 status: 'good',
                 icon: '🔒',
-                statusText: 'Stable External Dependency',
+                statusText: t('stable_external'),
                 action: null
             };
         }
@@ -699,15 +700,15 @@ export function analyzeCoupling(strength, distance, volatility, targetName = '')
             return {
                 status: 'acceptable',
                 icon: '⚠️',
-                statusText: 'Global Complexity (Medium)',
-                action: 'Consider introducing trait for abstraction or reducing distance'
+                statusText: t('global_complexity_medium'),
+                action: t('fix_monitor')
             };
         }
         return {
             status: 'critical',
             icon: '❌',
-            statusText: 'Global Complexity + Cascading Changes',
-            action: 'Introduce trait to invert dependency (DIP) or move closer'
+            statusText: t('global_complexity_high'),
+            action: t('fix_functional')
         };
     }
 
@@ -716,7 +717,7 @@ export function analyzeCoupling(strength, distance, volatility, targetName = '')
         return {
             status: 'good',
             icon: '✅',
-            statusText: 'High Cohesion',
+            statusText: t('high_cohesion'),
             action: null
         };
     }
@@ -726,7 +727,7 @@ export function analyzeCoupling(strength, distance, volatility, targetName = '')
         return {
             status: 'good',
             icon: '✅',
-            statusText: 'Loose Coupling',
+            statusText: t('loose_coupling'),
             action: null
         };
     }
@@ -736,15 +737,15 @@ export function analyzeCoupling(strength, distance, volatility, targetName = '')
         return {
             status: 'acceptable',
             icon: '🤔',
-            statusText: 'Local Complexity',
-            action: 'Direct access may be simpler within same module'
+            statusText: t('local_complexity'),
+            action: t('fix_local')
         };
     }
 
     return {
         status: 'good',
         icon: '✅',
-        statusText: 'Balanced',
+        statusText: t('balance'),
         action: null
     };
 }

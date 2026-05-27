@@ -15,6 +15,8 @@ pub struct BlindSpot {
     pub area: &'static str,
     /// What is not observed, and why.
     pub description: &'static str,
+    /// Japanese description of the same blind spot.
+    pub description_ja: &'static str,
 }
 
 /// Facts about a single analysis run that affect what was observed.
@@ -35,6 +37,19 @@ pub struct AnalysisManifest {
     pub blind_spots: Vec<BlindSpot>,
     /// Run-specific notes describing how this run was degraded or narrowed.
     pub notes: Vec<String>,
+    /// Japanese run-specific notes, aligned by index with `notes`.
+    pub notes_ja: Vec<String>,
+}
+
+impl AnalysisManifest {
+    /// Return run-specific notes in the requested language.
+    pub fn localized_notes(&self, japanese: bool) -> &[String] {
+        if japanese {
+            &self.notes_ja
+        } else {
+            &self.notes
+        }
+    }
 }
 
 /// Structural limitations that hold for every run of a static, single-snapshot
@@ -45,6 +60,8 @@ const STRUCTURAL_BLIND_SPOTS: &[BlindSpot] = &[
         description: "Dynamic connascence (Execution, Timing, Values, Identity) is a runtime \
                       property; static AST analysis cannot detect it. Order/timing/shared-state \
                       coupling will not appear here.",
+        description_ja: "動的コナーセンス (Execution, Timing, Values, Identity) は実行時の性質です。\
+                         静的AST解析では検出できないため、順序・タイミング・共有状態による結合はここには現れません。",
     },
     BlindSpot {
         area: "implicit-functional-coupling",
@@ -52,29 +69,40 @@ const STRUCTURAL_BLIND_SPOTS: &[BlindSpot] = &[
                       explicit call or import are only partially covered: strong temporal \
                       co-change can reveal hidden coupling between files, but duplicated logic \
                       that does not co-change remains invisible.",
+        description_ja: "明示的な呼び出しやimportを伴わないビジネスロジックの重複、意味やアルゴリズムのコナーセンスは一部しか扱えません。\
+                         強い共変更はファイル間の隠れた結合を示せますが、共変更しない重複ロジックは見えません。",
     },
     BlindSpot {
         area: "distance-axes",
         description: "Distance is measured by code structure only. Organizational distance \
                       (Conway's Law / team boundaries) and runtime distance (sync vs async) are \
                       not modeled, so the balance verdict reflects only structural distance.",
+        description_ja: "距離はコード構造だけで測定します。組織上の距離 (コンウェイの法則やチーム境界) と実行時の距離 (同期/非同期) はモデル化しないため、\
+                         バランス判定は構造上の距離だけを反映します。",
     },
     BlindSpot {
         area: "macro-and-cfg",
         description: "Coupling introduced by macro expansion, or behind inactive `cfg(...)`, is \
                       invisible to syn-based parsing. Generated code is not analyzed unless it \
                       exists as source.",
+        description_ja: "マクロ展開で生じる結合や、無効な `cfg(...)` の背後にある結合は、synベースの解析では見えません。\
+                         生成コードはソースとして存在しない限り解析されません。",
     },
 ];
 
 /// Build the blind-spot manifest for a run with the given context.
 pub fn build_manifest(ctx: &ManifestContext) -> AnalysisManifest {
     let mut notes = Vec::new();
+    let mut notes_ja = Vec::new();
 
     if !ctx.git_used {
         notes.push(
             "Git history was not analyzed (--no-git or no repository): volatility and temporal \
              (co-change) coupling were skipped, so scores reflect structure only."
+                .to_string(),
+        );
+        notes_ja.push(
+            "Git履歴は解析されませんでした (--no-git またはリポジトリ外): 変更頻度と時間的な共変更結合はスキップされ、スコアは構造のみを反映します。"
                 .to_string(),
         );
     }
@@ -83,10 +111,17 @@ pub fn build_manifest(ctx: &ManifestContext) -> AnalysisManifest {
             "Test code was excluded: couplings that originate in tests are not counted."
                 .to_string(),
         );
+        notes_ja.push(
+            "テストコードは除外されました: テスト由来の結合はカウントされません。".to_string(),
+        );
     }
     if ctx.parse_failures > 0 {
         notes.push(format!(
             "{} source file(s) failed to parse and were skipped; coupling inside them is unknown.",
+            ctx.parse_failures
+        ));
+        notes_ja.push(format!(
+            "{} 件のソースファイルを解析できずスキップしました。その内部の結合は不明です。",
             ctx.parse_failures
         ));
     }
@@ -94,6 +129,7 @@ pub fn build_manifest(ctx: &ManifestContext) -> AnalysisManifest {
     AnalysisManifest {
         blind_spots: STRUCTURAL_BLIND_SPOTS.to_vec(),
         notes,
+        notes_ja,
     }
 }
 

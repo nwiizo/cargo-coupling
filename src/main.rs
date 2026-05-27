@@ -475,7 +475,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     if args.deps {
         let versions = load_lock_versions_near(&args.path);
         let report = analyze_external_dependencies(&metrics, &versions);
-        generate_external_dependencies_output(&report, args.json, &mut writer)?;
+        generate_external_dependencies_output(&report, args.json, args.japanese, &mut writer)?;
         return Ok(0);
     }
 

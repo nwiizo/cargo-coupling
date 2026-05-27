@@ -3,6 +3,7 @@
 // =====================================================
 
 import { CONFIG } from './state.js';
+import { t, tf } from './i18n.js';
 
 const POLL_INTERVAL_MS = 4000;
 
@@ -49,7 +50,7 @@ async function fetchAndRenderReport() {
     if (!isActive) return;
     if (inFlightRequest) return inFlightRequest;
 
-    setReportStatus('Refreshing report...');
+    setReportStatus(t('refreshing_report'));
 
     inFlightRequest = fetchReport()
         .then(markdown => {
@@ -58,12 +59,12 @@ async function fetchAndRenderReport() {
                 lastFingerprint = nextFingerprint;
                 renderMarkdown(markdown);
             }
-            setReportStatus(`Updated ${new Date().toLocaleTimeString()}`);
+            setReportStatus(tf('updated_at', { time: new Date().toLocaleTimeString() }));
         })
         .catch(error => {
             console.error('Failed to refresh report:', error);
             renderReportError(error);
-            setReportStatus('Report refresh failed');
+            setReportStatus(t('report_refresh_failed'));
         })
         .finally(() => {
             inFlightRequest = null;
@@ -126,7 +127,7 @@ function buildTableOfContents(container) {
 
     const headings = Array.from(container.querySelectorAll('h1, h2, h3'));
     if (headings.length === 0) {
-        toc.innerHTML = '<span class="report-toc-empty">No sections</span>';
+        toc.innerHTML = `<span class="report-toc-empty">${t('no_sections')}</span>`;
         return;
     }
 
@@ -150,7 +151,7 @@ function renderReportError(error) {
 
     reportContent.innerHTML = `
         <div class="report-error">
-            <strong>Could not load report.</strong>
+            <strong>${t('could_not_load_report')}</strong>
             <span>${escapeHtml(error.message)}</span>
         </div>
     `;

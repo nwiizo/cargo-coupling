@@ -431,7 +431,16 @@ fn refactoring_action_japanese(action: &crate::balance::RefactoringAction) -> St
         RefactoringAction::StabilizeInterface { interface_name } => {
             format!("安定したインターフェース `{}` を追加", interface_name)
         }
-        RefactoringAction::General { action } => action.clone(),
+        RefactoringAction::General { action } => {
+            if action.starts_with("Introduce a `") && action.contains("` facade/wrapper module") {
+                let facade = action.split('`').nth(1).unwrap_or("facade");
+                format!("`{}` モジュールを導入し、直接利用をそこに集約する", facade)
+            } else if action == "Extract a shared abstraction or make the dependency explicit" {
+                "共有された抽象化を抽出するか、依存関係を明示する".to_string()
+            } else {
+                action.clone()
+            }
+        }
         RefactoringAction::AddGetters { .. } => "getterメソッドを追加する".to_string(),
         RefactoringAction::IntroduceNewtype {
             suggested_name,
@@ -442,6 +451,27 @@ fn refactoring_action_japanese(action: &crate::balance::RefactoringAction) -> St
                 suggested_name, wrapped_type
             )
         }
+    }
+}
+
+fn issue_instance_description_japanese(issue: &crate::balance::CouplingIssue) -> String {
+    use crate::balance::IssueType;
+    match issue.issue_type {
+        IssueType::HiddenCoupling => {
+            "明示的なコード依存はありませんが、ファイルが頻繁に一緒に変更されています。暗黙の知識や不足した抽象化を示している可能性があります。"
+                .to_string()
+        }
+        IssueType::AccidentalVolatility => {
+            "安定しているはずのサブドメインが頻繁に変更されています。本質的な業務変化ではなく、設計や所有権の問題によるチャーンの可能性があります。"
+                .to_string()
+        }
+        IssueType::ScatteredExternalCoupling => {
+            format!(
+                "{} は複数の内部モジュールから直接使われています。サードパーティ更新時のリスクがコードベース全体に広がっています。",
+                issue.target
+            )
+        }
+        _ => issue.description.clone(),
     }
 }
 
@@ -482,15 +512,16 @@ pub fn generate_report_with_options<W: Write>(
     writeln!(writer, "# Coupling Analysis Report\n")?;
 
     // Executive Summary
-    write_executive_summary(metrics, &report, writer)?;
+    let jp = thresholds.japanese;
+    write_executive_summary(metrics, &report, jp, writer)?;
 
     // Refactoring Priorities (if any issues)
     if !report.issues.is_empty() {
-        write_refactoring_priorities(&report, writer)?;
+        write_refactoring_priorities(&report, jp, writer)?;
     }
 
     // Detailed Issues by Type
-    write_issues_by_type(&report, writer)?;
+    write_issues_by_type(&report, jp, writer)?;
 
     // Coupling details
     write_coupling_section(metrics, writer)?;
@@ -511,7 +542,7 @@ pub fn generate_report_with_options<W: Write>(
     write_best_practices(writer)?;
 
     // Declared analysis blind spots
-    write_manifest_markdown_section(manifest, options.show_structural_blind_spots, writer)?;
+    write_manifest_markdown_section(manifest, options.show_structural_blind_spots, jp, writer)?;
 
     Ok(())
 }
@@ -519,6 +550,7 @@ pub fn generate_report_with_options<W: Write>(
 fn write_executive_summary<W: Write>(
     metrics: &ProjectMetrics,
     report: &ProjectBalanceReport,
+    japanese: bool,
     writer: &mut W,
 ) -> io::Result<()> {
     writeln!(writer, "## Executive Summary\n")?;
@@ -538,11 +570,19 @@ fn write_executive_summary<W: Write>(
         "**Health Grade**: {} {}\n",
         grade_emoji, report.health_grade
     )?;
-    writeln!(
-        writer,
-        "**Why this grade**: {}\n",
-        report.grade_rationale.summary
-    )?;
+    if japanese {
+        writeln!(
+            writer,
+            "**このグレードの理由**: {}\n",
+            report.grade_rationale.summary
+        )?;
+    } else {
+        writeln!(
+            writer,
+            "**Why this grade**: {}\n",
+            report.grade_rationale.summary
+        )?;
+    }
 
     writeln!(writer, "| Metric | Value |")?;
     writeln!(writer, "|--------|-------|")?;
@@ -622,6 +662,7 @@ fn write_executive_summary<W: Write>(
 
 fn write_refactoring_priorities<W: Write>(
     report: &ProjectBalanceReport,
+    japanese: bool,
     writer: &mut W,
 ) -> io::Result<()> {
     writeln!(writer, "## 🔧 Refactoring Priorities\n")?;
@@ -658,20 +699,47 @@ fn write_refactoring_priorities<W: Write>(
             issue.target
         )?;
 
+        let issue_label = if japanese {
+            issue_type_japanese(issue.issue_type).to_string()
+        } else {
+            issue.issue_type.to_string()
+        };
+        let issue_description = if japanese {
+            issue_instance_description_japanese(issue)
+        } else {
+            issue.description.clone()
+        };
         writeln!(
             writer,
             "- **Issue**: {} - {}",
-            issue.issue_type, issue.description
+            issue_label, issue_description
         )?;
-        writeln!(writer, "- **Why**: {}", issue.issue_type.description())?;
-        writeln!(writer, "- **Action**: {}", issue.refactoring)?;
+        if japanese {
+            writeln!(
+                writer,
+                "- **Why**: {}",
+                issue.issue_type.description_japanese()
+            )?;
+            writeln!(
+                writer,
+                "- **Action**: {}",
+                refactoring_action_japanese(&issue.refactoring)
+            )?;
+        } else {
+            writeln!(writer, "- **Why**: {}", issue.issue_type.description())?;
+            writeln!(writer, "- **Action**: {}", issue.refactoring)?;
+        }
         writeln!(writer, "- **Balance Score**: {:.2}\n", issue.balance_score)?;
     }
 
     Ok(())
 }
 
-fn write_issues_by_type<W: Write>(report: &ProjectBalanceReport, writer: &mut W) -> io::Result<()> {
+fn write_issues_by_type<W: Write>(
+    report: &ProjectBalanceReport,
+    japanese: bool,
+    writer: &mut W,
+) -> io::Result<()> {
     if report.issues.is_empty() {
         return Ok(());
     }
@@ -696,20 +764,30 @@ fn write_issues_by_type<W: Write>(report: &ProjectBalanceReport, writer: &mut W)
         if let Some(issues) = grouped.get(issue_type) {
             let count = issues.len();
 
-            writeln!(writer, "### {} ({} instances)\n", issue_type, count)?;
-            writeln!(writer, "> {}\n", issue_type.description())?;
+            let issue_label = if japanese {
+                issue_type_japanese(*issue_type)
+            } else {
+                ""
+            };
+            if japanese {
+                writeln!(writer, "### {} ({} 件)\n", issue_label, count)?;
+                writeln!(writer, "> {}\n", issue_type.description_japanese())?;
+            } else {
+                writeln!(writer, "### {} ({} instances)\n", issue_type, count)?;
+                writeln!(writer, "> {}\n", issue_type.description())?;
+            }
 
             // Show up to 5 examples
             writeln!(writer, "| Severity | Source | Target | Action |")?;
             writeln!(writer, "|----------|--------|--------|--------|")?;
 
             for issue in issues.iter().take(5) {
-                let action_short = format!("{}", issue.refactoring);
-                let action_truncated = if action_short.len() > 40 {
-                    format!("{}...", &action_short[..40])
+                let action_short = if japanese {
+                    refactoring_action_japanese(&issue.refactoring)
                 } else {
-                    action_short
+                    issue.refactoring.to_string()
                 };
+                let action_truncated = truncate_chars(&action_short, 40);
                 writeln!(
                     writer,
                     "| {} | `{}` | `{}` | {} |",
@@ -1228,6 +1306,15 @@ fn truncate_path(path: &str, max_len: usize) -> String {
     }
 }
 
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        text.to_string()
+    } else {
+        let prefix: String = text.chars().take(max_chars).collect();
+        format!("{}...", prefix)
+    }
+}
+
 // ===== AI-Oriented Report =====
 
 /// Generate AI-friendly output format for coding agents
@@ -1395,39 +1482,58 @@ fn default_manifest() -> AnalysisManifest {
 fn write_manifest_markdown_section<W: Write>(
     manifest: &AnalysisManifest,
     show_structural_blind_spots: bool,
+    japanese: bool,
     writer: &mut W,
 ) -> io::Result<()> {
-    writeln!(writer, "## Not Analyzed (blind spots)\n")?;
+    if japanese {
+        writeln!(writer, "## 未分析範囲\n")?;
+    } else {
+        writeln!(writer, "## Not Analyzed (blind spots)\n")?;
+    }
 
     if show_structural_blind_spots {
         for blind_spot in &manifest.blind_spots {
-            writeln!(
-                writer,
-                "- **{}**: {}",
-                blind_spot.area, blind_spot.description
-            )?;
+            let description = if japanese {
+                blind_spot.description_ja
+            } else {
+                blind_spot.description
+            };
+            writeln!(writer, "- **{}**: {}", blind_spot.area, description)?;
         }
     }
 
-    if !manifest.notes.is_empty() {
+    let notes = manifest.localized_notes(japanese);
+    if !notes.is_empty() {
         if show_structural_blind_spots {
             writeln!(writer)?;
         }
-        writeln!(writer, "Run-specific notes:")?;
-        for note in &manifest.notes {
+        if japanese {
+            writeln!(writer, "実行時の注意:")?;
+        } else {
+            writeln!(writer, "Run-specific notes:")?;
+        }
+        for note in notes {
             writeln!(writer, "- {}", note)?;
         }
     }
 
     if !show_structural_blind_spots {
-        if !manifest.notes.is_empty() {
+        if !notes.is_empty() {
             writeln!(writer)?;
         }
-        writeln!(
-            writer,
-            "ℹ {} structural blind spots not analyzed — see --blind-spots (or --json).",
-            manifest.blind_spots.len()
-        )?;
+        if japanese {
+            writeln!(
+                writer,
+                "ℹ {} 件の構造的な未分析範囲があります。詳細は --blind-spots (または --json) で確認できます。",
+                manifest.blind_spots.len()
+            )?;
+        } else {
+            writeln!(
+                writer,
+                "ℹ {} structural blind spots not analyzed — see --blind-spots (or --json).",
+                manifest.blind_spots.len()
+            )?;
+        }
     }
 
     writeln!(writer)?;
@@ -1441,28 +1547,30 @@ fn write_manifest_summary_section<W: Write>(
     writer: &mut W,
 ) -> io::Result<()> {
     if japanese {
-        writeln!(writer, "未分析範囲 (blind spots):")?;
+        writeln!(writer, "未分析範囲:")?;
     } else {
         writeln!(writer, "Not Analyzed (blind spots):")?;
     }
 
     if show_structural_blind_spots {
         for blind_spot in &manifest.blind_spots {
-            writeln!(
-                writer,
-                "  - {}: {}",
-                blind_spot.area, blind_spot.description
-            )?;
+            let description = if japanese {
+                blind_spot.description_ja
+            } else {
+                blind_spot.description
+            };
+            writeln!(writer, "  - {}: {}", blind_spot.area, description)?;
         }
     }
 
-    if !manifest.notes.is_empty() {
+    let notes = manifest.localized_notes(japanese);
+    if !notes.is_empty() {
         if japanese {
             writeln!(writer, "実行時の注意:")?;
         } else {
             writeln!(writer, "Run-specific notes:")?;
         }
-        for note in &manifest.notes {
+        for note in notes {
             writeln!(writer, "  - {}", note)?;
         }
     }
@@ -1471,7 +1579,7 @@ fn write_manifest_summary_section<W: Write>(
         if japanese {
             writeln!(
                 writer,
-                "ℹ {} 件の構造的 blind spot は未分析です — 詳細は --blind-spots (または --json)。",
+                "ℹ {} 件の構造的な未分析範囲があります。詳細は --blind-spots (または --json) で確認できます。",
                 manifest.blind_spots.len()
             )?;
         } else {

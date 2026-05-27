@@ -244,6 +244,7 @@ function initUI(data) {
         updateHeaderStats(state.graphData?.summary, state.graphData);
         clearDetails();
         populateCriticalIssues();
+        populateTrustPanel();
     });
 
     updateHeaderStats(data.summary, data);

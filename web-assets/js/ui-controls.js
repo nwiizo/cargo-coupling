@@ -3,7 +3,7 @@
 // =====================================================
 
 import { state, setSelectedNode, setSelectedEdge, setCenterMode } from './state.js';
-import { t } from './i18n.js';
+import { t, tf } from './i18n.js';
 import { applyLayout, clearHighlights, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, analyzeCoupling, getHealthColor } from './coupling-graph-2d.js';
 import { refresh3dGraph, focusLink3d, focusNode3d } from './coupling-graph-3d.js';
 import { debounce, escapeHtml, estimateVolatility } from './utils.js';
@@ -54,8 +54,8 @@ export function updateHeaderStats(summary, graphData) {
                 </button>
             </div>
             <div class="health-meta">
-                <span>${summary.total_modules} modules</span>
-                <span>${summary.total_couplings} couplings</span>
+                <span>${summary.total_modules} ${t('modules')}</span>
+                <span>${summary.total_couplings} ${t('couplings')}</span>
                 <span>${totalFunctions}fn ${totalTypes}ty ${totalImpls}impl</span>
             </div>
         </div>
@@ -68,19 +68,19 @@ function buildHealthRationale(summary, graphData) {
     const criticalHigh = issues.filter(issue => ['Critical', 'High'].includes(issue.severity));
     if ((counts.critical || 0) > 0) {
         const top = mostCommon(criticalHigh.map(issue => formatIssueType(issue.type || issue.issue_type)));
-        return top ? `Critical ${top} issues are driving the grade.` : 'Critical coupling issues are driving the grade.';
+        return top ? tf('rationale_critical_top', { issue: top }) : t('rationale_critical');
     }
     if ((counts.high || 0) > 0) {
         const top = mostCommon(criticalHigh.map(issue => formatIssueType(issue.type || issue.issue_type)));
-        return top ? `High ${top} issues are the main concern.` : 'High-severity coupling issues are the main concern.';
+        return top ? tf('rationale_high_top', { issue: top }) : t('rationale_high');
     }
     if ((counts.medium || 0) > 0) {
-        return 'Medium maintenance risks remain, but no high-severity blockers were detected.';
+        return t('rationale_medium');
     }
     if (summary.health_grade === 'S') {
-        return 'Very few issues detected; S is a warning to avoid over-optimizing healthy code.';
+        return t('rationale_s_grade');
     }
-    return 'No significant coupling issues detected in the current graph.';
+    return t('rationale_none');
 }
 
 function mostCommon(values) {
@@ -108,8 +108,8 @@ export function updateFooterStats(summary) {
 
     const issueCount = Object.values(summary.issues_by_severity || {}).reduce((a, b) => a + b, 0);
     container.innerHTML = `
-        <span>Issues: ${issueCount}</span>
-        <span>Health Score: ${(summary.health_score * 100).toFixed(1)}%</span>
+        <span>${t('issues')}: ${issueCount}</span>
+        <span>${t('health_score')}: ${(summary.health_score * 100).toFixed(1)}%</span>
     `;
 }
 
@@ -425,7 +425,7 @@ export function populateTrustPanel() {
 
     const manifest = state.graphData.not_analyzed || {};
     const blindSpots = manifest.blind_spots || [];
-    const notes = manifest.notes || [];
+    const notes = state.currentLang === 'ja' ? (manifest.notes_ja || manifest.notes || []) : (manifest.notes || []);
 
     if (count) count.textContent = blindSpots.length + notes.length;
 
@@ -437,9 +437,9 @@ export function populateTrustPanel() {
         ` : ''}
         <div class="blind-spot-list">
             ${blindSpots.map(spot => `
-                <div class="blind-spot-item">
-                    <div class="blind-spot-area">${escapeHtml(spot.area)}</div>
-                    <div class="blind-spot-description">${escapeHtml(spot.description)}</div>
+                    <div class="blind-spot-item">
+                        <div class="blind-spot-area">${escapeHtml(spot.area)}</div>
+                    <div class="blind-spot-description">${escapeHtml(state.currentLang === 'ja' ? (spot.description_ja || spot.description) : spot.description)}</div>
                 </div>
             `).join('')}
         </div>
@@ -454,7 +454,7 @@ export function setupTrustPanelToggle() {
     toggle.addEventListener('click', () => {
         const hidden = content.style.display === 'none';
         content.style.display = hidden ? 'block' : 'none';
-        toggle.textContent = hidden ? 'Hide blind spots' : 'Show blind spots';
+        toggle.textContent = hidden ? t('hide_blind_spots') : t('show_blind_spots');
     });
 }
 
@@ -494,11 +494,12 @@ export function showNodeDetails(data) {
     const renderItemList = (itemList, kind, icon) => {
         if (itemList.length === 0) return '';
         const isPub = (vis) => vis === 'pub' || vis === 'Public';
+        const kindLabel = itemKindLabel(kind);
         return `
             <div class="item-list-section" data-kind="${kind}">
                 <div class="item-list-header">
                     <span class="item-list-icon">${icon}</span>
-                    <span class="item-list-title">${kind}</span>
+                    <span class="item-list-title">${kindLabel}</span>
                     <span class="item-list-count">${itemList.length}</span>
                 </div>
                 <div class="item-list-items">
@@ -510,7 +511,7 @@ export function showNodeDetails(data) {
                             ${isPub(item.visibility) ? '<span class="pub-badge">pub</span>' : ''}
                         </div>
                     `).join('')}
-                    ${itemList.length > 10 ? `<div class="item-list-more">+${itemList.length - 10} more</div>` : ''}
+                    ${itemList.length > 10 ? `<div class="item-list-more">+${itemList.length - 10} ${t('more')}</div>` : ''}
                 </div>
             </div>
         `;
@@ -526,60 +527,60 @@ export function showNodeDetails(data) {
         <div class="inspector-title">${escapeHtml(data.label)}</div>
         ${inCycle ? `
             <div class="warning-banner critical">
-                This module is part of a circular dependency
+                ${t('module_in_cycle')}
             </div>
         ` : ''}
         <details class="inspector-section" open>
-            <summary>Module health</summary>
+            <summary>${t('module_health')}</summary>
             <div class="detail-stats">
                 <span class="stat-badge fn">${fnCount} fn</span>
                 <span class="stat-badge type">${typeCount} type</span>
                 <span class="stat-badge impl">${implCount} impl</span>
             </div>
             <div class="detail-row">
-                <span class="detail-label">Health:</span>
+                <span class="detail-label">${t('health')}:</span>
                 <span class="health-indicator ${data.health || 'good'}">${data.health || 'good'}</span>
             </div>
             <div class="detail-row">
-                <span class="detail-label">Balance Score:</span>
+                <span class="detail-label">${t('balance_score')}:</span>
                 <span>${((data.balance_score || 0) * 100).toFixed(0)}%</span>
             </div>
             <div class="detail-row">
-                <span class="detail-label">Volatility:</span>
-                <span class="volatility-badge ${getVolatilityClass(volatility)}">${volatility}</span>
+                <span class="detail-label">${t('volatility')}:</span>
+                <span class="volatility-badge ${getVolatilityClass(volatility)}">${labelValue(volatility)}</span>
             </div>
         </details>
         <details class="inspector-section" open>
-            <summary>Domain and dimensions</summary>
+            <summary>${t('domain_dimensions')}</summary>
         ${subdomain ? `
         <div class="detail-row">
-            <span class="detail-label">Subdomain:</span>
-            <span class="subdomain-badge ${subdomain.toLowerCase()}">${escapeHtml(subdomain)}</span>
+            <span class="detail-label">${t('subdomain')}:</span>
+            <span class="subdomain-badge ${subdomain.toLowerCase()}">${escapeHtml(labelSubdomain(subdomain))}</span>
         </div>
         <div class="detail-row">
-            <span class="detail-label">Expected Volatility:</span>
-            <span>${escapeHtml(expectedVolatility || 'Unknown')}</span>
+            <span class="detail-label">${t('expected_volatility')}:</span>
+            <span>${escapeHtml(labelValue(expectedVolatility || 'Unknown'))}</span>
         </div>
         ` : ''}
         ${flags.includes('AccidentalVolatility') ? `
-            <div class="warning-banner medium">Accidental volatility: stable subdomain with high git churn</div>
+            <div class="warning-banner medium">${t('accidental_volatility_warning')}</div>
         ` : ''}
         <div class="detail-row">
-            <span class="detail-label">Outgoing:</span>
+            <span class="detail-label">${t('outgoing')}:</span>
             <span>${data.couplings_out || 0}</span>
         </div>
         <div class="detail-row">
-            <span class="detail-label">Incoming:</span>
+            <span class="detail-label">${t('incoming')}:</span>
             <span>${data.couplings_in || 0}</span>
         </div>
         ${implCount > 0 ? `
             <div class="impl-breakdown">
                 <div class="impl-item">
-                    <span class="label">Trait impl:</span>
+                    <span class="label">${t('trait_impl')}:</span>
                     <span class="count">${traitImplCount}</span>
                 </div>
                 <div class="impl-item">
-                    <span class="label">Inherent impl:</span>
+                    <span class="label">${t('inherent_impl')}:</span>
                     <span class="count">${inherentImplCount}</span>
                 </div>
             </div>
@@ -587,11 +588,11 @@ export function showNodeDetails(data) {
         </details>
         ${relatedIssues.length > 0 ? `
             <details class="inspector-section" open>
-                <summary>Issues affecting this module</summary>
+                <summary>${t('issues_affecting_module')}</summary>
                 <div class="overview-issue-list">
                     ${relatedIssues.slice(0, 8).map(issue => `
                         <button type="button" class="overview-issue severity-${issue.severity?.toLowerCase()}" data-issue-id="${issue.id}">
-                            <span>${escapeHtml(issue.severity)}</span>
+                            <span>${escapeHtml(labelSeverity(issue.severity))}</span>
                             <strong>${escapeHtml(formatIssueType(issue.type || issue.issue_type))}</strong>
                             <small>${escapeHtml(issue.source)}${issue.target ? ` -> ${escapeHtml(issue.target)}` : ''}</small>
                         </button>
@@ -600,34 +601,34 @@ export function showNodeDetails(data) {
             </details>
         ` : ''}
         <details class="inspector-section" open>
-            <summary>Source</summary>
+            <summary>${t('source')}</summary>
         ${filePath && !isExternal ? `
             <div class="file-path-display">
-                <span class="file-path-label">File:</span>
+                <span class="file-path-label">${t('file')}:</span>
                 <span class="file-path-value" title="${escapeHtml(filePath)}">${escapeHtml(filePath)}</span>
             </div>
             <button class="btn-view-code" data-path="${escapeHtml(filePath)}">
-                <span class="icon">📄</span> View Source Code
+                <span class="icon">📄</span> ${t('view_source_code')}
             </button>
-        ` : '<div class="no-data">No local Rust source is available for this module.</div>'}
+        ` : `<div class="no-data">${t('no_local_source')}</div>`}
             <div id="source-code-panel"></div>
         </details>
         ${items.length > 0 ? `
             <details class="inspector-section">
-            <summary>Module contents</summary>
+            <summary>${t('module_contents')}</summary>
             <div class="module-items-section">
                 <div class="module-items-header">
-                    <span>Module Contents</span>
-                    <span class="hint">(click to focus in graph)</span>
+                    <span>${t('module_contents')}</span>
+                    <span class="hint">${t('click_to_focus')}</span>
                 </div>
-                ${renderItemList(types, 'Types', 'S')}
-                ${renderItemList(traits, 'Traits', 'T')}
-                ${renderItemList(functions, 'Functions', 'ƒ')}
+                ${renderItemList(types, 'types', 'S')}
+                ${renderItemList(traits, 'traits', 'T')}
+                ${renderItemList(functions, 'functions', 'ƒ')}
             </div>
             </details>
         ` : ''}
         <button class="btn-expand-details" data-module-id="${data.id}">
-            <span>⤢</span> Full Details (Modal)
+            <span>⤢</span> ${t('full_details')}
         </button>
     `;
 
@@ -758,47 +759,47 @@ export function showEdgeDetails(data) {
     container.innerHTML = `
         ${inCycle ? `
             <div class="warning-banner critical">
-                Part of a circular dependency chain
+                ${t('edge_in_cycle')}
             </div>
         ` : ''}
-        <div class="inspector-title">Coupling Details</div>
+        <div class="inspector-title">${t('coupling_details')}</div>
         <details class="inspector-section" open>
-            <summary>Relationship</summary>
+            <summary>${t('relationship')}</summary>
         <div class="detail-row">
-            <span class="detail-label">Source:</span>
+            <span class="detail-label">${t('source')}:</span>
             <span>${escapeHtml(data.source)}</span>
         </div>
         <div class="detail-row">
-            <span class="detail-label">Target:</span>
+            <span class="detail-label">${t('target')}:</span>
             <span>${escapeHtml(data.target)}</span>
         </div>
         ${data.hiddenCoupling || data.edgeType === 'hidden-coupling' ? `
         <div class="detail-row">
-            <span class="detail-label">Co-change:</span>
+            <span class="detail-label">${t('co_change')}:</span>
             <span>${data.coChangeCount || 0} commits, ${Math.round((data.couplingRatio || 0) * 100)}%</span>
         </div>
         ` : ''}
         </details>
         <details class="inspector-section" open>
-            <summary>Balanced Coupling dimensions</summary>
+            <summary>${t('balanced_dimensions')}</summary>
         <div class="detail-row">
             <span class="detail-label">${t('strength')}:</span>
-            <span class="strength-badge ${(data.strengthLabel || '').toLowerCase()}">${data.strengthLabel || 'Model'}</span>
+            <span class="strength-badge ${(data.strengthLabel || '').toLowerCase()}">${labelValue(data.strengthLabel || 'Model')}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">${t('distance')}:</span>
-            <span>${data.distance || 'DifferentModule'}</span>
+            <span>${labelValue(data.distance || 'DifferentModule')}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">${t('volatility')}:</span>
-            <span class="volatility-badge ${effectiveVol.toLowerCase()}">${effectiveVol}</span>
+            <span class="volatility-badge ${effectiveVol.toLowerCase()}">${labelValue(effectiveVol)}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">${t('balance')}:</span>
             <span>${((data.balance || 0) * 100).toFixed(0)}%</span>
         </div>
         <div class="detail-row">
-            <span class="detail-label">Classification:</span>
+            <span class="detail-label">${t('classification')}:</span>
             <span>${escapeHtml(state.currentLang === 'ja' ? (data.classificationJa || data.classification || '-') : (data.classification || '-'))}</span>
         </div>
         ${connascence ? `
@@ -806,10 +807,10 @@ export function showEdgeDetails(data) {
                 <span class="connascence-type">${escapeHtml(connascence.type || connascence.connascence_type || 'Identity')}</span>
                 <span class="connascence-strength">${connascence.strength || 'Weak'}</span>
             </div>
-        ` : '<div class="connascence-info"><span class="connascence-type">Connascence not detected for this coupling</span></div>'}
+        ` : `<div class="connascence-info"><span class="connascence-type">${t('connascence_not_detected')}</span></div>`}
         </details>
         <details class="inspector-section" open>
-            <summary>Assessment</summary>
+            <summary>${t('assessment')}</summary>
         <div class="analysis-result ${analysis.status}">
             <span class="analysis-icon">${analysis.icon}</span>
             <span class="analysis-text">${analysis.statusText}</span>
@@ -822,18 +823,18 @@ export function showEdgeDetails(data) {
         ` : ''}
         ${issue ? `
             <div class="issue-detail ${getIssueSeverityClass(issue.severity)}">
-                <div class="issue-type">${escapeHtml(issue.type || issue.issue_type || 'Issue')}</div>
+                <div class="issue-type">${escapeHtml(formatIssueType(issue.type || issue.issue_type))}</div>
                 <div class="issue-description">${escapeHtml(issue.description || issue.message || '')}</div>
             </div>
         ` : ''}
         </details>
         <details class="inspector-section" open>
-            <summary>Source location</summary>
+            <summary>${t('source_location')}</summary>
         ${hasLocation ? `
             <button class="btn-view-code" data-path="${escapeHtml(location.file_path)}" data-line="${location.line || 0}">
-                <span class="icon">📄</span> View Coupling Location
+                <span class="icon">📄</span> ${t('view_coupling_location')}
             </button>
-        ` : '<div class="no-data">No precise source location is available for this coupling.</div>'}
+        ` : `<div class="no-data">${t('no_source_location')}</div>`}
             <div id="source-code-panel"></div>
         </details>
     `;
@@ -882,9 +883,9 @@ export function renderProjectOverview(container = document.getElementById('node-
                 </div>
             </div>
             <div class="overview-count-grid">
-                <button type="button" data-severity="Critical" class="overview-count critical">${counts.critical || 0}<span>Critical</span></button>
-                <button type="button" data-severity="High" class="overview-count high">${counts.high || 0}<span>High</span></button>
-                <button type="button" data-severity="Medium" class="overview-count medium">${counts.medium || 0}<span>Medium</span></button>
+                <button type="button" data-severity="Critical" class="overview-count critical">${counts.critical || 0}<span>${t('severity_critical')}</span></button>
+                <button type="button" data-severity="High" class="overview-count high">${counts.high || 0}<span>${t('severity_high')}</span></button>
+                <button type="button" data-severity="Medium" class="overview-count medium">${counts.medium || 0}<span>${t('severity_medium')}</span></button>
             </div>
         </details>
         <details class="inspector-section" open>
@@ -893,7 +894,7 @@ export function renderProjectOverview(container = document.getElementById('node-
                 ${Object.entries(subdomains).map(([name, count]) => `
                     <div class="subdomain-row">
                         <span class="subdomain-swatch ${name.toLowerCase()}"></span>
-                        <span>${escapeHtml(name)}</span>
+                        <span>${escapeHtml(labelSubdomain(name))}</span>
                         <strong>${count}</strong>
                     </div>
                 `).join('')}
@@ -905,13 +906,13 @@ export function renderProjectOverview(container = document.getElementById('node-
                 <div class="overview-issue-list">
                     ${topIssues.map(issue => `
                         <button type="button" class="overview-issue severity-${issue.severity?.toLowerCase()}" data-issue-id="${issue.id}">
-                            <span>${escapeHtml(issue.severity)}</span>
+                            <span>${escapeHtml(labelSeverity(issue.severity))}</span>
                             <strong>${escapeHtml(formatIssueType(issue.type || issue.issue_type))}</strong>
                             <small>${escapeHtml(issue.source)}${issue.target ? ` -> ${escapeHtml(issue.target)}` : ''}</small>
                         </button>
                     `).join('')}
                 </div>
-            ` : '<div class="no-data">No issues detected</div>'}
+            ` : `<div class="no-data">${t('no_issues_detected')}</div>`}
         </details>
     `;
 
@@ -956,14 +957,14 @@ export function focusIssuesBySeverity(severity) {
     const container = document.getElementById('node-details');
     if (container) {
         container.innerHTML = `
-            <div class="inspector-title">${escapeHtml(severity)} issue focus</div>
+            <div class="inspector-title">${escapeHtml(tf('issue_focus', { severity: labelSeverity(severity) }))}</div>
             <div class="issue-focus-summary">
-                <p>${issues.length} ${severity.toLowerCase()} issue${issues.length === 1 ? '' : 's'} highlighted with their involved modules and dependency edges.</p>
+                <p>${escapeHtml(tf('issue_focus_summary', { count: issues.length, severity: labelSeverity(severity) }))}</p>
             </div>
             <div class="overview-issue-list">
                 ${issues.map(issue => `
                     <button type="button" class="overview-issue severity-${issue.severity?.toLowerCase()}" data-issue-id="${issue.id}">
-                        <span>${escapeHtml(issue.severity)}</span>
+                        <span>${escapeHtml(labelSeverity(issue.severity))}</span>
                         <strong>${escapeHtml(formatIssueType(issue.type || issue.issue_type))}</strong>
                         <small>${escapeHtml(issue.source)}${issue.target ? ` -> ${escapeHtml(issue.target)}` : ''}</small>
                     </button>
@@ -1047,7 +1048,13 @@ function getSeverityOrder(severity) {
 }
 
 function formatIssueType(type) {
-    return type?.replace(/([A-Z])/g, ' $1').trim() || 'Issue';
+    if (!type) return t('issue');
+    const normalized = type
+        .replace(/([A-Z])/g, '_$1')
+        .replace(/[-\s]+/g, '_')
+        .replace(/^_/, '')
+        .toLowerCase();
+    return t(`issue_${normalized}`) || type.replace(/([A-Z])/g, ' $1').trim() || t('issue');
 }
 
 function volatilityLabel(value) {
@@ -1057,6 +1064,49 @@ function volatilityLabel(value) {
         return 'Low';
     }
     return value || 'Medium';
+}
+
+function itemKindLabel(kind) {
+    return {
+        types: t('types'),
+        traits: t('traits'),
+        functions: t('functions')
+    }[kind] || kind;
+}
+
+function labelSeverity(severity) {
+    return {
+        Critical: t('severity_critical'),
+        High: t('severity_high'),
+        Medium: t('severity_medium'),
+        Low: t('severity_low')
+    }[severity] || severity || t('unknown');
+}
+
+function labelSubdomain(subdomain) {
+    return {
+        Core: t('subdomain_core'),
+        Supporting: t('subdomain_supporting'),
+        Generic: t('subdomain_generic'),
+        Unclassified: t('subdomain_unclassified')
+    }[subdomain] || subdomain || t('subdomain_not_configured');
+}
+
+function labelValue(value) {
+    return {
+        Intrusive: t('legend_intrusive'),
+        Functional: t('legend_functional'),
+        Model: t('legend_model'),
+        Contract: t('legend_contract'),
+        Low: t('severity_low'),
+        Medium: t('severity_medium'),
+        High: t('severity_high'),
+        SameFunction: t('distance_same_function'),
+        SameModule: t('distance_same_module'),
+        DifferentModule: t('distance_different_module'),
+        DifferentCrate: t('distance_different_crate'),
+        Unknown: t('unknown')
+    }[value] || value;
 }
 
 // =====================================================
@@ -1172,7 +1222,7 @@ async function loadSourceCode(filePath, line = null, context = 15) {
     currentSourcePath = filePath;
 
     // Show loading state
-    panel.innerHTML = '<div class="source-loading">Loading source code...</div>';
+    panel.innerHTML = `<div class="source-loading">${t('loading_source')}</div>`;
 
     try {
         const params = new URLSearchParams({ path: filePath });
@@ -1188,7 +1238,7 @@ async function loadSourceCode(filePath, line = null, context = 15) {
         const data = await response.json();
         renderSourceCode(panel, data);
     } catch (error) {
-        panel.innerHTML = `<div class="source-error">Failed to load source: ${escapeHtml(error.message)}</div>`;
+        panel.innerHTML = `<div class="source-error">${t('failed_to_load_source')}: ${escapeHtml(error.message)}</div>`;
     }
 }
 
@@ -1205,11 +1255,11 @@ function renderSourceCode(panel, data) {
                 <div class="file-info">
                     <span class="file-icon">🦀</span>
                     <span class="file-name">${escapeHtml(fileName)}</span>
-                    <span class="line-info">Lines ${data.start_line}-${data.end_line} of ${data.total_lines}</span>
+                    <span class="line-info">${t('lines')} ${data.start_line}-${data.end_line} ${t('of')} ${data.total_lines}</span>
                 </div>
                 <div class="source-code-actions">
-                    <button class="btn-expand-source" title="Expand/Collapse">⤢</button>
-                    <button class="btn-close-source" title="Close">×</button>
+                    <button class="btn-expand-source" title="${t('expand_collapse')}">⤢</button>
+                    <button class="btn-close-source" title="${t('close')}">×</button>
                 </div>
             </div>
             <div class="source-code-content ${sourceExpanded ? 'expanded' : ''}">
@@ -1222,7 +1272,7 @@ function renderSourceCode(panel, data) {
             </div>
             <div class="source-code-footer">
                 <span class="path">${escapeHtml(data.file_path)}</span>
-                <span class="total">${data.total_lines} lines total</span>
+                <span class="total">${data.total_lines} ${t('lines_total')}</span>
             </div>
         </div>
     `;

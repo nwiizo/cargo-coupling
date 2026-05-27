@@ -157,6 +157,60 @@ impl IssueType {
             }
         }
     }
+
+    /// Get a Japanese description of what this issue type means.
+    pub fn description_japanese(&self) -> &'static str {
+        match self {
+            IssueType::GlobalComplexity => {
+                "遠いコンポーネントへの強い結合は認知負荷を高め、理解や変更を難しくします。"
+            }
+            IssueType::CascadingChangeRisk => {
+                "頻繁に変わるコンポーネントへ強く結合すると、変更がシステム全体に波及しやすくなります。"
+            }
+            IssueType::InappropriateIntimacy => {
+                "モジュール境界を越えた内部詳細への直接アクセスはカプセル化を損ないます。"
+            }
+            IssueType::HighEfferentCoupling => {
+                "多くのモジュールに依存するモジュールは壊れやすく、テストも難しくなります。"
+            }
+            IssueType::HighAfferentCoupling => {
+                "多くのモジュールから依存されるモジュールは変更しづらく、依存元を壊すリスクがあります。"
+            }
+            IssueType::UnnecessaryAbstraction => {
+                "近く安定したコンポーネントに抽象インターフェースを使うと、利益より複雑さが増える場合があります。"
+            }
+            IssueType::CircularDependency => {
+                "循環依存はコンポーネントを単独で理解、テスト、変更することを難しくします。"
+            }
+            IssueType::HiddenCoupling => {
+                "明示的なコード依存がないのにファイルが頻繁に一緒に変わっています。暗黙の知識や不足した抽象化を示している可能性があります。"
+            }
+            IssueType::AccidentalVolatility => {
+                "安定しているはずの支援/汎用サブドメインが頻繁に変更されています。設計や所有権の問題によるチャーンの可能性があります。"
+            }
+            IssueType::ScatteredExternalCoupling => {
+                "サードパーティクレートが多くの内部モジュールから直接使われており、更新やAPI変更のリスクが広がっています。"
+            }
+            IssueType::ShallowModule => {
+                "インターフェースの複雑さが実装の複雑さに近く、単純なインターフェースの背後に十分な複雑さを隠せていません。"
+            }
+            IssueType::PassThroughMethod => {
+                "メソッドが価値を追加せず別メソッドへ委譲しており、責務分担が曖昧な可能性があります。"
+            }
+            IssueType::HighCognitiveLoad => {
+                "公開API、依存、複雑な型シグネチャが多く、理解や変更に必要な知識が多すぎます。"
+            }
+            IssueType::GodModule => {
+                "関数、型、実装が多すぎて責務が集中しています。焦点の絞られたモジュールへの分割を検討してください。"
+            }
+            IssueType::PublicFieldExposure => {
+                "構造体の公開フィールドが他モジュールから使われています。getterなどで結合を弱めることを検討してください。"
+            }
+            IssueType::PrimitiveObsession => {
+                "同じプリミティブ型の引数が多すぎます。newtypeパターンで型安全性と明確さを高めることを検討してください。"
+            }
+        }
+    }
 }
 
 /// A detected coupling issue with refactoring recommendation
@@ -780,7 +834,8 @@ pub fn analyze_project_balance_with_thresholds(
 
     // Determine overall health grade based on INTERNAL coupling issues
     let health_grade = calculate_health_grade(&issues_by_severity, internal_couplings.max(1));
-    let grade_rationale = build_grade_rationale(&all_issues, internal_couplings);
+    let grade_rationale =
+        build_grade_rationale(&all_issues, internal_couplings, thresholds.japanese);
 
     ProjectBalanceReport {
         total_couplings,
@@ -798,9 +853,22 @@ pub fn analyze_project_balance_with_thresholds(
     .with_top_priorities(5) // Increased from 3 to 5 for better actionability
 }
 
-fn build_grade_rationale(issues: &[CouplingIssue], internal_couplings: usize) -> GradeRationale {
+fn build_grade_rationale(
+    issues: &[CouplingIssue],
+    internal_couplings: usize,
+    japanese: bool,
+) -> GradeRationale {
     if issues.is_empty() {
-        let summary = if internal_couplings == 0 {
+        let summary = if japanese {
+            if internal_couplings == 0 {
+                "問題密度の採点に使える内部結合はありませんでした。".to_string()
+            } else {
+                format!(
+                    "{} 件の内部結合に検出対象の問題はありません。問題密度が低いため、このグレードになっています。",
+                    internal_couplings
+                )
+            }
+        } else if internal_couplings == 0 {
             "No internal couplings were available for issue-density scoring.".to_string()
         } else {
             format!(
@@ -875,47 +943,127 @@ fn build_grade_rationale(issues: &[CouplingIssue], internal_couplings: usize) ->
         .count();
     let volatility_note = if volatility_issue_count > 0 {
         let accidental_suffix = if accidental_count > 0 {
-            format!(
-                ", including {} accidental-volatility finding(s)",
-                accidental_count
-            )
+            if japanese {
+                format!(" (偶発的な変更頻度 {} 件を含む)", accidental_count)
+            } else {
+                format!(
+                    ", including {} accidental-volatility finding(s)",
+                    accidental_count
+                )
+            }
         } else {
             String::new()
         };
-        Some(format!(
-            "Volatility/churn contributes through {} issue(s){}.",
-            volatility_issue_count, accidental_suffix
-        ))
+        if japanese {
+            Some(format!(
+                "変更頻度/チャーンが {} 件の問題として影響しています{}。",
+                volatility_issue_count, accidental_suffix
+            ))
+        } else {
+            Some(format!(
+                "Volatility/churn contributes through {} issue(s){}.",
+                volatility_issue_count, accidental_suffix
+            ))
+        }
     } else {
         None
     };
 
     let top_phrase = top_issue_types
         .iter()
-        .map(|item| format!("{} ({})", item.issue_type, item.count))
+        .map(|item| {
+            if japanese {
+                format!(
+                    "{} ({})",
+                    issue_type_japanese_label(item.issue_type),
+                    item.count
+                )
+            } else {
+                format!("{} ({})", item.issue_type, item.count)
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
-    let severity_phrase = if high_or_critical > 0 {
+    let severity_phrase = if japanese {
+        if high_or_critical > 0 {
+            format!("高/緊急の問題 {} 件", high_or_critical)
+        } else {
+            format!("中/低の問題 {} 件", issues.len())
+        }
+    } else if high_or_critical > 0 {
         format!("{} high/critical issue(s)", high_or_critical)
     } else {
         format!("{} medium/low issue(s)", issues.len())
     };
     let dimension_phrase = dominant_dimension
-        .map(|dimension| format!("; {} is the largest contributor", dimension))
+        .map(|dimension| {
+            if japanese {
+                format!(
+                    "。最大の要因は{}です",
+                    grade_dimension_japanese_label(dimension)
+                )
+            } else {
+                format!("; {} is the largest contributor", dimension)
+            }
+        })
         .unwrap_or_default();
     let note_phrase = volatility_note
         .as_ref()
-        .map(|note| format!(" {}", note))
+        .map(|note| {
+            if japanese {
+                note.clone()
+            } else {
+                format!(" {}", note)
+            }
+        })
         .unwrap_or_default();
 
-    GradeRationale {
-        summary: format!(
+    let summary = if japanese {
+        format!(
+            "{}が主な理由です。特に {} が目立ちます{}。{note_phrase}",
+            severity_phrase, top_phrase, dimension_phrase
+        )
+    } else {
+        format!(
             "Driven by {}, led by {}{}.{note_phrase}",
             severity_phrase, top_phrase, dimension_phrase
-        ),
+        )
+    };
+
+    GradeRationale {
+        summary,
         top_issue_types,
         dominant_dimension,
         volatility_note,
+    }
+}
+
+fn grade_dimension_japanese_label(dimension: GradeDimension) -> &'static str {
+    match dimension {
+        GradeDimension::Strength => "結合強度",
+        GradeDimension::Distance => "距離",
+        GradeDimension::Volatility => "変更頻度",
+    }
+}
+
+fn issue_type_japanese_label(issue_type: IssueType) -> &'static str {
+    match issue_type {
+        IssueType::GlobalComplexity => "グローバル複雑性",
+        IssueType::CascadingChangeRisk => "変更波及リスク",
+        IssueType::InappropriateIntimacy => "不適切な親密さ",
+        IssueType::HighEfferentCoupling => "出力依存過多",
+        IssueType::HighAfferentCoupling => "入力依存過多",
+        IssueType::UnnecessaryAbstraction => "過剰な抽象化",
+        IssueType::CircularDependency => "循環依存",
+        IssueType::HiddenCoupling => "隠れた結合",
+        IssueType::AccidentalVolatility => "偶発的な変更頻度",
+        IssueType::ScatteredExternalCoupling => "外部クレート結合の分散",
+        IssueType::ShallowModule => "浅いモジュール",
+        IssueType::PassThroughMethod => "パススルーメソッド",
+        IssueType::HighCognitiveLoad => "高認知負荷",
+        IssueType::GodModule => "神モジュール",
+        IssueType::PublicFieldExposure => "公開フィールド",
+        IssueType::PrimitiveObsession => "プリミティブ過多",
     }
 }
 
