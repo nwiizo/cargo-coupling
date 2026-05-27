@@ -18,7 +18,7 @@
     <div class="footer-trigger" id="footer-trigger"></div>
 
     <!-- Sidebar toggle button -->
-    <button class="sidebar-toggle" id="sidebar-toggle" title="Toggle sidebar (s)">
+    <button class="sidebar-toggle" id="sidebar-toggle" title="Toggle sidebar (s)" aria-label="Toggle sidebar">
         <span class="icon">◀</span>
     </button>
 
@@ -32,7 +32,7 @@
                 <span class="stat">Loading...</span>
             </div>
             <div class="header-right">
-                <button id="lang-toggle" class="btn btn-lang" title="Switch language">
+                <button id="lang-toggle" class="btn btn-lang" title="Switch language" aria-label="Switch language">
                     <span id="lang-label">EN</span>
                 </button>
             </div>
@@ -47,7 +47,21 @@
                     <button id="canvas-view-space" class="segment" type="button" data-i18n="view_dimension_space">Dimension-Space</button>
                     <button id="canvas-view-report" class="segment" type="button" data-i18n="view_report">Report</button>
                 </div>
-                <button id="canvas-legend-toggle" class="canvas-tool-btn" type="button" data-i18n="legend">Legend</button>
+                <button id="canvas-legend-toggle" class="canvas-tool-btn" type="button" data-i18n="legend" aria-label="Open legend">Legend</button>
+            </div>
+            <div class="app-loading" id="app-loading" role="status" aria-live="polite" aria-label="Loading coupling graph">
+                <div class="loading-panel">
+                    <span class="loading-spinner" aria-hidden="true"></span>
+                    <div>
+                        <strong>Loading analysis</strong>
+                        <span>Preparing graph, history, and report data...</span>
+                    </div>
+                </div>
+                <div class="loading-skeleton" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
             </div>
             <div class="graph-container" id="cy"></div>
             <div class="graph-container graph-3d-container" id="graph-3d" style="display: none;"></div>
@@ -263,19 +277,19 @@
                             <h4 data-i18n="legend_edge_colors">Edge Colors (Coupling Balance)</h4>
                             <div class="legend-items">
                                 <div class="legend-item">
-                                    <span class="legend-color" style="background: #22c55e;"></span>
+                                    <span class="legend-color" style="background: var(--quadrant-high-cohesion);"></span>
                                     <span class="legend-label" data-i18n="legend_good_detail">Good: cohesion / loose coupling</span>
                                 </div>
                                 <div class="legend-item">
-                                    <span class="legend-color" style="background: #3b82f6;"></span>
+                                    <span class="legend-color" style="background: var(--quadrant-acceptable);"></span>
                                     <span class="legend-label" data-i18n="legend_stable_detail">Stable: low volatility</span>
                                 </div>
                                 <div class="legend-item">
-                                    <span class="legend-color" style="background: #eab308;"></span>
+                                    <span class="legend-color" style="background: var(--quadrant-local-complexity);"></span>
                                     <span class="legend-label" data-i18n="legend_review_detail">Review: needs attention</span>
                                 </div>
                                 <div class="legend-item">
-                                    <span class="legend-color" style="background: #ef4444;"></span>
+                                    <span class="legend-color" style="background: var(--quadrant-global-complexity);"></span>
                                     <span class="legend-label" data-i18n="legend_critical_detail">Critical: problematic</span>
                                 </div>
                             </div>
@@ -426,7 +440,7 @@
 
                 <!-- Item Graph (shows when module is selected) -->
                 <section class="panel" id="item-graph-panel" style="display: none;">
-                    <h2>📦 Item Dependencies <button id="close-item-graph" class="btn-close">×</button></h2>
+                    <h2>📦 Item Dependencies <button id="close-item-graph" class="btn-close" aria-label="Close item dependencies">×</button></h2>
                     <p class="item-graph-hint">Dependencies within this module</p>
                     <div class="item-filter-group">
                         <label><input type="checkbox" id="item-filter-fn" checked> Functions</label>
@@ -449,17 +463,17 @@
                     <div class="legend">
                         <div class="legend-section">
                             <h4 data-i18n="legend_nodes">Nodes</h4>
-                            <div class="legend-item"><span class="color-box" style="background: #ef4444;"></span> <span data-i18n="legend_core_subdomain">Core subdomain: high essential volatility</span></div>
-                            <div class="legend-item"><span class="color-box" style="background: #38bdf8;"></span> <span data-i18n="legend_supporting_subdomain">Supporting subdomain: expected stable</span></div>
-                            <div class="legend-item"><span class="color-box" style="background: #94a3b8;"></span> <span data-i18n="legend_generic_subdomain">Generic subdomain or unknown</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--subdomain-core);"></span> <span data-i18n="legend_core_subdomain">Core subdomain: high essential volatility</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--subdomain-supporting);"></span> <span data-i18n="legend_supporting_subdomain">Supporting subdomain: expected stable</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--subdomain-generic);"></span> <span data-i18n="legend_generic_subdomain">Generic subdomain or unknown</span></div>
                             <div class="legend-item"><span class="size-sample"></span> <span data-i18n="legend_larger_node">Larger node: more dependencies and/or churn</span></div>
                         </div>
                         <div class="legend-section">
                             <h4 data-i18n="legend_edges">Edges</h4>
-                            <div class="legend-item"><span class="color-box" style="background: #ef4444;"></span> <span data-i18n="legend_intrusive_strength">Intrusive / high-risk strength</span></div>
-                            <div class="legend-item"><span class="color-box" style="background: #f97316;"></span> <span data-i18n="legend_functional_strength">Functional strength</span></div>
-                            <div class="legend-item"><span class="color-box" style="background: #eab308;"></span> <span data-i18n="legend_model_strength">Model strength</span></div>
-                            <div class="legend-item"><span class="color-box" style="background: #22c55e;"></span> <span data-i18n="legend_contract_strength">Contract strength</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--strength-intrusive);"></span> <span data-i18n="legend_intrusive_strength">Intrusive / high-risk strength</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--strength-functional);"></span> <span data-i18n="legend_functional_strength">Functional strength</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--strength-model);"></span> <span data-i18n="legend_model_strength">Model strength</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--strength-contract);"></span> <span data-i18n="legend_contract_strength">Contract strength</span></div>
                             <div class="legend-item"><span class="line-style solid"></span> <span data-i18n="legend_close_distance">Close distance: same function/module</span></div>
                             <div class="legend-item"><span class="line-style dashed"></span> <span data-i18n="legend_far_distance">Far distance or hidden temporal coupling</span></div>
                             <div class="legend-item"><span class="line-style dotted"></span> <span data-i18n="legend_external_lifecycle">Different crate / external lifecycle</span></div>
@@ -467,11 +481,11 @@
                         </div>
                         <div class="legend-section">
                             <h4 data-i18n="legend_balance_model">Balance Model</h4>
-                            <div class="legend-item"><span class="color-box" style="background: #22c55e;"></span> <span data-i18n="legend_high_cohesion_rule">High Cohesion: strong + close</span></div>
-                            <div class="legend-item"><span class="color-box" style="background: #10b981;"></span> <span data-i18n="legend_loose_coupling_rule">Loose Coupling: weak + far</span></div>
-                            <div class="legend-item"><span class="color-box" style="background: #3b82f6;"></span> <span data-i18n="legend_acceptable_rule">Acceptable: strong + far but stable</span></div>
-                            <div class="legend-item"><span class="color-box" style="background: #eab308;"></span> <span data-i18n="legend_local_complexity_rule">Local Complexity: weak + close</span></div>
-                            <div class="legend-item"><span class="color-box" style="background: #ef4444;"></span> <span data-i18n="legend_global_complexity_rule">Global Complexity: strong + far + volatile</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--quadrant-high-cohesion);"></span> <span data-i18n="legend_high_cohesion_rule">High Cohesion: strong + close</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--quadrant-loose-coupling);"></span> <span data-i18n="legend_loose_coupling_rule">Loose Coupling: weak + far</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--quadrant-acceptable);"></span> <span data-i18n="legend_acceptable_rule">Acceptable: strong + far but stable</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--quadrant-local-complexity);"></span> <span data-i18n="legend_local_complexity_rule">Local Complexity: weak + close</span></div>
+                            <div class="legend-item"><span class="color-box" style="background: var(--quadrant-global-complexity);"></span> <span data-i18n="legend_global_complexity_rule">Global Complexity: strong + far + volatile</span></div>
                             <code>BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY</code>
                         </div>
                         <div class="legend-section">
@@ -531,7 +545,7 @@
         <div class="details-modal-content">
             <div class="details-modal-header">
                 <h2 id="details-modal-title">Module Details</h2>
-                <button class="btn-close-modal" id="close-details-modal">×</button>
+                <button class="btn-close-modal" id="close-details-modal" aria-label="Close module details">×</button>
             </div>
             <div class="details-tabs">
                 <button class="tab active" data-tab="overview">Overview</button>

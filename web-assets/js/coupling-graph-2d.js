@@ -6,6 +6,18 @@ import { state, setCy, setCurrentLayout } from './state.js';
 import { t } from './i18n.js';
 import { STABLE_CRATES, isExternalCrate, estimateVolatility } from './utils.js';
 
+const COLORS = {
+    core: '#fb7185',
+    supporting: '#38bdf8',
+    generic: '#cbd5e1',
+    unknown: '#8291a6',
+    accidental: '#fb923c',
+    good: '#34d399',
+    review: '#facc15',
+    critical: '#f87171',
+    stable: '#60a5fa'
+};
+
 /**
  * Initialize Cytoscape graph with data
  */
@@ -49,12 +61,16 @@ export function buildElements(data, options = {}) {
         const typeCount = node.metrics?.type_count ?? items.filter(i => i.kind === 'type' || i.kind === 'trait').length;
         const implCount = node.metrics?.impl_count ?? ((node.metrics?.trait_impl_count || 0) + (node.metrics?.inherent_impl_count || 0));
 
-        const statsStr = `${fnCount}fn ${typeCount}ty ${implCount}impl`;
+        const statsStr = `${fnCount} functions, ${typeCount} types, ${implCount} impls`;
+        const labelForGraph = compactModuleLabel(node.label);
+        const hasStats = fnCount > 0 || typeCount > 0 || implCount > 0;
 
         nodes.push({
             data: {
                 id: node.id,
                 label: node.label,
+                graph_label: hasStats ? `${labelForGraph}\n${fnCount} fn  ${typeCount} types  ${implCount} impls` : labelForGraph,
+                label_title: node.label,
                 crate: crate,
                 nodeType: 'module',
                 subdomain: node.subdomain,
@@ -256,26 +272,24 @@ export function getCytoscapeStyle() {
             selector: 'node[nodeType="module"]',
             style: {
                 'label': node => {
-                    const label = node.data('label') || '';
-                    const fn = node.data('fn_count') || 0;
-                    const ty = node.data('type_count') || 0;
-                    const impl = node.data('impl_count') || 0;
-                    if (fn === 0 && ty === 0 && impl === 0) return label;
-                    return `${label}\n${fn}fn ${ty}ty ${impl}impl`;
+                    return node.data('graph_label') || node.data('label') || '';
                 },
                 'text-valign': 'center',
                 'text-halign': 'center',
                 'text-wrap': 'wrap',
-                'text-max-width': '120px',
+                'text-max-width': '168px',
                 'background-color': node => getNodeColor(node.data()),
-                'border-width': 2,
+                'border-width': 2.5,
                 'border-color': node => node.data('accidental_volatility') ? '#f97316' : '#475569',
                 'color': '#f8fafc',
-                'font-size': '9px',
-                'text-outline-color': '#0f172a',
-                'text-outline-width': 2,
-                'width': node => 40 + (node.data('couplings_out') || 0) * 2,
-                'height': node => 40 + (node.data('couplings_out') || 0) * 2,
+                'font-size': '12px',
+                'font-weight': 700,
+                'line-height': 1.18,
+                'text-outline-color': '#020617',
+                'text-outline-width': 3,
+                'min-zoomed-font-size': 7,
+                'width': node => moduleNodeWidth(node),
+                'height': node => moduleNodeHeight(node),
                 'shape': 'roundrectangle'
             }
         },
@@ -314,7 +328,8 @@ export function getCytoscapeStyle() {
                 'border-width': 2,
                 'border-color': '#475569',
                 'color': '#f8fafc',
-                'font-size': '9px',
+                'font-size': '11px',
+                'font-weight': 700,
                 'text-outline-color': '#0f172a',
                 'text-outline-width': 2,
                 'width': 40,
@@ -325,13 +340,13 @@ export function getCytoscapeStyle() {
         {
             selector: 'edge',
             style: {
-                'width': edge => 1 + edge.data('strength') * 4,
+                'width': edge => 1.5 + edge.data('strength') * 4.5,
                 'line-color': edge => getEdgeColorByAnalysis(edge.data()),
                 'target-arrow-color': edge => getEdgeColorByAnalysis(edge.data()),
                 'target-arrow-shape': 'triangle',
-                'arrow-scale': 1.5,
+                'arrow-scale': 1.25,
                 'curve-style': 'bezier',
-                'opacity': 0.7,
+                'opacity': 0.78,
                 'line-style': edge => getDistanceStyle(edge.data('distance'))
             }
         },
@@ -424,14 +439,15 @@ export function getCytoscapeStyle() {
             selector: '.highlighted',
             style: {
                 'opacity': 1,
-                'border-width': 3,
-                'border-color': '#3b82f6'
+                'border-width': 4,
+                'border-color': '#60a5fa',
+                'z-index': 20
             }
         },
         // Dimmed state
         {
             selector: '.dimmed',
-            style: { 'opacity': 0.15 }
+            style: { 'opacity': 0.16 }
         },
         // Hidden state
         {
@@ -442,35 +458,61 @@ export function getCytoscapeStyle() {
         {
             selector: '.dependency-source',
             style: {
-                'border-color': '#22c55e',
-                'border-width': 4
+                'border-color': '#34d399',
+                'border-width': 4,
+                'z-index': 22
             }
         },
         {
             selector: '.dependency-target',
             style: {
-                'border-color': '#ef4444',
-                'border-width': 4
+                'border-color': '#f87171',
+                'border-width': 4,
+                'z-index': 22
             }
         },
         // Hover state
         {
             selector: '.hover',
             style: {
-                'border-color': '#3b82f6',
-                'border-width': 3
+                'border-color': '#93c5fd',
+                'border-width': 3,
+                'z-index': 18
             }
         },
         // Search match
         {
             selector: '.search-match',
             style: {
-                'border-color': '#eab308',
+                'border-color': '#facc15',
                 'border-width': 4,
-                'background-color': '#eab308'
+                'background-color': '#ca8a04'
             }
         }
     ];
+}
+
+function compactModuleLabel(label = '') {
+    if (label.length <= 34) return label;
+    const parts = label.split('::');
+    const last = parts.pop() || label;
+    if (last.length <= 28 && parts.length > 0) {
+        return `${parts[0]}::...::${last}`;
+    }
+    return `${label.slice(0, 31)}...`;
+}
+
+function moduleNodeWidth(node) {
+    const label = node.data('label') || '';
+    const couplings = (node.data('couplings_in') || 0) + (node.data('couplings_out') || 0);
+    const labelWidth = Math.min(176, Math.max(92, label.length * 6.8));
+    return Math.min(190, labelWidth + Math.min(32, couplings * 1.4));
+}
+
+function moduleNodeHeight(node) {
+    const hasStats = (node.data('fn_count') || 0) + (node.data('type_count') || 0) + (node.data('impl_count') || 0) > 0;
+    const couplings = (node.data('couplings_in') || 0) + (node.data('couplings_out') || 0);
+    return Math.min(96, (hasStats ? 58 : 46) + Math.min(22, couplings));
 }
 
 /**
@@ -481,9 +523,11 @@ export function getLayoutConfig(name) {
         cose: {
             name: 'cose',
             animate: true,
-            animationDuration: 500,
-            nodeRepulsion: 8000,
-            idealEdgeLength: 100,
+            animationDuration: 420,
+            fit: true,
+            padding: 70,
+            nodeRepulsion: 11000,
+            idealEdgeLength: 140,
             edgeElasticity: 100,
             gravity: 0.25,
             numIter: 1000
@@ -492,21 +536,23 @@ export function getLayoutConfig(name) {
             name: 'dagre',
             rankDir: 'TB',
             nodeSep: 50,
-            rankSep: 80,
+            rankSep: 96,
             edgeSep: 10,
             animate: true,
-            animationDuration: 500,
+            animationDuration: 420,
             fit: true,
-            padding: 50
+            padding: 70
         },
         concentric: {
             name: 'concentric',
             animate: true,
-            animationDuration: 500,
+            animationDuration: 420,
+            fit: true,
+            padding: 70,
             concentric: node => node.data('couplings_in') || 0,
             levelWidth: () => 2
         },
-        grid: { name: 'grid', animate: true, animationDuration: 500, rows: 5 }
+        grid: { name: 'grid', animate: true, animationDuration: 420, fit: true, padding: 70, rows: 5 }
     };
     return configs[name] || configs.cose;
 }
@@ -633,23 +679,23 @@ function setupGraphEventHandlers(cy, onNodeTap, onEdgeTap, onBackgroundTap) {
 // =====================================================
 
 export function getHealthColor(health) {
-    const colors = { good: '#22c55e', needs_review: '#eab308', critical: '#ef4444' };
-    return colors[health] || '#64748b';
+    const colors = { good: COLORS.good, needs_review: COLORS.review, critical: COLORS.critical };
+    return colors[health] || COLORS.unknown;
 }
 
 export function getNodeColor(data) {
-    if (data.accidental_volatility) return '#f97316';
+    if (data.accidental_volatility) return COLORS.accidental;
     const subdomain = (data.subdomain || '').toLowerCase();
-    if (subdomain === 'core') return '#ef4444';
-    if (subdomain === 'supporting') return '#38bdf8';
-    if (subdomain === 'generic') return '#94a3b8';
+    if (subdomain === 'core') return COLORS.core;
+    if (subdomain === 'supporting') return COLORS.supporting;
+    if (subdomain === 'generic') return COLORS.generic;
     return getHealthColor(data.health);
 }
 
 export function getBalanceColor(balance) {
-    if (balance >= 0.8) return '#22c55e';
-    if (balance >= 0.4) return '#eab308';
-    return '#ef4444';
+    if (balance >= 0.8) return COLORS.good;
+    if (balance >= 0.4) return COLORS.review;
+    return COLORS.critical;
 }
 
 function getDistanceStyle(distance) {
@@ -759,9 +805,9 @@ function getEdgeColorByAnalysis(data) {
     const analysis = analyzeCoupling(strength, distance, volatility, target);
 
     switch (analysis.status) {
-        case 'good': return '#22c55e';
-        case 'acceptable': return '#eab308';
-        case 'critical': return '#ef4444';
-        default: return '#64748b';
+        case 'good': return COLORS.good;
+        case 'acceptable': return COLORS.review;
+        case 'critical': return COLORS.critical;
+        default: return COLORS.unknown;
     }
 }

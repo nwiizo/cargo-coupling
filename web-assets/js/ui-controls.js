@@ -29,13 +29,14 @@ export function updateHeaderStats(summary, graphData) {
         }
     }
 
+    const hiddenCouplings = graphData?.hidden_couplings?.length || 0;
     const counts = summary.issues_by_severity || {};
     const rationale = buildHealthRationale(summary, graphData);
     container.innerHTML = `
-        <div class="health-header-card">
+        <div class="health-header-card" aria-label="Project coupling health">
             <div class="health-grade-block">
                 <span class="health-label">${t('health_grade')}</span>
-                <span class="health-grade ${summary.health_grade}">${summary.health_grade}</span>
+                <span class="health-grade ${summary.health_grade}" title="${t('health_grade')}: ${summary.health_grade}">${summary.health_grade}</span>
             </div>
             <div class="health-rationale">
                 <strong>${(summary.health_score * 100).toFixed(1)}%</strong>
@@ -43,22 +44,35 @@ export function updateHeaderStats(summary, graphData) {
                 ${state.activeRevision ? `<span class="revision-chip">${escapeHtml(state.activeRevision)}</span>` : ''}
             </div>
             <div class="health-counts" aria-label="Issue counts">
-                <button class="health-count critical" type="button" data-severity="Critical">
+                <button class="health-count critical" type="button" data-severity="Critical" title="Focus critical issues" aria-label="Focus critical issues">
                     <span>${t('severity_critical')}</span><strong>${counts.critical || 0}</strong>
                 </button>
-                <button class="health-count high" type="button" data-severity="High">
+                <button class="health-count high" type="button" data-severity="High" title="Focus high severity issues" aria-label="Focus high severity issues">
                     <span>${t('severity_high')}</span><strong>${counts.high || 0}</strong>
                 </button>
-                <button class="health-count medium" type="button" data-severity="Medium">
+                <button class="health-count medium" type="button" data-severity="Medium" title="Focus medium severity issues" aria-label="Focus medium severity issues">
                     <span>${t('severity_medium')}</span><strong>${counts.medium || 0}</strong>
                 </button>
             </div>
-            <div class="health-meta">
-                <span>${summary.total_modules} ${t('modules')}</span>
-                <span>${summary.total_couplings} ${t('couplings')}</span>
-                <span>${totalFunctions}fn ${totalTypes}ty ${totalImpls}impl</span>
+            <div class="health-meta" aria-label="Analysis totals">
+                ${metricChip('M', summary.total_modules || 0, t('modules'), 'Analyzed modules')}
+                ${metricChip('C', summary.total_couplings || 0, t('couplings'), 'Explicit dependency relationships')}
+                ${metricChip('H', hiddenCouplings, 'hidden', 'Hidden temporal couplings found from git co-change history')}
+                ${metricChip('f', totalFunctions, 'functions', 'Function definitions counted across analyzed modules')}
+                ${metricChip('T', totalTypes, 'types', 'Types and traits counted across analyzed modules')}
+                ${metricChip('I', totalImpls, 'impls', 'Implementation blocks counted across analyzed modules')}
             </div>
         </div>
+    `;
+}
+
+function metricChip(icon, value, label, title) {
+    return `
+        <span class="metric-chip" title="${escapeHtml(title)}" aria-label="${escapeHtml(`${value} ${label}: ${title}`)}">
+            <span class="metric-icon" aria-hidden="true">${escapeHtml(icon)}</span>
+            <strong>${value}</strong>
+            <span>${escapeHtml(label)}</span>
+        </span>
     `;
 }
 
@@ -895,7 +909,7 @@ export function renderProjectOverview(container = document.getElementById('node-
                     <div class="subdomain-row">
                         <span class="subdomain-swatch ${name.toLowerCase()}"></span>
                         <span>${escapeHtml(labelSubdomain(name))}</span>
-                        <strong>${count}</strong>
+                        <strong>${count} ${t('modules')}</strong>
                     </div>
                 `).join('')}
             </div>

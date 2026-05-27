@@ -69,6 +69,7 @@ async function init() {
         return;
     }
 
+    setAppLoading(true);
     try {
         await loadConfig();
         const data = await fetchGraphData();
@@ -97,8 +98,16 @@ async function init() {
     } catch (error) {
         console.error('Failed to initialize:', error);
         document.getElementById('cy').innerHTML =
-            `<div style="padding: 2rem; color: #ef4444;">Failed to load graph data: ${error.message}</div>`;
+            `<div class="graph-error">Failed to load graph data: ${error.message}</div>`;
+    } finally {
+        setAppLoading(false);
     }
+}
+
+function setAppLoading(isLoading) {
+    const loading = document.getElementById('app-loading');
+    if (!loading) return;
+    loading.classList.toggle('hidden', !isLoading);
 }
 
 /**

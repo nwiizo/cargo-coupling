@@ -7,24 +7,24 @@ import { t } from './i18n.js';
 import { escapeHtml } from './utils.js';
 
 const COLORS = {
-    core: '#ef4444',
+    core: '#fb7185',
     supporting: '#38bdf8',
-    generic: '#94a3b8',
-    unknown: '#64748b',
-    intrusive: '#ef4444',
-    functional: '#f97316',
-    model: '#eab308',
-    contract: '#22c55e',
+    generic: '#cbd5e1',
+    unknown: '#8291a6',
+    intrusive: '#fb7185',
+    functional: '#fb923c',
+    model: '#facc15',
+    contract: '#34d399',
     hidden: '#f59e0b',
-    highCohesion: '#22c55e',
-    looseCoupling: '#10b981',
-    acceptable: '#3b82f6',
-    localComplexity: '#eab308',
-    globalComplexity: '#ef4444',
+    highCohesion: '#34d399',
+    looseCoupling: '#2dd4bf',
+    acceptable: '#60a5fa',
+    localComplexity: '#facc15',
+    globalComplexity: '#f87171',
     selected: '#f8fafc',
-    axisX: '#ef4444',
+    axisX: '#fb7185',
     axisY: '#38bdf8',
-    axisZ: '#22c55e'
+    axisZ: '#34d399'
 };
 
 let onNodeSelected = null;
@@ -45,7 +45,7 @@ export function initCouplingGraph3d(data, nodeHandler, edgeHandler) {
     onEdgeSelected = edgeHandler;
 
     const graph = ForceGraph3D()(container)
-        .backgroundColor('#0f172a')
+        .backgroundColor('#08111f')
         .showNavInfo(false)
         .nodeLabel(node => node.tooltip || node.label || node.id)
         .nodeColor(nodeColor)
