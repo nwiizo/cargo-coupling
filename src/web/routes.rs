@@ -17,6 +17,8 @@ use rust_embed::RustEmbed;
 
 use serde::{Deserialize, Serialize};
 
+use crate::cli_output::JsonHistory;
+
 use super::graph::{self, GraphData};
 use super::server::AppState;
 
@@ -69,6 +71,7 @@ struct ModuleQuery {
 pub fn api_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/graph", get(get_graph))
+        .route("/api/history", get(get_history))
         .route("/api/config", get(get_config))
         .route("/api/health", get(health_check))
         .route("/api/source", get(get_source))
@@ -87,6 +90,11 @@ pub fn static_routes() -> Router<Arc<AppState>> {
 async fn get_graph(State(state): State<Arc<AppState>>) -> Json<GraphData> {
     let graph = graph::project_to_graph(&state.metrics, &state.thresholds);
     Json(graph)
+}
+
+/// GET /api/history - Returns precomputed coupling health timeline
+async fn get_history(State(state): State<Arc<AppState>>) -> Json<JsonHistory> {
+    Json(state.history.clone())
 }
 
 /// GET /api/config - Returns frontend configuration

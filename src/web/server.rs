@@ -4,21 +4,29 @@
 //! and JSON API endpoints.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
 use tokio::net::TcpListener;
 
+use crate::analyze_history;
 use crate::balance::IssueThresholds;
+use crate::cli_output::{JsonHistory, JsonHistoryPoint, JsonSkippedRevision};
+use crate::config::CompiledConfig;
+use crate::history::HistoryReport;
 use crate::metrics::ProjectMetrics;
 
 use super::routes;
+
+const DEFAULT_HISTORY_MAX_POINTS: usize = 30;
 
 /// Shared application state
 pub struct AppState {
     pub metrics: ProjectMetrics,
     pub thresholds: IssueThresholds,
     pub api_endpoint: Option<String>,
+    pub history: JsonHistory,
 }
 
 /// Configuration for the web server
@@ -26,6 +34,10 @@ pub struct ServerConfig {
     pub port: u16,
     pub open_browser: bool,
     pub api_endpoint: Option<String>,
+    pub analysis_path: PathBuf,
+    pub analysis_config: CompiledConfig,
+    pub git_months: usize,
+    pub history_max_points: usize,
 }
 
 impl Default for ServerConfig {
@@ -34,6 +46,10 @@ impl Default for ServerConfig {
             port: 3000,
             open_browser: true,
             api_endpoint: None,
+            analysis_path: PathBuf::from("./src"),
+            analysis_config: CompiledConfig::empty(),
+            git_months: 6,
+            history_max_points: DEFAULT_HISTORY_MAX_POINTS,
         }
     }
 }
@@ -44,10 +60,13 @@ pub async fn start_server(
     thresholds: IssueThresholds,
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let history = load_history(&config, &thresholds);
+
     let state = Arc::new(AppState {
         metrics,
         thresholds,
         api_endpoint: config.api_endpoint.clone(),
+        history,
     });
 
     let app = Router::new()
@@ -74,4 +93,53 @@ pub async fn start_server(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+fn load_history(config: &ServerConfig, thresholds: &IssueThresholds) -> JsonHistory {
+    match analyze_history(
+        &config.analysis_path,
+        &config.analysis_config,
+        thresholds,
+        config.git_months,
+        config.history_max_points,
+    ) {
+        Ok(report) => history_to_json(&report),
+        Err(e) => {
+            eprintln!("Warning: History analysis failed: {}", e);
+            JsonHistory {
+                months: config.git_months,
+                points: Vec::new(),
+                skipped: Vec::new(),
+            }
+        }
+    }
+}
+
+fn history_to_json(report: &HistoryReport) -> JsonHistory {
+    JsonHistory {
+        months: report.months,
+        points: report
+            .points
+            .iter()
+            .map(|point| JsonHistoryPoint {
+                commit: point.commit.clone(),
+                date: point.date.clone(),
+                grade: point.grade.letter(),
+                average_score: point.average_score,
+                total_couplings: point.total_couplings,
+                module_count: point.module_count,
+                critical_issues: point.critical,
+                high_issues: point.high,
+            })
+            .collect(),
+        skipped: report
+            .skipped
+            .iter()
+            .map(|skipped| JsonSkippedRevision {
+                commit: skipped.commit.clone(),
+                date: skipped.date.clone(),
+                reason: skipped.reason.clone(),
+            })
+            .collect(),
+    }
 }

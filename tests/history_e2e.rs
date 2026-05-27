@@ -45,8 +45,14 @@ fn history_builds_timeline_from_a_real_git_repo() {
 
     // Revision 1: two modules with a single cross-module coupling.
     write(&src.join("lib.rs"), "pub mod a;\npub mod b;\n");
-    write(&src.join("a.rs"), "pub struct A;\npub fn make() -> A {\n    A\n}\n");
-    write(&src.join("b.rs"), "use crate::a::A;\npub fn take(_x: A) {}\n");
+    write(
+        &src.join("a.rs"),
+        "pub struct A;\npub fn make() -> A {\n    A\n}\n",
+    );
+    write(
+        &src.join("b.rs"),
+        "use crate::a::A;\npub fn take(_x: A) {}\n",
+    );
     git(root, &["add", "-A"]);
     git(root, &["commit", "-q", "-m", "init modules"]);
 
@@ -69,7 +75,10 @@ fn history_builds_timeline_from_a_real_git_repo() {
         report.skipped
     );
     assert!(report.points.len() <= 5, "must respect max_points");
-    assert_eq!(report.months, 120, "report should carry the requested window");
+    assert_eq!(
+        report.months, 120,
+        "report should carry the requested window"
+    );
 
     // Worktrees registered against this repo must be cleaned up (only the main
     // worktree should remain). This is race-free because each test uses its own repo.

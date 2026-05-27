@@ -378,6 +378,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             port: args.port,
             open_browser: !args.no_open,
             api_endpoint: args.api_endpoint.clone(),
+            analysis_path: args.path.clone(),
+            analysis_config: config,
+            git_months: args.git_months,
+            history_max_points: 30,
         };
 
         // Run the web server using tokio runtime

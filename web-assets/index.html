@@ -89,6 +89,44 @@
                     <input type="text" id="search-input" class="search-input" placeholder="Search modules... (press /)">
                 </section>
 
+                <!-- History Timeline -->
+                <section class="panel timeline-panel" id="timeline-panel">
+                    <div class="timeline-header">
+                        <h2>Timeline</h2>
+                        <button id="timeline-play" class="btn timeline-play-btn" disabled>Play</button>
+                    </div>
+                    <div id="timeline-chart" class="timeline-chart">
+                        <p class="placeholder">Loading history...</p>
+                    </div>
+                    <input type="range" id="timeline-scrubber" class="timeline-scrubber" min="0" max="0" value="0" disabled>
+                    <div class="timeline-stats" id="timeline-stats">
+                        <div class="timeline-stat">
+                            <span>Date</span>
+                            <strong id="timeline-date">-</strong>
+                        </div>
+                        <div class="timeline-stat">
+                            <span>Commit</span>
+                            <strong id="timeline-commit">-</strong>
+                        </div>
+                        <div class="timeline-stat">
+                            <span>Grade</span>
+                            <strong id="timeline-grade" class="health-grade">-</strong>
+                        </div>
+                        <div class="timeline-stat">
+                            <span>Avg Score</span>
+                            <strong id="timeline-score">-</strong>
+                        </div>
+                        <div class="timeline-stat">
+                            <span>Couplings</span>
+                            <strong id="timeline-couplings">-</strong>
+                        </div>
+                        <div class="timeline-stat">
+                            <span>Critical</span>
+                            <strong id="timeline-critical">-</strong>
+                        </div>
+                    </div>
+                </section>
+
                 <!-- View Mode -->
                 <section class="panel">
                     <h2>View</h2>

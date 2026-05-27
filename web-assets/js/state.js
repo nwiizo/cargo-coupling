@@ -5,6 +5,7 @@
 export const CONFIG = {
     apiEndpoint: '',
     graphPath: '/api/graph',
+    historyPath: '/api/history',
     configPath: '/api/config'
 };
 
@@ -19,7 +20,8 @@ export const state = {
     currentLang: 'en',  // 'en' or 'ja'
     itemCy: null,
     currentModuleForItemGraph: null,
-    showItems: false  // Show item-level nodes (functions, types)
+    showItems: false,  // Show item-level nodes (functions, types)
+    historyData: null
 };
 
 // Setters for state (to maintain encapsulation where needed)
@@ -61,4 +63,8 @@ export function setCurrentModuleForItemGraph(moduleId) {
 
 export function setShowItems(show) {
     state.showItems = show;
+}
+
+export function setHistoryData(data) {
+    state.historyData = data;
 }
