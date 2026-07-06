@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.3.4
+
+### Added
+
+- Recognize crates without a `src/` folder (#61): source discovery now follows `cargo metadata` targets and the real module tree from each crate root, including `#[path]` module declarations. Layouts like ripgrep's root package (`[[bin]] path = "crates/core/main.rs"`) and `bin/main.rs` + `crates/*` module trees are analyzed instead of being silently skipped.
+- Workspace members whose sources cannot be discovered, and module references that resolve outside the analyzed package/workspace boundary, are now declared in the blind-spot manifest instead of disappearing from the report.
+
+### Fixed
+
+- `#[path]` module resolution is confined to the analyzed workspace: absolute paths and `../` escapes are rejected instead of read, and files owned by another package are no longer double-analyzed under two members (which duplicated coupling edges and corrupted module metrics).
+- Flat layouts (a target at the manifest root) no longer sweep `tests/`, `examples/`, `benches/`, or `build.rs` into the analyzed module set.
+- The web `/api/source` endpoint rejects paths outside the analyzed workspace root.
+- Hidden Coupling no longer flags co-change with the crate-root facade (`lib.rs`) — the facade declares/re-exports the crate's modules, so that co-change is expected by design (completes the entrypoint exemption from v0.3.3).
+
+### Changed
+
+- Module-tree discovery only runs for crates that actually use `#[path]`, removing a whole-crate double parse (matters for `--history` and web `?ref=`).
+- Removed the unused `tower-http` dependency and refreshed all dependencies to the latest compatible versions.
+- CI: bumped `actions/checkout` to v7 and `actions/cache` to v6.
+
 ## v0.3.3
 
 ### Added

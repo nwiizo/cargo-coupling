@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-coupling"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "axum",
  "cargo_metadata",
