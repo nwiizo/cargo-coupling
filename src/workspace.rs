@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use cargo_metadata::{Metadata, MetadataCommand, PackageId};
+use cargo_metadata::{Metadata, MetadataCommand, PackageId, TargetKind};
 use thiserror::Error;
 
 /// Errors that can occur during workspace analysis
@@ -29,8 +29,12 @@ pub struct CrateInfo {
     pub name: String,
     /// Package ID for dependency resolution
     pub id: PackageId,
-    /// Path to the crate's source directory
+    /// First source root kept for API compatibility.
     pub src_path: PathBuf,
+    /// Directories containing analyzable target roots.
+    pub source_roots: Vec<PathBuf>,
+    /// Target root source files, such as lib.rs or main.rs equivalents.
+    pub crate_roots: Vec<PathBuf>,
     /// Path to Cargo.toml
     pub manifest_path: PathBuf,
     /// Direct dependencies (crate names)
@@ -91,12 +95,29 @@ impl WorkspaceInfo {
                 members.push(package_name.clone());
             }
 
-            // Get source directory
-            let src_path = package
+            let manifest_dir = package
                 .manifest_path
                 .parent()
-                .map(|p| p.as_std_path().join("src"))
+                .map(|p| p.as_std_path().to_path_buf())
                 .unwrap_or_default();
+            let fallback_src_path = manifest_dir.join("src");
+            let crate_roots = package
+                .targets
+                .iter()
+                .filter(|target| target.kind.iter().any(is_analyzable_target_kind))
+                .map(|target| target.src_path.as_std_path().to_path_buf())
+                .collect::<Vec<_>>();
+            let mut source_roots = crate_roots
+                .iter()
+                .filter_map(|src_path| src_path.parent().map(Path::to_path_buf))
+                .collect::<Vec<_>>();
+
+            source_roots = dedupe_contained_roots(source_roots);
+
+            if source_roots.is_empty() && fallback_src_path.exists() {
+                source_roots.push(fallback_src_path.clone());
+            }
+            let src_path = source_roots.first().cloned().unwrap_or(fallback_src_path);
 
             // Collect dependencies
             let mut deps = Vec::new();
@@ -126,6 +147,8 @@ impl WorkspaceInfo {
                 name: package_name.clone(),
                 id: package.id.clone(),
                 src_path,
+                source_roots,
+                crate_roots: dedupe_paths(crate_roots),
                 manifest_path: package.manifest_path.as_std_path().to_path_buf(),
                 dependencies: deps,
                 dev_dependencies: dev_deps,
@@ -210,17 +233,21 @@ impl WorkspaceInfo {
         let mut files = Vec::new();
 
         for member in &self.members {
-            if let Some(crate_info) = self.crates.get(member)
-                && crate_info.src_path.exists()
-            {
-                for entry in walkdir::WalkDir::new(&crate_info.src_path)
-                    .follow_links(true)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|ext| ext == "rs") {
-                        files.push(path.to_path_buf());
+            if let Some(crate_info) = self.crates.get(member) {
+                for source_root in &crate_info.source_roots {
+                    if !source_root.exists() {
+                        continue;
+                    }
+
+                    for entry in walkdir::WalkDir::new(source_root)
+                        .follow_links(true)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
+                        let path = entry.path();
+                        if path.extension().is_some_and(|ext| ext == "rs") {
+                            files.push(path.to_path_buf());
+                        }
                     }
                 }
             }
@@ -228,6 +255,47 @@ impl WorkspaceInfo {
 
         files
     }
+}
+
+fn is_analyzable_target_kind(kind: &TargetKind) -> bool {
+    matches!(
+        kind,
+        TargetKind::Lib
+            | TargetKind::RLib
+            | TargetKind::DyLib
+            | TargetKind::CDyLib
+            | TargetKind::StaticLib
+            | TargetKind::ProcMacro
+            | TargetKind::Bin
+    )
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::new();
+
+    for path in paths {
+        if seen.insert(path.clone()) {
+            deduped.push(path);
+        }
+    }
+
+    deduped
+}
+
+fn dedupe_contained_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut roots = dedupe_paths(roots);
+    roots.sort_by_key(|root| root.components().count());
+
+    let mut kept: Vec<PathBuf> = Vec::new();
+    for root in roots {
+        if kept.iter().any(|kept_root| root.starts_with(kept_root)) {
+            continue;
+        }
+        kept.push(root);
+    }
+
+    kept
 }
 
 /// Find Cargo.toml by walking up from the given path

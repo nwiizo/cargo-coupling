@@ -41,6 +41,7 @@ pub mod balance;
 pub mod cli_output;
 pub mod config;
 pub mod diff;
+mod discovery;
 pub mod external;
 pub mod history;
 pub mod manifest;

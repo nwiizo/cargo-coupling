@@ -141,6 +141,7 @@ async fn get_report(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 || !state.metrics.temporal_couplings.is_empty()),
         tests_excluded: state.analysis_config.exclude_tests,
         parse_failures: state.metrics.parse_failures,
+        skipped_crates: state.metrics.skipped_crates.clone(),
     });
     let mut output = Vec::new();
 
