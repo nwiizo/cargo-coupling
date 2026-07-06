@@ -1572,6 +1572,7 @@ fn default_manifest() -> AnalysisManifest {
         tests_excluded: false,
         parse_failures: 0,
         skipped_crates: Vec::new(),
+        boundary_skipped_files: 0,
     })
 }
 
@@ -1737,6 +1738,7 @@ mod tests {
             tests_excluded: true,
             parse_failures: 0,
             skipped_crates: Vec::new(),
+            boundary_skipped_files: 0,
         });
         let mut output = Vec::new();
 
@@ -1761,6 +1763,7 @@ mod tests {
             tests_excluded: true,
             parse_failures: 1,
             skipped_crates: Vec::new(),
+            boundary_skipped_files: 0,
         });
 
         let mut default_output = Vec::new();
@@ -1892,6 +1895,7 @@ mod tests {
             tests_excluded: false,
             parse_failures: 0,
             skipped_crates: Vec::new(),
+            boundary_skipped_files: 0,
         });
         let mut output = Vec::new();
 

@@ -29,7 +29,7 @@ pub struct CrateInfo {
     pub name: String,
     /// Package ID for dependency resolution
     pub id: PackageId,
-    /// First source root kept for API compatibility.
+    /// Kept as `<manifest_dir>/src` for backward compatibility; internals use `source_roots`.
     pub src_path: PathBuf,
     /// Directories containing analyzable target roots.
     pub source_roots: Vec<PathBuf>,
@@ -117,7 +117,7 @@ impl WorkspaceInfo {
             if source_roots.is_empty() && fallback_src_path.exists() {
                 source_roots.push(fallback_src_path.clone());
             }
-            let src_path = source_roots.first().cloned().unwrap_or(fallback_src_path);
+            let src_path = fallback_src_path.clone();
 
             // Collect dependencies
             let mut deps = Vec::new();

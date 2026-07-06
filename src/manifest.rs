@@ -30,6 +30,8 @@ pub struct ManifestContext {
     pub parse_failures: usize,
     /// Workspace members with no discoverable source files.
     pub skipped_crates: Vec<String>,
+    /// Module references skipped after resolving outside the analyzed boundary.
+    pub boundary_skipped_files: usize,
 }
 
 /// The declared negative space of an analysis run.
@@ -130,10 +132,20 @@ pub fn build_manifest(ctx: &ManifestContext) -> AnalysisManifest {
     if !ctx.skipped_crates.is_empty() {
         let crate_names = ctx.skipped_crates.join(", ");
         notes.push(format!(
-            "Workspace member(s) {crate_names} had no discoverable source files and were not analyzed."
+            "Workspace member(s) {crate_names} had no discoverable source files (or all files were excluded by configuration) and were not analyzed."
         ));
         notes_ja.push(format!(
-            "ワークスペースメンバー {crate_names} のソースファイルを発見できず、解析されていません。"
+            "ワークスペースメンバー {crate_names} は発見可能なソースファイルがない（または設定により全ファイルが除外された）ため、解析されていません。"
+        ));
+    }
+    if ctx.boundary_skipped_files > 0 {
+        notes.push(format!(
+            "{} module reference(s) resolved outside the analyzed package/workspace boundary and were not analyzed.",
+            ctx.boundary_skipped_files
+        ));
+        notes_ja.push(format!(
+            "{} 件のモジュール参照が解析対象パッケージ/ワークスペース境界の外を指しており、解析されていません。",
+            ctx.boundary_skipped_files
         ));
     }
 
@@ -155,6 +167,7 @@ mod tests {
             tests_excluded: false,
             parse_failures: 0,
             skipped_crates: Vec::new(),
+            boundary_skipped_files: 0,
         });
         assert_eq!(manifest.blind_spots.len(), STRUCTURAL_BLIND_SPOTS.len());
         assert!(
@@ -178,6 +191,7 @@ mod tests {
             tests_excluded: false,
             parse_failures: 0,
             skipped_crates: Vec::new(),
+            boundary_skipped_files: 0,
         });
         assert!(manifest.notes.is_empty());
     }
@@ -198,6 +212,7 @@ mod tests {
             tests_excluded: true,
             parse_failures: 0,
             skipped_crates: Vec::new(),
+            boundary_skipped_files: 0,
         });
         assert!(manifest.notes.iter().any(|n| n.contains("Test code")));
     }
@@ -209,6 +224,7 @@ mod tests {
             tests_excluded: false,
             parse_failures: 3,
             skipped_crates: Vec::new(),
+            boundary_skipped_files: 0,
         });
         assert!(manifest.notes.iter().any(|n| n.contains("3 source file")));
     }
@@ -220,6 +236,7 @@ mod tests {
             tests_excluded: true,
             parse_failures: 2,
             skipped_crates: Vec::new(),
+            boundary_skipped_files: 0,
         });
         assert_eq!(manifest.notes.len(), 3);
     }
@@ -231,14 +248,35 @@ mod tests {
             tests_excluded: false,
             parse_failures: 0,
             skipped_crates: vec!["empty-member".to_string()],
+            boundary_skipped_files: 0,
         });
         assert!(manifest.notes.iter().any(|n| {
             n.contains(
-                "Workspace member(s) empty-member had no discoverable source files and were not analyzed.",
+                "Workspace member(s) empty-member had no discoverable source files (or all files were excluded by configuration) and were not analyzed.",
             )
         }));
         assert!(manifest.notes_ja.iter().any(|n| {
-            n.contains("ワークスペースメンバー empty-member のソースファイルを発見できず、解析されていません。")
+            n.contains("ワークスペースメンバー empty-member は発見可能なソースファイルがない（または設定により全ファイルが除外された）ため、解析されていません。")
+        }));
+    }
+
+    #[test]
+    fn boundary_skipped_files_are_reported_with_count() {
+        let manifest = build_manifest(&ManifestContext {
+            git_used: true,
+            tests_excluded: false,
+            parse_failures: 0,
+            skipped_crates: Vec::new(),
+            boundary_skipped_files: 2,
+        });
+
+        assert!(manifest.notes.iter().any(|n| {
+            n.contains(
+                "2 module reference(s) resolved outside the analyzed package/workspace boundary and were not analyzed.",
+            )
+        }));
+        assert!(manifest.notes_ja.iter().any(|n| {
+            n.contains("2 件のモジュール参照が解析対象パッケージ/ワークスペース境界の外を指しており、解析されていません。")
         }));
     }
 }

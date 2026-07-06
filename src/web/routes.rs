@@ -142,6 +142,7 @@ async fn get_report(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         tests_excluded: state.analysis_config.exclude_tests,
         parse_failures: state.metrics.parse_failures,
         skipped_crates: state.metrics.skipped_crates.clone(),
+        boundary_skipped_files: state.metrics.boundary_skipped_files,
     });
     let mut output = Vec::new();
 
@@ -183,7 +184,10 @@ async fn health_check() -> &'static str {
 }
 
 /// GET /api/source - Returns source code snippet
-async fn get_source(Query(query): Query<SourceQuery>) -> impl IntoResponse {
+async fn get_source(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SourceQuery>,
+) -> impl IntoResponse {
     let path = PathBuf::from(&query.path);
 
     // Security: only allow reading .rs files
@@ -195,8 +199,26 @@ async fn get_source(Query(query): Query<SourceQuery>) -> impl IntoResponse {
             .into_response();
     }
 
+    let canonical_path = match path.canonicalize() {
+        Ok(path) => path,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("Invalid source path: {}", e)})),
+            )
+                .into_response();
+        }
+    };
+    if !canonical_path.starts_with(&state.source_root) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Source path is outside the analyzed project"})),
+        )
+            .into_response();
+    }
+
     // Read the file from the current worktree or from a git revision.
-    let content = match read_source_content(&path, query.git_ref.as_deref()) {
+    let content = match read_source_content(&canonical_path, query.git_ref.as_deref()) {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -241,7 +263,7 @@ async fn get_source(Query(query): Query<SourceQuery>) -> impl IntoResponse {
         })
         .collect();
 
-    let file_name = path
+    let file_name = canonical_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown")
@@ -266,8 +288,6 @@ fn read_source_content(path: &Path, git_ref: Option<&str>) -> Result<String, Str
 
     let repo_root = git_repo_root(path)?;
     let relative = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf())
         .strip_prefix(&repo_root)
         .map_err(|_| "source path is outside the git repository".to_string())?
         .to_string_lossy()
