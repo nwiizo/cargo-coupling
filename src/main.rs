@@ -406,6 +406,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         git_used,
         tests_excluded: config.exclude_tests,
         parse_failures: metrics.parse_failures,
+        skipped_crates: metrics.skipped_crates.clone(),
     });
 
     // Web visualization mode

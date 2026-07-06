@@ -725,6 +725,7 @@ fn build_not_analyzed_manifest(metrics: &ProjectMetrics) -> AnalysisManifestData
         git_used: !metrics.file_changes.is_empty() || !metrics.temporal_couplings.is_empty(),
         tests_excluded: false,
         parse_failures: metrics.parse_failures,
+        skipped_crates: metrics.skipped_crates.clone(),
     });
 
     AnalysisManifestData {

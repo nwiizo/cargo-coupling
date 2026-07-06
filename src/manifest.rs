@@ -28,6 +28,8 @@ pub struct ManifestContext {
     pub tests_excluded: bool,
     /// Number of source files that failed to parse and were skipped.
     pub parse_failures: usize,
+    /// Workspace members with no discoverable source files.
+    pub skipped_crates: Vec<String>,
 }
 
 /// The declared negative space of an analysis run.
@@ -125,6 +127,15 @@ pub fn build_manifest(ctx: &ManifestContext) -> AnalysisManifest {
             ctx.parse_failures
         ));
     }
+    if !ctx.skipped_crates.is_empty() {
+        let crate_names = ctx.skipped_crates.join(", ");
+        notes.push(format!(
+            "Workspace member(s) {crate_names} had no discoverable source files and were not analyzed."
+        ));
+        notes_ja.push(format!(
+            "ワークスペースメンバー {crate_names} のソースファイルを発見できず、解析されていません。"
+        ));
+    }
 
     AnalysisManifest {
         blind_spots: STRUCTURAL_BLIND_SPOTS.to_vec(),
@@ -143,6 +154,7 @@ mod tests {
             git_used: true,
             tests_excluded: false,
             parse_failures: 0,
+            skipped_crates: Vec::new(),
         });
         assert_eq!(manifest.blind_spots.len(), STRUCTURAL_BLIND_SPOTS.len());
         assert!(
@@ -165,6 +177,7 @@ mod tests {
             git_used: true,
             tests_excluded: false,
             parse_failures: 0,
+            skipped_crates: Vec::new(),
         });
         assert!(manifest.notes.is_empty());
     }
@@ -184,6 +197,7 @@ mod tests {
             git_used: true,
             tests_excluded: true,
             parse_failures: 0,
+            skipped_crates: Vec::new(),
         });
         assert!(manifest.notes.iter().any(|n| n.contains("Test code")));
     }
@@ -194,6 +208,7 @@ mod tests {
             git_used: true,
             tests_excluded: false,
             parse_failures: 3,
+            skipped_crates: Vec::new(),
         });
         assert!(manifest.notes.iter().any(|n| n.contains("3 source file")));
     }
@@ -204,7 +219,26 @@ mod tests {
             git_used: false,
             tests_excluded: true,
             parse_failures: 2,
+            skipped_crates: Vec::new(),
         });
         assert_eq!(manifest.notes.len(), 3);
+    }
+
+    #[test]
+    fn skipped_crates_are_reported_by_name() {
+        let manifest = build_manifest(&ManifestContext {
+            git_used: true,
+            tests_excluded: false,
+            parse_failures: 0,
+            skipped_crates: vec!["empty-member".to_string()],
+        });
+        assert!(manifest.notes.iter().any(|n| {
+            n.contains(
+                "Workspace member(s) empty-member had no discoverable source files and were not analyzed.",
+            )
+        }));
+        assert!(manifest.notes_ja.iter().any(|n| {
+            n.contains("ワークスペースメンバー empty-member のソースファイルを発見できず、解析されていません。")
+        }));
     }
 }

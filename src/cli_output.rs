@@ -2257,6 +2257,7 @@ mod tests {
             git_used: false,
             tests_excluded: true,
             parse_failures: 0,
+            skipped_crates: Vec::new(),
         });
         let mut buf = Vec::new();
 

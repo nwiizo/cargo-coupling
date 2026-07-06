@@ -1571,6 +1571,7 @@ fn default_manifest() -> AnalysisManifest {
         git_used: true,
         tests_excluded: false,
         parse_failures: 0,
+        skipped_crates: Vec::new(),
     })
 }
 
@@ -1735,6 +1736,7 @@ mod tests {
             git_used: false,
             tests_excluded: true,
             parse_failures: 0,
+            skipped_crates: Vec::new(),
         });
         let mut output = Vec::new();
 
@@ -1758,6 +1760,7 @@ mod tests {
             git_used: false,
             tests_excluded: true,
             parse_failures: 1,
+            skipped_crates: Vec::new(),
         });
 
         let mut default_output = Vec::new();
@@ -1888,6 +1891,7 @@ mod tests {
             git_used: false,
             tests_excluded: false,
             parse_failures: 0,
+            skipped_crates: Vec::new(),
         });
         let mut output = Vec::new();
 

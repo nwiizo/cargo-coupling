@@ -21,6 +21,8 @@ pub struct ProjectMetrics {
     pub total_files: usize,
     /// Source files that failed to parse or analyze and were skipped.
     pub parse_failures: usize,
+    /// Workspace members with no discoverable source files.
+    pub skipped_crates: Vec<String>,
     /// Workspace name (if available from cargo metadata)
     pub workspace_name: Option<String>,
     /// Workspace member crate names
