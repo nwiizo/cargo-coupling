@@ -26,12 +26,15 @@ pub(crate) fn analyze_hidden_temporal_coupling(metrics: &ProjectMetrics) -> Vec<
         };
 
         // The binary entrypoint co-changes with whatever it wires up (it edits when
-        // any wired feature changes), so co-change involving it is expected, not
-        // hidden coupling.
+        // any wired feature changes), and the crate-root facade (lib.rs) co-changes
+        // with whatever it declares/re-exports — both are expected co-change by
+        // design, not hidden coupling.
         if source == target
             || has_code_coupling(metrics, &source, &target)
             || super::coupling::is_entrypoint_module(&source)
             || super::coupling::is_entrypoint_module(&target)
+            || is_facade_module(metrics, &source)
+            || is_facade_module(metrics, &target)
         {
             continue;
         }
@@ -102,6 +105,16 @@ pub(crate) fn analyze_accidental_volatility(metrics: &ProjectMetrics) -> Vec<Cou
     }
 
     issues
+}
+
+/// Whether the module is the crate-root re-export facade (`lib.rs`). The facade
+/// declares and re-exports the crate's modules, so it co-changes with feature files
+/// by design; that co-change is a stable Contract surface, not hidden coupling.
+fn is_facade_module(metrics: &ProjectMetrics, module_name: &str) -> bool {
+    metrics
+        .modules
+        .get(module_name)
+        .is_some_and(|module| module.path.file_name() == Some(std::ffi::OsStr::new("lib.rs")))
 }
 
 fn build_file_to_module_map(metrics: &ProjectMetrics) -> Vec<(String, String)> {

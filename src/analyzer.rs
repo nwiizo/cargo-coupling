@@ -1275,12 +1275,13 @@ fn analyze_with_workspace(
     );
     project.workspace_members = workspace.members.clone();
 
-    // Collect all file paths with their crate names and module names (sequential, fast).
+    // Collect file paths and names; module-tree parsing only runs for members using `#[path]`.
     let mut discovered_files: Vec<DiscoveredWorkspaceFile> = Vec::new();
 
     for member_name in &workspace.members {
         if let Some(crate_info) = workspace.get_crate(member_name) {
             let mut member_files: HashMap<PathBuf, DiscoveredWorkspaceFile> = HashMap::new();
+            let mut source_contents = HashMap::new();
 
             for source_root in &crate_info.source_roots {
                 if !source_root.exists() {
@@ -1305,27 +1306,44 @@ fn analyze_with_workspace(
                 }
             }
 
-            // Module-tree resolution only ADDS files the directory walk could not see
-            // (e.g. `#[path]` modules outside the source roots). Files the walk already
-            // found keep their walk-based names so existing layouts are named as before.
-            for crate_root in &crate_info.crate_roots {
-                for module_file in discover_module_tree(crate_root, String::new()) {
-                    if is_path_excluded(&module_file.file_path, exclude_base, config) {
-                        continue;
+            let has_path_attribute = member_files
+                .keys()
+                .any(|file_key| cache_file_and_scan_path_attribute(file_key, &mut source_contents));
+
+            if has_path_attribute {
+                let mut visited = HashSet::new();
+
+                // Module-tree resolution only ADDS files the directory walk could not see
+                // (e.g. `#[path]` modules outside the source roots). Files the walk already
+                // found keep their walk-based names so existing layouts are named as before.
+                for crate_root in &crate_info.crate_roots {
+                    let discovery = discover_module_tree(
+                        crate_root,
+                        &workspace.root,
+                        &crate_info.manifest_path,
+                        &mut visited,
+                        &mut source_contents,
+                    );
+                    project.boundary_skipped_files += discovery.boundary_skipped_files;
+
+                    for module_file in discovery.files {
+                        if is_path_excluded(&module_file.file_path, exclude_base, config) {
+                            continue;
+                        }
+                        let file_key = canonical_file_key(&module_file.file_path);
+                        member_files
+                            .entry(file_key)
+                            .or_insert_with(|| DiscoveredWorkspaceFile {
+                                file_path: module_file.file_path.clone(),
+                                crate_name: member_name.clone(),
+                                source_root: module_file
+                                    .file_path
+                                    .parent()
+                                    .map(Path::to_path_buf)
+                                    .unwrap_or_default(),
+                                module_name: Some(module_file.module_name),
+                            });
                     }
-                    let file_key = canonical_file_key(&module_file.file_path);
-                    member_files
-                        .entry(file_key)
-                        .or_insert_with(|| DiscoveredWorkspaceFile {
-                            source_root: module_file
-                                .file_path
-                                .parent()
-                                .map(Path::to_path_buf)
-                                .unwrap_or_default(),
-                            file_path: module_file.file_path.clone(),
-                            crate_name: member_name.clone(),
-                            module_name: Some(module_file.module_name),
-                        });
                 }
             }
 
@@ -1494,6 +1512,28 @@ fn analyze_with_workspace(
     }
 
     Ok(project)
+}
+
+fn cache_file_and_scan_path_attribute(
+    file_key: &Path,
+    source_contents: &mut HashMap<PathBuf, String>,
+) -> bool {
+    if let Some(content) = source_contents.get(file_key) {
+        return content.contains("#[path");
+    }
+
+    let Ok(bytes) = fs::read(file_key) else {
+        return false;
+    };
+    let has_path_attribute = bytes
+        .windows(b"#[path".len())
+        .any(|window| window == b"#[path");
+
+    if let Ok(content) = String::from_utf8(bytes) {
+        source_contents.insert(file_key.to_path_buf(), content);
+    }
+
+    has_path_attribute
 }
 
 // ===== Dependency Resolution =====

@@ -5,7 +5,7 @@
 //! following `mod` declarations, including `#[path]` attributes, and derives
 //! module names. Walk-based names take precedence for files both methods find.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -104,15 +104,15 @@ pub(crate) fn rs_files(dir: &Path) -> impl Iterator<Item = PathBuf> {
             // just because `.config` is in the parent path.
             let file_path = file_path.strip_prefix(dir).unwrap_or(file_path);
 
-            // Skip target directory and hidden directories
             !file_path.components().any(|c| {
                 let s = c.as_os_str().to_string_lossy();
-                s == "target" || s.starts_with('.')
+                is_skipped_component(&s)
             }) && file_path.extension() == Some(OsStr::new("rs"))
         })
         .map(|e| e.path().to_path_buf())
 }
 
+/// Get Rust source files under `dir`, pruning nested packages and conventional non-source roots.
 pub(crate) fn rs_files_excluding_nested_packages(
     dir: &Path,
     manifest_path: &Path,
@@ -131,18 +131,27 @@ pub(crate) fn rs_files_excluding_nested_packages(
 
             !relative_path.components().any(|c| {
                 let s = c.as_os_str().to_string_lossy();
-                s == "target" || s.starts_with('.')
+                is_skipped_component(&s)
             }) && file_path.extension() == Some(OsStr::new("rs"))
         })
         .map(|e| e.path().to_path_buf())
 }
 
-fn should_descend_workspace_source(path: &Path, root: &Path, manifest_path: &Path) -> bool {
+/// Return whether a workspace source walk may descend into `path` for this member.
+pub(crate) fn should_descend_workspace_source(
+    path: &Path,
+    root: &Path,
+    manifest_path: &Path,
+) -> bool {
     let relative_path = path.strip_prefix(root).unwrap_or(path);
     if relative_path.components().any(|c| {
         let s = c.as_os_str().to_string_lossy();
-        s == "target" || s.starts_with('.')
+        is_skipped_component(&s)
     }) {
+        return false;
+    }
+
+    if is_manifest_level_non_source(path, manifest_path) {
         return false;
     }
 
@@ -156,77 +165,134 @@ fn should_descend_workspace_source(path: &Path, root: &Path, manifest_path: &Pat
     true
 }
 
+fn is_skipped_component(name: &str) -> bool {
+    name == "target" || name.starts_with('.')
+}
+
+fn is_manifest_level_non_source(path: &Path, manifest_path: &Path) -> bool {
+    let Some(manifest_dir) = manifest_path.parent() else {
+        return false;
+    };
+    let path = normalize_exclude_path(path);
+    let manifest_dir = normalize_exclude_path(manifest_dir);
+
+    path == manifest_dir.join("build.rs")
+        || path == manifest_dir.join("tests")
+        || path == manifest_dir.join("examples")
+        || path == manifest_dir.join("benches")
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct DiscoveredWorkspaceFile {
+    /// Rust source file selected for analysis.
     pub(crate) file_path: PathBuf,
+    /// Cargo package name that owns this analysis entry.
     pub(crate) crate_name: String,
+    /// Root used to derive walk-based module names.
     pub(crate) source_root: PathBuf,
+    /// Module name resolved from the Rust module tree, when walk naming is unavailable.
     pub(crate) module_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ModuleTreeFile {
+    /// Rust source file reached from a crate root.
     pub(crate) file_path: PathBuf,
+    /// Module path resolved from `mod` declarations.
     pub(crate) module_name: String,
 }
 
+/// Files found through module-tree discovery and rejected boundary references.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ModuleTreeDiscovery {
+    /// Files resolved inside the current package/workspace boundary.
+    pub(crate) files: Vec<ModuleTreeFile>,
+    /// Module references rejected for crossing package or workspace boundaries.
+    pub(crate) boundary_skipped_files: usize,
+}
+
+/// Return a stable key for comparing file identities across lexical path forms.
 pub(crate) fn canonical_file_key(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| normalize_exclude_path(path))
 }
 
+/// Discover files reachable from a crate root through external `mod` declarations.
 pub(crate) fn discover_module_tree(
     crate_root: &Path,
-    crate_root_module_name: String,
-) -> Vec<ModuleTreeFile> {
-    let mut files = Vec::new();
-    let mut visited = HashSet::new();
+    workspace_root: &Path,
+    manifest_path: &Path,
+    visited: &mut HashSet<PathBuf>,
+    source_contents: &mut HashMap<PathBuf, String>,
+) -> ModuleTreeDiscovery {
+    let mut context = ModuleTreeContext {
+        workspace_root: canonical_file_key(workspace_root),
+        manifest_path: canonical_file_key(manifest_path),
+        visited,
+        source_contents,
+        discovery: ModuleTreeDiscovery::default(),
+    };
     discover_module_tree_file(
         crate_root,
-        crate_root_module_name,
+        String::new(),
         crate_root.parent().unwrap_or_else(|| Path::new("")),
-        &mut visited,
-        &mut files,
+        &mut context,
     );
-    files
+    context.discovery
+}
+
+struct ModuleTreeContext<'a> {
+    workspace_root: PathBuf,
+    manifest_path: PathBuf,
+    visited: &'a mut HashSet<PathBuf>,
+    source_contents: &'a mut HashMap<PathBuf, String>,
+    discovery: ModuleTreeDiscovery,
 }
 
 fn discover_module_tree_file(
     file_path: &Path,
     module_name: String,
     module_dir: &Path,
-    visited: &mut HashSet<PathBuf>,
-    files: &mut Vec<ModuleTreeFile>,
+    context: &mut ModuleTreeContext<'_>,
 ) {
     if !file_path.exists() {
         return;
     }
 
     let file_key = canonical_file_key(file_path);
-    if !visited.insert(file_key) {
+    if !context.visited.insert(file_key) {
         return;
     }
 
-    files.push(ModuleTreeFile {
+    context.discovery.files.push(ModuleTreeFile {
         file_path: file_path.to_path_buf(),
         module_name: module_name.clone(),
     });
 
-    let Ok(content) = fs::read_to_string(file_path) else {
-        return;
+    let content = match context.source_contents.get(&canonical_file_key(file_path)) {
+        Some(content) => content.clone(),
+        None => {
+            let Ok(content) = fs::read_to_string(file_path) else {
+                return;
+            };
+            context
+                .source_contents
+                .insert(canonical_file_key(file_path), content.clone());
+            content
+        }
     };
     let Ok(parsed) = syn::parse_file(&content) else {
         return;
     };
 
-    discover_module_items(&parsed.items, module_dir, &module_name, visited, files);
+    discover_module_items(&parsed.items, module_dir, &module_name, context);
 }
 
+/// Discover external module declarations; inline `#[path]` base-dir overrides are not modeled.
 fn discover_module_items(
     items: &[syn::Item],
     module_dir: &Path,
     parent_module: &str,
-    visited: &mut HashSet<PathBuf>,
-    files: &mut Vec<ModuleTreeFile>,
+    context: &mut ModuleTreeContext<'_>,
 ) {
     for item in items {
         let syn::Item::Mod(item_mod) = item else {
@@ -237,44 +303,105 @@ fn discover_module_items(
         let child_module = join_module_path(parent_module, &child_name);
         if let Some((_, inline_items)) = &item_mod.content {
             let inline_module_dir = module_dir.join(&child_name);
-            discover_module_items(
-                inline_items,
-                &inline_module_dir,
-                &child_module,
-                visited,
-                files,
-            );
+            discover_module_items(inline_items, &inline_module_dir, &child_module, context);
             continue;
         }
 
-        if let Some(resolved_file) = resolve_external_module_file(module_dir, item_mod) {
-            let child_module_dir = module_dir_for_resolved_module(&resolved_file);
-            discover_module_tree_file(
-                &resolved_file,
-                child_module,
-                &child_module_dir,
-                visited,
-                files,
-            );
+        match resolve_external_module_file(
+            module_dir,
+            item_mod,
+            &context.workspace_root,
+            &context.manifest_path,
+        ) {
+            ModuleFileResolution::Resolved(resolved_file) => {
+                let child_module_dir = module_dir_for_resolved_module(&resolved_file);
+                discover_module_tree_file(&resolved_file, child_module, &child_module_dir, context);
+            }
+            ModuleFileResolution::BoundarySkipped => {
+                context.discovery.boundary_skipped_files += 1;
+            }
+            ModuleFileResolution::NotFound => {}
         }
     }
 }
 
-fn resolve_external_module_file(module_dir: &Path, item_mod: &ItemMod) -> Option<PathBuf> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ModuleFileResolution {
+    Resolved(PathBuf),
+    BoundarySkipped,
+    NotFound,
+}
+
+/// Resolve an external module file in rustc order: `#[path]`, `name.rs`, then `name/mod.rs`.
+fn resolve_external_module_file(
+    module_dir: &Path,
+    item_mod: &ItemMod,
+    workspace_root: &Path,
+    manifest_path: &Path,
+) -> ModuleFileResolution {
     if let Some(path_attr) = path_attribute_value(&item_mod.attrs) {
-        return Some(module_dir.join(path_attr));
+        return boundary_checked_module_file(
+            module_dir.join(path_attr),
+            workspace_root,
+            manifest_path,
+        );
     }
 
     let module_name = item_mod.ident.to_string();
     let flat = module_dir.join(format!("{module_name}.rs"));
     if flat.exists() {
-        return Some(flat);
+        return boundary_checked_module_file(flat, workspace_root, manifest_path);
     }
 
     let nested = module_dir.join(&module_name).join("mod.rs");
-    if nested.exists() { Some(nested) } else { None }
+    if nested.exists() {
+        boundary_checked_module_file(nested, workspace_root, manifest_path)
+    } else {
+        ModuleFileResolution::NotFound
+    }
 }
 
+fn boundary_checked_module_file(
+    candidate: PathBuf,
+    workspace_root: &Path,
+    manifest_path: &Path,
+) -> ModuleFileResolution {
+    let Ok(canonical_candidate) = fs::canonicalize(&candidate) else {
+        return ModuleFileResolution::NotFound;
+    };
+
+    if !canonical_candidate.starts_with(workspace_root)
+        || crosses_package_boundary(&canonical_candidate, workspace_root, manifest_path)
+    {
+        return ModuleFileResolution::BoundarySkipped;
+    }
+
+    ModuleFileResolution::Resolved(canonical_candidate)
+}
+
+fn crosses_package_boundary(
+    canonical_file: &Path,
+    workspace_root: &Path,
+    manifest_path: &Path,
+) -> bool {
+    let mut current = canonical_file.parent();
+    while let Some(dir) = current {
+        if dir == workspace_root {
+            break;
+        }
+
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.exists() && canonical_file_key(&cargo_toml) != manifest_path {
+            return true;
+        }
+
+        current = dir.parent();
+    }
+
+    false
+}
+
+/// Extract the string value from a `#[path = "..."]` module attribute.
 fn path_attribute_value(attrs: &[syn::Attribute]) -> Option<PathBuf> {
     attrs.iter().find_map(|attr| {
         if !attr.path().is_ident("path") {
@@ -297,6 +424,7 @@ fn path_attribute_value(attrs: &[syn::Attribute]) -> Option<PathBuf> {
     })
 }
 
+/// Return the directory used to resolve children of a resolved module file.
 fn module_dir_for_resolved_module(file_path: &Path) -> PathBuf {
     let parent = file_path.parent().unwrap_or_else(|| Path::new(""));
     if file_path.file_name() == Some(OsStr::new("mod.rs")) {
@@ -425,6 +553,118 @@ mod tests {
             .collect();
         assert!(file_names.contains(&"lib.rs"));
         assert!(!file_names.contains(&"generated.rs"));
+    }
+
+    #[test]
+    fn resolve_external_module_file_prefers_path_attribute() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let module_dir = temp.path().join("src");
+        fs::create_dir_all(&module_dir).unwrap();
+        fs::write(module_dir.join("custom.rs"), "pub fn custom() {}").unwrap();
+        fs::write(module_dir.join("name.rs"), "pub fn flat() {}").unwrap();
+        fs::create_dir_all(module_dir.join("name")).unwrap();
+        fs::write(module_dir.join("name/mod.rs"), "pub fn nested() {}").unwrap();
+        let item_mod: ItemMod = syn::parse_quote!(
+            #[path = "custom.rs"]
+            mod name;
+        );
+
+        let resolved = resolve_external_module_file(
+            &module_dir,
+            &item_mod,
+            &canonical_file_key(temp.path()),
+            &canonical_file_key(&temp.path().join("Cargo.toml")),
+        );
+
+        assert_eq!(
+            resolved,
+            ModuleFileResolution::Resolved(canonical_file_key(&module_dir.join("custom.rs")))
+        );
+    }
+
+    #[test]
+    fn resolve_external_module_file_uses_flat_before_nested() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let module_dir = temp.path().join("src");
+        fs::create_dir_all(module_dir.join("name")).unwrap();
+        fs::write(module_dir.join("name.rs"), "pub fn flat() {}").unwrap();
+        fs::write(module_dir.join("name/mod.rs"), "pub fn nested() {}").unwrap();
+        let item_mod: ItemMod = syn::parse_quote!(
+            mod name;
+        );
+
+        let resolved = resolve_external_module_file(
+            &module_dir,
+            &item_mod,
+            &canonical_file_key(temp.path()),
+            &canonical_file_key(&temp.path().join("Cargo.toml")),
+        );
+
+        assert_eq!(
+            resolved,
+            ModuleFileResolution::Resolved(canonical_file_key(&module_dir.join("name.rs")))
+        );
+    }
+
+    #[test]
+    fn resolve_external_module_file_rejects_outside_workspace() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().join("workspace");
+        let module_dir = workspace.join("src");
+        fs::create_dir_all(&module_dir).unwrap();
+        fs::write(temp.path().join("outside.rs"), "pub fn outside() {}").unwrap();
+        let item_mod: ItemMod = syn::parse_quote!(
+            #[path = "../../outside.rs"]
+            mod outside;
+        );
+
+        let resolved = resolve_external_module_file(
+            &module_dir,
+            &item_mod,
+            &canonical_file_key(&workspace),
+            &canonical_file_key(&workspace.join("Cargo.toml")),
+        );
+
+        assert_eq!(resolved, ModuleFileResolution::BoundarySkipped);
+    }
+
+    #[test]
+    fn resolve_external_module_file_rejects_other_package() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp = TempDir::new().unwrap();
+        let workspace = temp.path().join("workspace");
+        let current = workspace.join("a");
+        let other = workspace.join("b");
+        let module_dir = current.join("src");
+        fs::create_dir_all(&module_dir).unwrap();
+        fs::create_dir_all(other.join("src")).unwrap();
+        fs::write(current.join("Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+        fs::write(other.join("Cargo.toml"), "[package]\nname = \"b\"\n").unwrap();
+        fs::write(other.join("src/shared.rs"), "pub fn shared() {}").unwrap();
+        let item_mod: ItemMod = syn::parse_quote!(
+            #[path = "../../b/src/shared.rs"]
+            mod shared;
+        );
+
+        let resolved = resolve_external_module_file(
+            &module_dir,
+            &item_mod,
+            &canonical_file_key(&workspace),
+            &canonical_file_key(&current.join("Cargo.toml")),
+        );
+
+        assert_eq!(resolved, ModuleFileResolution::BoundarySkipped);
     }
 
     #[test]

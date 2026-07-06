@@ -15,6 +15,7 @@ use crate::balance::score::IssueThresholds;
 use crate::cli_output::{JsonHistory, history_report_to_json};
 use crate::config::CompiledConfig;
 use crate::metrics::project::ProjectMetrics;
+use crate::workspace::WorkspaceInfo;
 
 use super::routes;
 
@@ -27,6 +28,7 @@ pub struct AppState {
     pub api_endpoint: Option<String>,
     pub history: JsonHistory,
     pub analysis_path: PathBuf,
+    pub source_root: PathBuf,
     pub analysis_config: CompiledConfig,
     pub git_months: usize,
     pub no_git: bool,
@@ -66,6 +68,7 @@ pub async fn start_server(
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let history = load_history(&config, &thresholds);
+    let source_root = analysis_source_root(&config.analysis_path);
 
     let state = Arc::new(AppState {
         metrics,
@@ -73,6 +76,7 @@ pub async fn start_server(
         api_endpoint: config.api_endpoint.clone(),
         history,
         analysis_path: config.analysis_path.clone(),
+        source_root,
         analysis_config: config.analysis_config.clone(),
         git_months: config.git_months,
         no_git: config.no_git,
@@ -102,6 +106,13 @@ pub async fn start_server(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+fn analysis_source_root(analysis_path: &std::path::Path) -> PathBuf {
+    let root = WorkspaceInfo::from_path(analysis_path)
+        .map(|workspace| workspace.root)
+        .unwrap_or_else(|_| analysis_path.to_path_buf());
+    root.canonicalize().unwrap_or(root)
 }
 
 fn load_history(config: &ServerConfig, thresholds: &IssueThresholds) -> JsonHistory {

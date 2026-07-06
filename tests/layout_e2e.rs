@@ -25,6 +25,16 @@ fn module_names(metrics: &ProjectMetrics) -> Vec<String> {
     names
 }
 
+fn manifest_for(metrics: &ProjectMetrics) -> cargo_coupling::AnalysisManifest {
+    build_manifest(&ManifestContext {
+        git_used: true,
+        tests_excluded: false,
+        parse_failures: metrics.parse_failures,
+        skipped_crates: metrics.skipped_crates.clone(),
+        boundary_skipped_files: metrics.boundary_skipped_files,
+    })
+}
+
 #[test]
 fn non_src_bin_with_path_modules_is_analyzed() {
     let tmp = tempfile::tempdir().expect("create tempdir");
@@ -258,6 +268,191 @@ edition = "2024"
 }
 
 #[test]
+fn absolute_path_module_reference_is_skipped_and_declared() {
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let project = tmp.path().join("project");
+    create_dir(&project);
+    let outside = tmp.path().join("outside.rs");
+
+    write(
+        &project.join("Cargo.toml"),
+        r#"[package]
+name = "absolute-path"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "absolute-path"
+path = "main.rs"
+"#,
+    );
+    write(
+        &project.join("main.rs"),
+        &format!(
+            "#[path = {:?}]\nmod leaked;\nfn main() {{}}\n",
+            outside.to_string_lossy()
+        ),
+    );
+    write(&outside, "pub fn secret() {}\n");
+
+    let metrics = analyze(&project);
+    let names = module_names(&metrics);
+
+    assert_eq!(metrics.boundary_skipped_files, 1);
+    assert!(!metrics.modules.contains_key("leaked"), "saw {names:?}");
+    assert_eq!(metrics.total_files, 1);
+    assert!(manifest_for(&metrics).notes.iter().any(|note| {
+        note.contains(
+            "1 module reference(s) resolved outside the analyzed package/workspace boundary",
+        )
+    }));
+}
+
+#[test]
+fn escaping_workspace_module_reference_is_skipped_and_declared() {
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let project = tmp.path().join("project");
+    create_dir(&project);
+
+    write(
+        &project.join("Cargo.toml"),
+        r#"[package]
+name = "escaping-path"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "escaping-path"
+path = "main.rs"
+"#,
+    );
+    write(
+        &project.join("main.rs"),
+        "#[path = \"../outside.rs\"]\nmod leaked;\nfn main() {}\n",
+    );
+    write(&tmp.path().join("outside.rs"), "pub fn secret() {}\n");
+
+    let metrics = analyze(&project);
+    let names = module_names(&metrics);
+
+    assert_eq!(metrics.boundary_skipped_files, 1);
+    assert!(!metrics.modules.contains_key("leaked"), "saw {names:?}");
+    assert_eq!(metrics.total_files, 1);
+    assert!(manifest_for(&metrics).notes.iter().any(|note| {
+        note.contains(
+            "1 module reference(s) resolved outside the analyzed package/workspace boundary",
+        )
+    }));
+}
+
+#[test]
+fn cross_member_path_reference_is_not_double_analyzed() {
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let root = tmp.path();
+    create_dir(&root.join("a/src"));
+    create_dir(&root.join("b/src"));
+
+    write(
+        &root.join("Cargo.toml"),
+        r#"[workspace]
+members = ["a", "b"]
+resolver = "3"
+"#,
+    );
+    write(
+        &root.join("a/Cargo.toml"),
+        r#"[package]
+name = "member-a"
+version = "0.1.0"
+edition = "2024"
+"#,
+    );
+    write(
+        &root.join("a/src/lib.rs"),
+        "#[path = \"../../b/src/shared.rs\"]\nmod shared;\npub fn a() {}\n",
+    );
+    write(
+        &root.join("b/Cargo.toml"),
+        r#"[package]
+name = "member-b"
+version = "0.1.0"
+edition = "2024"
+"#,
+    );
+    write(
+        &root.join("b/src/lib.rs"),
+        "pub mod shared;\npub fn b() { shared::value(); }\n",
+    );
+    write(&root.join("b/src/shared.rs"), "pub fn value() {}\n");
+
+    let metrics = analyze(root);
+    let shared = metrics
+        .modules
+        .get("shared")
+        .expect("member-b shared module should be analyzed");
+
+    assert_eq!(metrics.boundary_skipped_files, 1);
+    assert_eq!(metrics.total_files, 3);
+    assert!(shared.path.ends_with("b/src/shared.rs"));
+    assert!(manifest_for(&metrics).notes.iter().any(|note| {
+        note.contains(
+            "1 module reference(s) resolved outside the analyzed package/workspace boundary",
+        )
+    }));
+}
+
+#[test]
+fn flat_layout_skips_manifest_level_tests_examples_benches_and_build_script() {
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let root = tmp.path();
+    create_dir(&root.join("tests"));
+    create_dir(&root.join("examples"));
+    create_dir(&root.join("benches"));
+
+    write(
+        &root.join("Cargo.toml"),
+        r#"[package]
+name = "flat-layout"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "flat-layout"
+path = "main.rs"
+"#,
+    );
+    write(
+        &root.join("main.rs"),
+        "mod app;\nfn main() { app::run(); }\n",
+    );
+    write(&root.join("app.rs"), "pub fn run() {}\n");
+    write(&root.join("tests/smoke.rs"), "#[test]\nfn smoke() {}\n");
+    write(&root.join("examples/demo.rs"), "fn main() {}\n");
+    write(&root.join("benches/bench.rs"), "fn main() {}\n");
+    write(&root.join("build.rs"), "fn main() {}\n");
+
+    let metrics = analyze(root);
+    let names = module_names(&metrics);
+
+    assert_eq!(metrics.total_files, 2);
+    assert!(metrics.modules.contains_key("main"), "saw {names:?}");
+    assert!(metrics.modules.contains_key("app"), "saw {names:?}");
+    assert!(!metrics.modules.contains_key("build"), "saw {names:?}");
+    assert!(
+        !metrics.modules.contains_key("tests::smoke"),
+        "saw {names:?}"
+    );
+    assert!(
+        !metrics.modules.contains_key("examples::demo"),
+        "saw {names:?}"
+    );
+    assert!(
+        !metrics.modules.contains_key("benches::bench"),
+        "saw {names:?}"
+    );
+}
+
+#[test]
 fn members_with_no_discoverable_sources_are_declared_in_manifest() {
     let tmp = tempfile::tempdir().expect("create tempdir");
     let root = tmp.path();
@@ -291,16 +486,17 @@ path = "does-not-exist/main.rs"
         tests_excluded: false,
         parse_failures: metrics.parse_failures,
         skipped_crates: metrics.skipped_crates,
+        boundary_skipped_files: metrics.boundary_skipped_files,
     });
 
     assert!(manifest.notes.iter().any(|note| {
         note.contains(
-            "Workspace member(s) missing had no discoverable source files and were not analyzed.",
+            "Workspace member(s) missing had no discoverable source files (or all files were excluded by configuration) and were not analyzed.",
         )
     }));
     assert!(manifest.notes_ja.iter().any(|note| {
         note.contains(
-            "ワークスペースメンバー missing のソースファイルを発見できず、解析されていません。",
+            "ワークスペースメンバー missing は発見可能なソースファイルがない（または設定により全ファイルが除外された）ため、解析されていません。",
         )
     }));
 }

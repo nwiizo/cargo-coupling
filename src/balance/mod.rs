@@ -267,6 +267,35 @@ mod tests {
     }
 
     #[test]
+    fn test_hidden_coupling_skips_crate_root_facade() {
+        let mut metrics = ProjectMetrics::new();
+        metrics.add_module(ModuleMetrics::new(
+            PathBuf::from("src/lib.rs"),
+            "lib".to_string(),
+        ));
+        metrics.add_module(ModuleMetrics::new(
+            PathBuf::from("src/cli_output.rs"),
+            "cli_output".to_string(),
+        ));
+        metrics.temporal_couplings.push(TemporalCoupling {
+            file_a: "src/lib.rs".to_string(),
+            file_b: "src/cli_output.rs".to_string(),
+            co_change_count: 8,
+            coupling_ratio: 0.8,
+        });
+
+        let report = analyze_project_balance(&metrics);
+
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| issue.issue_type == IssueType::HiddenCoupling),
+            "co-change with the crate-root facade (lib.rs) is expected by design"
+        );
+    }
+
+    #[test]
     fn test_hidden_coupling_skipped_when_code_dependency_exists() {
         let mut metrics = ProjectMetrics::new();
         metrics.add_module(ModuleMetrics::new(

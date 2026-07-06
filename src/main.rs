@@ -407,6 +407,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         tests_excluded: config.exclude_tests,
         parse_failures: metrics.parse_failures,
         skipped_crates: metrics.skipped_crates.clone(),
+        boundary_skipped_files: metrics.boundary_skipped_files,
     });
 
     // Web visualization mode

@@ -23,6 +23,8 @@ pub struct ProjectMetrics {
     pub parse_failures: usize,
     /// Workspace members with no discoverable source files.
     pub skipped_crates: Vec<String>,
+    /// Module references skipped because they cross analyzed package/workspace boundaries.
+    pub boundary_skipped_files: usize,
     /// Workspace name (if available from cargo metadata)
     pub workspace_name: Option<String>,
     /// Workspace member crate names
