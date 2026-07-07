@@ -115,7 +115,7 @@ pub fn analyze_project_balance_with_thresholds(
             / internal_balance_scores.len() as f64
     };
 
-    // Count issues by severity
+    // Report display counts include diagnostics such as Accidental Volatility.
     let mut issues_by_severity: HashMap<Severity, usize> = HashMap::new();
     for issue in &all_issues {
         *issues_by_severity.entry(issue.severity).or_insert(0) += 1;
@@ -127,6 +127,7 @@ pub fn analyze_project_balance_with_thresholds(
         *issues_by_type.entry(issue.issue_type).or_insert(0) += 1;
     }
 
+    // Grading counts exclude diagnostics such as Accidental Volatility.
     // The grade reflects structural defects and essential volatility. Diagnostics
     // (raw git churn contradicting a declared subdomain) are reported but must not
     // grade the project down: accidental volatility routes to the diagnostic, not
@@ -162,9 +163,7 @@ pub fn analyze_project_balance_with_thresholds(
 
 pub(crate) fn dedupe_issues_by_stable_key(issues: &mut Vec<super::issue::CouplingIssue>) {
     let mut seen = HashSet::new();
-    issues.retain(|issue| {
-        seen.insert((issue.issue_type, issue.source.clone(), issue.target.clone()))
-    });
+    issues.retain(|issue| seen.insert(issue.stable_key()));
 }
 
 /// Calculate overall project balance score

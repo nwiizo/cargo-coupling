@@ -23,7 +23,8 @@ pub mod subdomain;
 pub use action::RefactoringAction;
 pub use coupling::{identify_issues, identify_issues_with_thresholds};
 pub use external_crates::{
-    CrateStability, classify_crate_stability, is_external_crate, should_reduce_severity,
+    CrateStability, SCATTERED_EXTERNAL_BREADTH_THRESHOLD, classify_crate_stability,
+    detect_scattered_external_coupling, is_external_crate, should_reduce_severity,
     should_skip_crate,
 };
 pub use grade::{HealthGrade, ProjectBalanceReport};
@@ -622,7 +623,7 @@ mod tests {
         assert!(
             english_low
                 .summary
-                .contains("fewer than 10 internal couplings")
+                .contains("fewer than 10, too little data")
         );
         assert!(english_low.summary.contains("grade capped at B"));
 

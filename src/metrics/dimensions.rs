@@ -98,7 +98,7 @@ impl IntegrationStrength {
 pub enum Distance {
     /// Same function/block
     SameFunction,
-    /// Same module/file
+    /// Same module or structurally adjacent (ancestor/descendant, or siblings under one parent package)
     SameModule,
     /// Different module in same crate
     DifferentModule,

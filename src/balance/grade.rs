@@ -10,7 +10,29 @@ pub(crate) fn build_grade_rationale(
     internal_couplings: usize,
     japanese: bool,
 ) -> GradeRationale {
-    if issues.is_empty() {
+    // The narrative must explain the GRADE, and the grade excludes diagnostics
+    // (see gradable_by_severity in project.rs) — so the narrative counts only
+    // gradable issues; diagnostics appear solely in the "not graded" footnote.
+    let gradable: Vec<&CouplingIssue> = issues
+        .iter()
+        .filter(|issue| !issue.issue_type.is_diagnostic())
+        .collect();
+    let diagnostic_count = issues.len() - gradable.len();
+
+    if gradable.is_empty() {
+        let diagnostic_suffix = if diagnostic_count == 0 {
+            String::new()
+        } else if japanese {
+            format!(
+                " 診断 {} 件を報告していますが、グレードには算入していません。",
+                diagnostic_count
+            )
+        } else {
+            format!(
+                " {} diagnostic(s) reported but not graded.",
+                diagnostic_count
+            )
+        };
         let summary = if japanese {
             if internal_couplings == 0 {
                 "内部結合が 0 件のため、バランスを認定するにはデータが少なすぎます。グレードは B が上限です。".to_string()
@@ -30,7 +52,7 @@ pub(crate) fn build_grade_rationale(
                 .to_string()
         } else if internal_couplings < 10 {
             format!(
-                "{} internal coupling(s): fewer than 10 internal couplings, too little data to certify balance; grade capped at B.",
+                "{} internal coupling(s): fewer than 10, too little data to certify balance; grade capped at B.",
                 internal_couplings
             )
         } else {
@@ -40,7 +62,7 @@ pub(crate) fn build_grade_rationale(
             )
         };
         return GradeRationale {
-            summary,
+            summary: format!("{summary}{diagnostic_suffix}"),
             ..GradeRationale::empty()
         };
     }
@@ -49,7 +71,7 @@ pub(crate) fn build_grade_rationale(
     let mut by_dimension: HashMap<GradeDimension, usize> = HashMap::new();
     let mut high_or_critical = 0;
 
-    for issue in issues {
+    for issue in &gradable {
         let weight = severity_weight(issue.severity);
         let entry = by_type
             .entry(issue.issue_type)
@@ -96,7 +118,7 @@ pub(crate) fn build_grade_rationale(
         .max_by_key(|(_, score)| *score)
         .map(|(dimension, _)| dimension);
 
-    let volatility_issue_count = issues
+    let volatility_issue_count = gradable
         .iter()
         .filter(|issue| dimension_for_issue(issue.issue_type) == GradeDimension::Volatility)
         .count();
@@ -104,16 +126,16 @@ pub(crate) fn build_grade_rationale(
         .iter()
         .filter(|issue| issue.issue_type == IssueType::AccidentalVolatility)
         .count();
-    let volatility_note = if volatility_issue_count > 0 {
+    let volatility_note = if volatility_issue_count > 0 || accidental_count > 0 {
         let accidental_suffix = if accidental_count > 0 {
             if japanese {
                 format!(
-                    " (偶発的な変更頻度 {} 件を含む。診断のためグレードには算入しない)",
+                    " (別途、偶発的な変更頻度の診断 {} 件を報告。グレードには算入しない)",
                     accidental_count
                 )
             } else {
                 format!(
-                    ", including {} accidental-volatility diagnostic(s) reported but not graded",
+                    ", plus {} accidental-volatility diagnostic(s) reported but not graded",
                     accidental_count
                 )
             }
@@ -154,12 +176,12 @@ pub(crate) fn build_grade_rationale(
         if high_or_critical > 0 {
             format!("高/緊急の問題 {} 件", high_or_critical)
         } else {
-            format!("中/低の問題 {} 件", issues.len())
+            format!("中/低の問題 {} 件", gradable.len())
         }
     } else if high_or_critical > 0 {
         format!("{} high/critical issue(s)", high_or_critical)
     } else {
-        format!("{} medium/low issue(s)", issues.len())
+        format!("{} medium/low issue(s)", gradable.len())
     };
     let dimension_phrase = dominant_dimension
         .map(|dimension| {
@@ -317,6 +339,9 @@ impl std::fmt::Display for HealthGrade {
 /// - Contract coupling rate (trait usage)
 /// - Balance score distribution
 /// - Internal coupling complexity
+///
+/// Callers pass diagnostic-free severity counts; diagnostics may be displayed,
+/// but they do not lower the structural health grade.
 pub(crate) fn calculate_health_grade(
     issues_by_severity: &HashMap<Severity, usize>,
     internal_couplings: usize,

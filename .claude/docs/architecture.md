@@ -31,8 +31,8 @@ src/
 
 | UsageContext | Maps To | Detection Method |
 |--------------|---------|------------------|
-| FieldAccess | Intrusive | `visit_expr_field` |
-| StructConstruction | Intrusive | `visit_expr_struct` |
+| FieldAccess | Model for `pub` target types; Intrusive for crate-restricted/unknown target types | `visit_expr_field` + type registry |
+| StructConstruction | Model for `pub` target types; Intrusive for crate-restricted/unknown target types | `visit_expr_struct` + type registry |
 | MethodCall | Functional | `visit_expr_method_call` |
 | FunctionCall | Functional | `visit_expr_call` |
 | TypeParameter | Model | `analyze_signature` |

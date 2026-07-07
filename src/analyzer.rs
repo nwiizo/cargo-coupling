@@ -154,7 +154,7 @@ impl UsageContext {
     /// Convert usage context to integration strength
     pub fn to_strength(&self) -> IntegrationStrength {
         match self {
-            // Intrusive: Direct access to internals
+            // Intrusive: implementation-level access, or unknown data access.
             UsageContext::FieldAccess => IntegrationStrength::Intrusive,
             UsageContext::StructConstruction => IntegrationStrength::Intrusive,
             UsageContext::InherentImplBlock => IntegrationStrength::Intrusive,
@@ -582,7 +582,7 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
             );
             self.usage_counts.trait_bounds += 1;
         } else {
-            // Inherent implementation = Intrusive coupling
+            // Inherent implementation of another module's type is implementation-level coupling.
             self.metrics.inherent_impl_count += 1;
 
             // Get the type being implemented
@@ -838,7 +838,7 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
             syn::Member::Unnamed(idx) => format!("{}", idx.index),
         };
 
-        // This is a field access - Intrusive coupling
+        // Cross-module field access is classified later using target type visibility.
         if let Expr::Path(path_expr) = &*node.base {
             let base_name = path_expr
                 .path
@@ -1186,10 +1186,11 @@ pub fn analyze_project_parallel_with_config(
 
             // Determine if this is an internal coupling
             let target_module =
-                resolve_target_module(&dep.path, &analyzed.module_name, &module_names);
+                resolve_target_module(&dep.path, &analyzed.module_name, &module_names, &project);
+            let target_is_known_internal_module = module_names.contains(&target_module);
 
             // Skip if target module looks invalid (but allow known module names)
-            if !module_names.contains(&target_module) && !is_valid_dependency_path(&target_module) {
+            if !target_is_known_internal_module && !is_valid_dependency_path(&target_module) {
                 continue;
             }
 
@@ -1197,20 +1198,17 @@ pub fn analyze_project_parallel_with_config(
             let distance = calculate_distance(
                 &analyzed.module_name,
                 &target_module,
-                module_names.contains(&target_module),
+                target_is_known_internal_module,
             );
 
-            // Determine strength from usage context
-            let strength = dep.usage.to_strength();
+            let target_type = target_type_name(&dep.path);
+            let target_visibility = target_type.and_then(|name| project.get_type_visibility(name));
+            let strength = strength_for_dependency(dep, target_visibility);
 
             // Default volatility
             let volatility = Volatility::Low;
 
-            // Look up target visibility from the type registry
-            let target_type = dep.path.split("::").last().unwrap_or(&dep.path);
-            let visibility = project
-                .get_type_visibility(target_type)
-                .unwrap_or(Visibility::Public); // Default to public if unknown
+            let visibility = visibility_for_dependency(dep, target_visibility);
 
             // Create coupling metric with location
             let coupling = CouplingMetrics::with_location(
@@ -1422,6 +1420,7 @@ fn analyze_with_workspace(
                                     module_metrics
                                 },
                                 dependencies: result.dependencies,
+                                type_visibility: result.type_visibility,
                                 item_dependencies,
                             })
                         }
@@ -1454,6 +1453,13 @@ fn analyze_with_workspace(
         .map(|a| a.module_name.clone())
         .collect();
 
+    // First pass: register all types with their visibility before resolving dependencies.
+    for analyzed in &analyzed_files {
+        for (type_name, visibility) in &analyzed.type_visibility {
+            project.register_type(type_name.clone(), analyzed.module_name.clone(), *visibility);
+        }
+    }
+
     // Second pass: build coupling relationships with workspace context
     for analyzed in &analyzed_files {
         // Clone metrics and add item_dependencies
@@ -1474,10 +1480,16 @@ fn analyze_with_workspace(
                 resolve_crate_from_path(&dep.path, &analyzed.crate_name, workspace);
 
             let target_module =
-                resolve_target_module(&dep.path, &analyzed.module_name, &module_names);
+                resolve_target_module(&dep.path, &analyzed.module_name, &module_names, &project);
+            let target_is_known_internal_module = module_names.contains(&target_module);
+            let resolved_crate = if resolved_crate.is_none() && target_is_known_internal_module {
+                Some(analyzed.crate_name.clone())
+            } else {
+                resolved_crate
+            };
 
             // Skip if target module looks invalid (but allow known module names)
-            if !module_names.contains(&target_module) && !is_valid_dependency_path(&target_module) {
+            if !target_is_known_internal_module && !is_valid_dependency_path(&target_module) {
                 continue;
             }
 
@@ -1485,14 +1497,15 @@ fn analyze_with_workspace(
             let distance = calculate_distance_with_workspace(
                 &analyzed.module_name,
                 &target_module,
-                module_names.contains(&target_module),
+                target_is_known_internal_module,
                 &analyzed.crate_name,
                 resolved_crate.as_deref(),
                 workspace,
             );
 
-            // Determine strength from usage context (more accurate)
-            let strength = dep.usage.to_strength();
+            let target_type = target_type_name(&dep.path);
+            let target_visibility = target_type.and_then(|name| project.get_type_visibility(name));
+            let strength = strength_for_dependency(dep, target_visibility);
 
             // Default volatility
             let volatility = Volatility::Low;
@@ -1508,7 +1521,7 @@ fn analyze_with_workspace(
                 strength,
                 distance,
                 volatility,
-                Visibility::Public, // Default visibility for workspace analysis
+                visibility_for_dependency(dep, target_visibility),
                 analyzed.file_path.clone(),
                 dep.line,
             );
@@ -1660,6 +1673,11 @@ fn calculate_distance_with_workspace(
     )
 }
 
+/// Structurally adjacent modules are scored as local cohesion:
+/// - same module, or any ancestor/descendant line, is `SameModule`;
+/// - siblings under one non-root parent package are `SameModule`;
+/// - root-level siblings stay `DifferentModule` because the crate root is a
+///   publication boundary, not evidence of a cohesive package.
 fn is_adjacent_module(source_module: &str, target_module: &str) -> bool {
     let source_segments: Vec<&str> = source_module.split("::").collect();
     let target_segments: Vec<&str> = target_module.split("::").collect();
@@ -1668,13 +1686,11 @@ fn is_adjacent_module(source_module: &str, target_module: &str) -> bool {
         return true;
     }
 
-    if source_segments.len().abs_diff(target_segments.len()) == 1 {
-        let shorter_len = source_segments.len().min(target_segments.len());
-        let source_prefix = &source_segments[..shorter_len];
-        let target_prefix = &target_segments[..shorter_len];
-        if source_prefix == target_prefix {
-            return true;
-        }
+    let shorter_len = source_segments.len().min(target_segments.len());
+    let source_prefix = &source_segments[..shorter_len];
+    let target_prefix = &target_segments[..shorter_len];
+    if source_prefix == target_prefix {
+        return true;
     }
 
     let Some(source_parent) = source_segments.split_last().map(|(_, parent)| parent) else {
@@ -1687,6 +1703,39 @@ fn is_adjacent_module(source_module: &str, target_module: &str) -> bool {
     !source_parent.is_empty() && source_parent == target_parent
 }
 
+fn target_type_name(path: &str) -> Option<&str> {
+    path.trim_end_matches("::*")
+        .rsplit("::")
+        .next()
+        .filter(|segment| !segment.is_empty() && *segment != "*")
+}
+
+fn strength_for_dependency(
+    dep: &Dependency,
+    target_visibility: Option<Visibility>,
+) -> IntegrationStrength {
+    match dep.usage {
+        UsageContext::FieldAccess | UsageContext::StructConstruction => {
+            if target_visibility == Some(Visibility::Public) {
+                IntegrationStrength::Model
+            } else {
+                IntegrationStrength::Intrusive
+            }
+        }
+        _ => dep.usage.to_strength(),
+    }
+}
+
+fn visibility_for_dependency(
+    dep: &Dependency,
+    target_visibility: Option<Visibility>,
+) -> Visibility {
+    target_visibility.unwrap_or(match dep.usage {
+        UsageContext::FieldAccess | UsageContext::StructConstruction => Visibility::Private,
+        _ => Visibility::Public,
+    })
+}
+
 /// Analyzed file with crate information
 #[derive(Debug, Clone)]
 struct AnalyzedFileWithCrate {
@@ -1696,6 +1745,8 @@ struct AnalyzedFileWithCrate {
     file_path: PathBuf,
     metrics: ModuleMetrics,
     dependencies: Vec<Dependency>,
+    /// Type visibility information from this file
+    type_visibility: HashMap<String, Visibility>,
     /// Item-level dependencies (function calls, field access, etc.)
     item_dependencies: Vec<ItemDependency>,
 }
@@ -1716,6 +1767,7 @@ fn resolve_target_module(
     path: &str,
     source_module: &str,
     known_modules: &HashSet<String>,
+    project: &ProjectMetrics,
 ) -> String {
     let resolved = resolve_relative_module_path(path, source_module);
     let segments: Vec<&str> = resolved
@@ -1730,7 +1782,22 @@ fn resolve_target_module(
         }
     }
 
+    if should_resolve_bare_type(path)
+        && let Some(type_name) = target_type_name(&resolved)
+        && let Some(module_name) = project.get_type_module(type_name)
+    {
+        return module_name.to_string();
+    }
+
     extract_target_module(path)
+}
+
+fn should_resolve_bare_type(path: &str) -> bool {
+    !path.contains("::")
+        || path.starts_with("crate::")
+        || path.starts_with("self::")
+        || path.starts_with("super::")
+        || path.starts_with("::")
 }
 
 fn resolve_relative_module_path(path: &str, source_module: &str) -> String {
@@ -1885,6 +1952,14 @@ pub fn analyze_rust_file_full(path: &Path) -> Result<AnalyzedFileResult, Analyze
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn resolve_target_module_for_test(
+        path: &str,
+        source_module: &str,
+        known_modules: &HashSet<String>,
+    ) -> String {
+        resolve_target_module(path, source_module, known_modules, &ProjectMetrics::new())
+    }
 
     #[test]
     fn pattern_within_scope_requires_full_coverage() {
@@ -2076,16 +2151,138 @@ mod tests {
         ]);
 
         assert_eq!(
-            resolve_target_module("crate::balance::issues::CouplingIssue", "report", &known),
+            resolve_target_module_for_test(
+                "crate::balance::issues::CouplingIssue",
+                "report",
+                &known
+            ),
             "balance::issues"
         );
         assert_eq!(
-            resolve_target_module("super::issues::IssueType", "balance::coupling", &known),
+            resolve_target_module_for_test("super::issues::IssueType", "balance::coupling", &known),
             "balance::issues"
         );
         assert_eq!(
-            resolve_target_module("std::collections::HashMap", "balance::coupling", &known),
+            resolve_target_module_for_test(
+                "std::collections::HashMap",
+                "balance::coupling",
+                &known
+            ),
             "std"
+        );
+    }
+
+    #[test]
+    fn test_reexported_type_name_resolves_to_defining_module() {
+        let known = HashSet::from(["a".to_string(), "a::b".to_string(), "consumer".to_string()]);
+        let mut project = ProjectMetrics::new();
+        project.register_type(
+            "SomeType".to_string(),
+            "a::b".to_string(),
+            Visibility::Public,
+        );
+
+        let target = resolve_target_module("crate::SomeType", "a", &known, &project);
+
+        assert_eq!(target, "a::b");
+        assert_eq!(
+            calculate_distance("a", &target, known.contains(&target)),
+            Distance::SameModule
+        );
+    }
+
+    #[test]
+    fn test_unknown_reexported_type_name_keeps_external_fallback() {
+        let known = HashSet::from(["a::b".to_string(), "consumer".to_string()]);
+        let project = ProjectMetrics::new();
+
+        let target = resolve_target_module("crate::UnknownType", "consumer", &known, &project);
+
+        assert_eq!(target, "UnknownType");
+        assert_eq!(
+            calculate_distance("consumer", &target, known.contains(&target)),
+            Distance::DifferentCrate
+        );
+    }
+
+    #[test]
+    fn test_type_registry_ambiguity_prefers_public_then_lexicographic_module() {
+        let mut project = ProjectMetrics::new();
+        project.register_type(
+            "Shared".to_string(),
+            "z::private".to_string(),
+            Visibility::Private,
+        );
+        project.register_type(
+            "Shared".to_string(),
+            "m::public".to_string(),
+            Visibility::Public,
+        );
+        project.register_type(
+            "Shared".to_string(),
+            "a::public".to_string(),
+            Visibility::Public,
+        );
+
+        assert_eq!(project.get_type_module("Shared"), Some("a::public"));
+        assert_eq!(
+            project.get_type_visibility("Shared"),
+            Some(Visibility::Public)
+        );
+    }
+
+    #[test]
+    fn test_strength_mapping_uses_public_model_for_data_access_only() {
+        let public_field = Dependency {
+            path: "crate::PublicType".to_string(),
+            kind: DependencyKind::TypeRef,
+            line: 0,
+            usage: UsageContext::FieldAccess,
+        };
+        let public_struct = Dependency {
+            path: "crate::PublicType".to_string(),
+            kind: DependencyKind::TypeRef,
+            line: 0,
+            usage: UsageContext::StructConstruction,
+        };
+        let crate_field = Dependency {
+            path: "crate::CrateType".to_string(),
+            kind: DependencyKind::TypeRef,
+            line: 0,
+            usage: UsageContext::FieldAccess,
+        };
+        let unknown_struct = Dependency {
+            path: "crate::UnknownType".to_string(),
+            kind: DependencyKind::TypeRef,
+            line: 0,
+            usage: UsageContext::StructConstruction,
+        };
+        let inherent_impl = Dependency {
+            path: "crate::PublicType".to_string(),
+            kind: DependencyKind::InherentImpl,
+            line: 0,
+            usage: UsageContext::InherentImplBlock,
+        };
+
+        assert_eq!(
+            strength_for_dependency(&public_field, Some(Visibility::Public)),
+            IntegrationStrength::Model
+        );
+        assert_eq!(
+            strength_for_dependency(&public_struct, Some(Visibility::Public)),
+            IntegrationStrength::Model
+        );
+        assert_eq!(
+            strength_for_dependency(&crate_field, Some(Visibility::PubCrate)),
+            IntegrationStrength::Intrusive
+        );
+        assert_eq!(
+            strength_for_dependency(&unknown_struct, None),
+            IntegrationStrength::Intrusive
+        );
+        assert_eq!(
+            strength_for_dependency(&inherent_impl, Some(Visibility::Public)),
+            IntegrationStrength::Intrusive
         );
     }
 
@@ -2104,12 +2301,16 @@ mod tests {
             "balance::rationale".to_string(),
         ]);
 
-        let super_target =
-            resolve_target_module("super::rationale::GradeRationale", "balance::grade", &known);
+        let super_target = resolve_target_module_for_test(
+            "super::rationale::GradeRationale",
+            "balance::grade",
+            &known,
+        );
         let crate_target = resolve_target_module(
             "crate::balance::rationale::GradeRationale",
             "balance::grade",
             &known,
+            &ProjectMetrics::new(),
         );
 
         assert_eq!(super_target, "balance::rationale");
@@ -2142,6 +2343,22 @@ mod tests {
             calculate_distance("balance::grade", "balance", true),
             Distance::SameModule
         );
+        assert_eq!(
+            calculate_distance("web", "web::server::internal", true),
+            Distance::SameModule
+        );
+        assert_eq!(
+            calculate_distance("web::server::internal", "web", true),
+            Distance::SameModule
+        );
+    }
+
+    #[test]
+    fn test_structural_distance_cousins_are_different_module() {
+        assert_eq!(
+            calculate_distance("web::a", "web::b::c", true),
+            Distance::DifferentModule
+        );
     }
 
     #[test]
@@ -2159,7 +2376,7 @@ mod tests {
     #[test]
     fn test_structural_distance_crate_syntax_does_not_make_far_module_close() {
         let known = HashSet::from(["far::away".to_string()]);
-        let target = resolve_target_module("crate::far::away::X", "diff", &known);
+        let target = resolve_target_module_for_test("crate::far::away::X", "diff", &known);
 
         assert_eq!(target, "far::away");
         assert_eq!(
