@@ -219,7 +219,7 @@ pub struct CompiledConfig {
 
 /// A configured pattern that matched no paths during analysis.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeadPattern {
+pub struct DeadConfigPattern {
     /// Config section containing the pattern.
     pub section: &'static str,
     /// Original pattern string from the config.
@@ -326,39 +326,39 @@ impl CompiledConfig {
     /// reported: an unmatched exclude analyzes nothing wrongly (defensive future-proof
     /// excludes are idiomatic), and a dead prelude exemption surfaces as visible
     /// afferent warnings rather than silent misclassification.
-    pub fn dead_patterns(&self, candidate_paths: &[String]) -> Vec<DeadPattern> {
+    pub fn dead_patterns(&self, candidate_paths: &[String]) -> Vec<DeadConfigPattern> {
         let mut dead = Vec::new();
-        self.add_dead_patterns(
+        Self::add_dead_patterns(
             &mut dead,
             "subdomains.core",
             &self.core_patterns,
             candidate_paths,
         );
-        self.add_dead_patterns(
+        Self::add_dead_patterns(
             &mut dead,
             "subdomains.supporting",
             &self.supporting_patterns,
             candidate_paths,
         );
-        self.add_dead_patterns(
+        Self::add_dead_patterns(
             &mut dead,
             "subdomains.generic",
             &self.generic_patterns,
             candidate_paths,
         );
-        self.add_dead_patterns(
+        Self::add_dead_patterns(
             &mut dead,
             "volatility.high",
             &self.high_patterns,
             candidate_paths,
         );
-        self.add_dead_patterns(
+        Self::add_dead_patterns(
             &mut dead,
             "volatility.medium",
             &self.medium_patterns,
             candidate_paths,
         );
-        self.add_dead_patterns(
+        Self::add_dead_patterns(
             &mut dead,
             "volatility.low",
             &self.low_patterns,
@@ -368,8 +368,7 @@ impl CompiledConfig {
     }
 
     fn add_dead_patterns(
-        &self,
-        dead: &mut Vec<DeadPattern>,
+        dead: &mut Vec<DeadConfigPattern>,
         section: &'static str,
         patterns: &[Pattern],
         candidate_paths: &[String],
@@ -381,7 +380,7 @@ impl CompiledConfig {
             {
                 None
             } else {
-                Some(DeadPattern {
+                Some(DeadConfigPattern {
                     section,
                     pattern: pattern.as_str().to_string(),
                 })
@@ -830,15 +829,15 @@ mod tests {
         assert_eq!(
             dead,
             vec![
-                DeadPattern {
+                DeadConfigPattern {
                     section: "subdomains.core",
                     pattern: "src/old_core.rs".to_string(),
                 },
-                DeadPattern {
+                DeadConfigPattern {
                     section: "subdomains.generic",
                     pattern: "src/generic.rs".to_string(),
                 },
-                DeadPattern {
+                DeadConfigPattern {
                     section: "volatility.medium",
                     pattern: "src/medium.rs".to_string(),
                 },

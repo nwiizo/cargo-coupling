@@ -153,7 +153,7 @@ pub fn build_manifest(ctx: &ManifestContext) -> AnalysisManifest {
     if !ctx.dead_config_patterns.is_empty() {
         let pattern_list = ctx.dead_config_patterns.join(", ");
         notes.push(format!(
-            ".coupling.toml drift: {} pattern(s) match no analyzed files ({}); the classifications they were meant to apply are not in effect.",
+            ".coupling.toml drift: {} pattern(s) matched no analyzed files ({}); the classifications they were meant to apply are not in effect.",
             ctx.dead_config_patterns.len(),
             pattern_list
         ));
@@ -317,7 +317,7 @@ mod tests {
         });
 
         assert!(manifest.notes.iter().any(|n| {
-            n.contains(".coupling.toml drift: 2 pattern(s) match no analyzed files (subdomains.core: src/old.rs, volatility.high: src/dead.rs); the classifications they were meant to apply are not in effect.")
+            n.contains(".coupling.toml drift: 2 pattern(s) matched no analyzed files (subdomains.core: src/old.rs, volatility.high: src/dead.rs); the classifications they were meant to apply are not in effect.")
         }));
         assert!(manifest.notes_ja.iter().any(|n| {
             n.contains(".coupling.toml のドリフト: 2 件のパターンがどの解析対象ファイルにもマッチしません（subdomains.core: src/old.rs, volatility.high: src/dead.rs）。意図した分類は適用されていません。")

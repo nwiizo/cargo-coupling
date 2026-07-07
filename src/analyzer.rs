@@ -1155,9 +1155,11 @@ pub fn analyze_project_parallel_with_config(
     let mut project = ProjectMetrics::new();
     project.total_files = analyzed_results.len();
     project.parse_failures = file_paths.len().saturating_sub(analyzed_results.len());
-    let analyzed_config_paths = analyzed_results
+    // Discovered (pre-parse) files: a pattern matching only a parse-failing file is
+    // covered by the parse-failure note, not drift.
+    let candidate_config_paths = file_paths
         .iter()
-        .map(|analyzed| path_for_config_matching(&analyzed.file_path, config))
+        .map(|file_path| path_for_config_matching(file_path, config))
         .collect::<Vec<_>>();
 
     // First pass: register all types with their visibility
@@ -1224,7 +1226,8 @@ pub fn analyze_project_parallel_with_config(
 
     // Update any remaining coupling visibility information
     project.update_coupling_visibility();
-    project.dead_config_patterns = formatted_dead_config_patterns(config, &analyzed_config_paths);
+    project.dead_config_patterns =
+        format_dead_config_patterns(config, &candidate_config_paths, path);
 
     Ok(project)
 }
@@ -1434,9 +1437,11 @@ fn analyze_with_workspace(
 
     project.total_files = analyzed_files.len();
     project.parse_failures = discovered_files.len().saturating_sub(analyzed_files.len());
-    let analyzed_config_paths = analyzed_files
+    // Discovered (pre-parse) files: a pattern matching only a parse-failing file is
+    // covered by the parse-failure note, not drift.
+    let candidate_config_paths = discovered_files
         .iter()
-        .map(|analyzed| path_for_config_matching(&analyzed.file_path, config))
+        .map(|discovered| path_for_config_matching(&discovered.file_path, config))
         .collect::<Vec<_>>();
 
     // Build set of known module names for validation
@@ -1520,20 +1525,77 @@ fn analyze_with_workspace(
         }
     }
 
-    project.dead_config_patterns = formatted_dead_config_patterns(config, &analyzed_config_paths);
+    project.dead_config_patterns =
+        format_dead_config_patterns(config, &candidate_config_paths, &workspace.root);
 
     Ok(project)
 }
 
-fn formatted_dead_config_patterns(
+/// Dead scoring-affecting config patterns for this run, as "section: pattern" strings.
+///
+/// Precision guards (a false "config is rotted" note erodes trust):
+/// - no loaded config file (`config_root` unknown) → no drift claims;
+/// - candidates must be the DISCOVERED (post-exclusion, pre-parse) files, so a pattern
+///   whose only match fails to parse stays attributed to the parse-failure note;
+/// - patterns whose literal prefix is not fully covered by the analyzed scope are
+///   skipped: a partial-scope run (one crate of a monorepo, a subdirectory) says
+///   nothing about patterns aimed at sibling trees.
+fn format_dead_config_patterns(
     config: &CompiledConfig,
-    analyzed_paths: &[String],
+    candidate_paths: &[String],
+    analysis_scope: &Path,
 ) -> Vec<String> {
+    let Some(config_root) = config.config_root() else {
+        return Vec::new();
+    };
+    if !config.has_subdomain_config() && !config.has_volatility_overrides() {
+        return Vec::new();
+    }
+
+    let normalized_scope = normalize_exclude_path(analysis_scope);
+    let normalized_root = normalize_exclude_path(config_root);
+    let scope = match normalized_scope.strip_prefix(&normalized_root) {
+        Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+        // The scope contains the config root (or a lookup quirk): everything the
+        // config describes is in scope.
+        Err(_) if normalized_root.starts_with(&normalized_scope) => String::new(),
+        // Disjoint trees: this run cannot judge the config at all.
+        Err(_) => return Vec::new(),
+    };
+
     config
-        .dead_patterns(analyzed_paths)
+        .dead_patterns(candidate_paths)
         .into_iter()
+        .filter(|dead| pattern_within_scope(&dead.pattern, &scope))
         .map(|dead| format!("{}: {}", dead.section, dead.pattern))
         .collect()
+}
+
+/// Whether everything a glob pattern could match lies inside the analyzed scope
+/// (both config-root-relative). Judged via the pattern's literal (meta-free) prefix;
+/// when the scope only partially covers the pattern, this run cannot prove drift.
+fn pattern_within_scope(pattern: &str, scope: &str) -> bool {
+    if scope.is_empty() {
+        return true;
+    }
+    let (literal, had_meta) = match pattern.find(['*', '?', '[']) {
+        Some(idx) => (&pattern[..idx], true),
+        None => (pattern, false),
+    };
+    // A metacharacter can extend the final component ("src/bal*"), so only fully
+    // literal components count.
+    let literal = if had_meta {
+        match literal.rfind('/') {
+            Some(idx) => &literal[..idx],
+            None => "",
+        }
+    } else {
+        literal
+    };
+    let literal_components: Vec<&str> = literal.split('/').filter(|c| !c.is_empty()).collect();
+    let scope_components: Vec<&str> = scope.split('/').filter(|c| !c.is_empty()).collect();
+    literal_components.len() >= scope_components.len()
+        && literal_components[..scope_components.len()] == scope_components[..]
 }
 
 fn cache_file_and_scan_path_attribute(
@@ -1784,6 +1846,25 @@ pub fn analyze_rust_file_full(path: &Path) -> Result<AnalyzedFileResult, Analyze
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pattern_within_scope_requires_full_coverage() {
+        // Empty scope (analysis covers the whole config tree) judges everything.
+        assert!(pattern_within_scope("other/**", ""));
+        // Pattern inside the scope: judged.
+        assert!(pattern_within_scope("src/balance/**", "src"));
+        assert!(pattern_within_scope("src/broken.rs", "src"));
+        // Sibling trees: not judged.
+        assert!(!pattern_within_scope("other/**", "src"));
+        assert!(!pattern_within_scope("src/broken.rs", "src/web"));
+        // Pattern broader than the scope: this run cannot prove drift.
+        assert!(!pattern_within_scope("src/**", "src/web"));
+        // Metacharacter can extend the final literal component.
+        assert!(!pattern_within_scope("src/bal*", "src/balance"));
+        assert!(pattern_within_scope("src/balance/mod*", "src/balance"));
+        // Leading-glob patterns can match anywhere: never judged under a narrowed scope.
+        assert!(!pattern_within_scope("**/generated/**", "src"));
+    }
 
     #[test]
     fn test_analyzer_creation() {
