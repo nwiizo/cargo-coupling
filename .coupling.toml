@@ -11,8 +11,8 @@
 # Core: the coupling model — competitive logic that evolves as our understanding
 # of "balanced coupling" deepens. High essential volatility is expected here.
 core = [
-    "src/balance.rs",
-    "src/metrics.rs",
+    "src/balance/**",
+    "src/metrics/**",
 ]
 
 # Supporting: analysis machinery and output around the model. Changes track the
@@ -37,5 +37,6 @@ generic = [
 ]
 
 [analysis]
-# Tests are scaffolding, not product coupling.
+# Tests are scaffolding, not product coupling. Kept even though a `coupling ./src`
+# run never sees tests/ — it protects whole-repo analysis (drift notes ignore excludes).
 exclude = ["**/tests/**"]

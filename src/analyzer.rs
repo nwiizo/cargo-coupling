@@ -1155,6 +1155,10 @@ pub fn analyze_project_parallel_with_config(
     let mut project = ProjectMetrics::new();
     project.total_files = analyzed_results.len();
     project.parse_failures = file_paths.len().saturating_sub(analyzed_results.len());
+    let analyzed_config_paths = analyzed_results
+        .iter()
+        .map(|analyzed| path_for_config_matching(&analyzed.file_path, config))
+        .collect::<Vec<_>>();
 
     // First pass: register all types with their visibility
     for analyzed in &analyzed_results {
@@ -1220,6 +1224,7 @@ pub fn analyze_project_parallel_with_config(
 
     // Update any remaining coupling visibility information
     project.update_coupling_visibility();
+    project.dead_config_patterns = formatted_dead_config_patterns(config, &analyzed_config_paths);
 
     Ok(project)
 }
@@ -1429,6 +1434,10 @@ fn analyze_with_workspace(
 
     project.total_files = analyzed_files.len();
     project.parse_failures = discovered_files.len().saturating_sub(analyzed_files.len());
+    let analyzed_config_paths = analyzed_files
+        .iter()
+        .map(|analyzed| path_for_config_matching(&analyzed.file_path, config))
+        .collect::<Vec<_>>();
 
     // Build set of known module names for validation
     let module_names: HashSet<String> = analyzed_files
@@ -1511,7 +1520,20 @@ fn analyze_with_workspace(
         }
     }
 
+    project.dead_config_patterns = formatted_dead_config_patterns(config, &analyzed_config_paths);
+
     Ok(project)
+}
+
+fn formatted_dead_config_patterns(
+    config: &CompiledConfig,
+    analyzed_paths: &[String],
+) -> Vec<String> {
+    config
+        .dead_patterns(analyzed_paths)
+        .into_iter()
+        .map(|dead| format!("{}: {}", dead.section, dead.pattern))
+        .collect()
 }
 
 fn cache_file_and_scan_path_attribute(

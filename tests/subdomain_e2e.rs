@@ -4,8 +4,8 @@ use std::path::Path;
 use std::process::Command;
 
 use cargo_coupling::{
-    CompiledConfig, IssueType, Volatility, analyze_project_balance, analyze_workspace_with_config,
-    load_compiled_config,
+    AnalysisManifest, CompiledConfig, IssueType, ManifestContext, Volatility,
+    analyze_project_balance, analyze_workspace_with_config, build_manifest, load_compiled_config,
 };
 
 fn write(path: &Path, content: &str) {
@@ -47,6 +47,38 @@ fn mark_stable_as_git_churn(metrics: &mut cargo_coupling::ProjectMetrics) {
 
 fn cargo_coupling() -> Command {
     Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
+}
+
+fn manifest_for_config(config_toml: &str) -> AnalysisManifest {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+
+    write(
+        &root.join("Cargo.toml"),
+        r#"[package]
+name = "drift-fixture"
+version = "0.1.0"
+edition = "2024"
+"#,
+    );
+    write(&root.join(".coupling.toml"), config_toml);
+    write(&src.join("lib.rs"), "pub mod live;\npub mod excluded;\n");
+    write(&src.join("live.rs"), "pub struct Live;\n");
+    write(&src.join("excluded.rs"), "pub struct Excluded;\n");
+
+    let config = load_compiled_config(&src).unwrap();
+    let metrics = analyze_workspace_with_config(&src, &config).unwrap();
+
+    build_manifest(&ManifestContext {
+        git_used: true,
+        tests_excluded: config.exclude_tests,
+        parse_failures: metrics.parse_failures,
+        skipped_crates: metrics.skipped_crates,
+        boundary_skipped_files: metrics.boundary_skipped_files,
+        dead_config_patterns: metrics.dead_config_patterns,
+    })
 }
 
 #[test]
@@ -132,5 +164,59 @@ fn verbose_cli_reports_nonzero_applied_volatility_overrides() {
     assert!(
         !stderr.contains("Applied 0 volatility overrides"),
         "override count should be nonzero, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn stale_subdomain_pattern_is_declared_in_manifest() {
+    let manifest = manifest_for_config(
+        r#"
+[subdomains]
+core = ["src/missing.rs"]
+"#,
+    );
+
+    assert!(manifest.notes.iter().any(|note| {
+        note.contains(".coupling.toml drift: 1 pattern(s) match no analyzed files (subdomains.core: src/missing.rs); the classifications they were meant to apply are not in effect.")
+    }));
+}
+
+#[test]
+fn matching_subdomain_pattern_has_no_drift_note() {
+    let manifest = manifest_for_config(
+        r#"
+[subdomains]
+core = ["src/live.rs"]
+"#,
+    );
+
+    assert!(
+        !manifest
+            .notes
+            .iter()
+            .any(|note| note.contains(".coupling.toml drift"))
+    );
+}
+
+#[test]
+fn excluded_file_pattern_is_dead_for_subdomain_but_not_for_exclude() {
+    let manifest = manifest_for_config(
+        r#"
+[analysis]
+exclude = ["src/excluded.rs"]
+
+[subdomains]
+core = ["src/excluded.rs"]
+"#,
+    );
+
+    assert!(manifest.notes.iter().any(|note| {
+        note.contains(".coupling.toml drift: 1 pattern(s) match no analyzed files (subdomains.core: src/excluded.rs); the classifications they were meant to apply are not in effect.")
+    }));
+    assert!(
+        !manifest
+            .notes
+            .iter()
+            .any(|note| note.contains("analysis.exclude: src/excluded.rs"))
     );
 }

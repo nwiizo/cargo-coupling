@@ -67,7 +67,7 @@ pub use balance::rationale::{GradeDimension, GradeRationale, IssueTypeContributi
 pub use balance::score::{BalanceInterpretation, BalanceScore, IssueThresholds};
 pub use balance::severity::Severity;
 pub use config::{
-    AnalysisConfig, CompiledConfig, ConfigError, CouplingConfig, ThresholdsConfig,
+    AnalysisConfig, CompiledConfig, ConfigError, CouplingConfig, DeadPattern, ThresholdsConfig,
     VolatilityConfig, load_compiled_config, load_config,
 };
 pub use diff::{BaselineDiff, IssueKey, diff_ref_analysis, diff_reports};

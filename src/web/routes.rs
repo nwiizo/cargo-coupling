@@ -143,6 +143,7 @@ async fn get_report(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         parse_failures: state.metrics.parse_failures,
         skipped_crates: state.metrics.skipped_crates.clone(),
         boundary_skipped_files: state.metrics.boundary_skipped_files,
+        dead_config_patterns: state.metrics.dead_config_patterns.clone(),
     });
     let mut output = Vec::new();
 

@@ -408,6 +408,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         parse_failures: metrics.parse_failures,
         skipped_crates: metrics.skipped_crates.clone(),
         boundary_skipped_files: metrics.boundary_skipped_files,
+        dead_config_patterns: metrics.dead_config_patterns.clone(),
     });
 
     // Web visualization mode
