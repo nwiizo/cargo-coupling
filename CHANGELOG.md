@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.3.5
+
+### Added
+
+- `.coupling.toml` drift detection: `[subdomains]`/`[volatility]` patterns that match no analyzed files are declared in the blind-spot manifest (EN/JA, CLI/report/web). When code is moved or split, stale patterns previously reverted scoring to raw git churn with no signal; now the rot is visible. `analysis.exclude` and `prelude_modules` are deliberately not reported — a dead exclude analyzes nothing wrongly, and defensive future-proof excludes are idiomatic.
+- Precision guards so a drift note is never a false alarm: historical-revision analyses (`--history`, web `?ref=`) don't judge today's config against old trees; partial-scope runs don't judge patterns aimed at sibling trees; patterns whose only match fails to parse stay attributed to the parse-failure note.
+
+### Fixed
+
+- This repository's own `.coupling.toml` had exactly this rot: `[subdomains].core` still pointed at `src/balance.rs`/`src/metrics.rs`, dead since the split into directories, so core classification silently applied to nothing. Fixing it re-applies high essential volatility to the model modules and honestly lowers the self-reported grade — the previous grade was partly inflated by the drift this release now detects.
+
+### Notes
+
+- Issue #61 (crates without `src/`) was fixed in v0.3.4 and is verified and closed.
+
 ## v0.3.4
 
 ### Added
