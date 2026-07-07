@@ -336,6 +336,14 @@ export function getCytoscapeStyle() {
                 'height': 40
             }
         },
+        // Cluster coloring
+        {
+            selector: 'node[clusterColor]',
+            style: {
+                'background-color': 'data(clusterColor)',
+                'border-color': 'data(clusterColor)'
+            }
+        },
         // Edge styles - base
         {
             selector: 'edge',
@@ -397,6 +405,14 @@ export function getCytoscapeStyle() {
                 'target-arrow-color': '#dc2626',
                 'width': 3,
                 'line-style': 'solid'
+            }
+        },
+        {
+            selector: 'edge[clusterColor]',
+            style: {
+                'line-color': 'data(clusterColor)',
+                'target-arrow-color': 'data(clusterColor)',
+                'opacity': 0.82
             }
         },
         // Parent edges (item -> module)

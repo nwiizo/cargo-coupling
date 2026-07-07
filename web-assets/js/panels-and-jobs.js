@@ -462,11 +462,40 @@ function showFullImpact(node) {
 // Cluster View
 // =====================================================
 
+const CLUSTER_COLORS = [
+    '#38bdf8',
+    '#34d399',
+    '#fbbf24',
+    '#f472b6',
+    '#a78bfa',
+    '#fb7185',
+    '#2dd4bf',
+    '#c084fc'
+];
+
+let clusterControlsInitialized = false;
+
 export function setupClusterView() {
+    refreshClusterView();
+
+    if (clusterControlsInitialized) return;
+    clusterControlsInitialized = true;
+
+    document.getElementById('detect-clusters')?.addEventListener('click', () => {
+        refreshClusterView({ applyColors: true });
+    });
+
+    document.getElementById('clear-clusters')?.addEventListener('click', () => {
+        clearClusterColors();
+    });
+}
+
+export function refreshClusterView({ applyColors = false } = {}) {
     const container = document.getElementById('cluster-info');
     if (!container || !state.graphData) return;
 
     const clusters = detectClusters();
+    if (applyColors) applyClusterColors(clusters);
 
     if (clusters.length === 0) {
         container.innerHTML = '<div class="no-data">No clusters detected</div>';
@@ -475,8 +504,11 @@ export function setupClusterView() {
 
     container.innerHTML = clusters.map((cluster, i) => `
         <div class="cluster-item" data-cluster="${i}">
-            <div class="cluster-header">Cluster ${i + 1} (${cluster.length} modules)</div>
-            <div class="cluster-modules">${cluster.slice(0, 3).map(n => escapeHtml(n)).join(', ')}${cluster.length > 3 ? '...' : ''}</div>
+            <span class="cluster-color" style="background: ${cluster.color}"></span>
+            <div>
+                <div class="cluster-header">Cluster ${i + 1} (${cluster.nodes.length} modules)</div>
+                <div class="cluster-modules">${cluster.nodes.slice(0, 3).map(n => escapeHtml(n.label)).join(', ')}${cluster.nodes.length > 3 ? '...' : ''}</div>
+            </div>
         </div>
     `).join('');
 
@@ -504,7 +536,10 @@ function detectClusters() {
             const current = queue.shift();
             if (visited.has(current.id())) continue;
             visited.add(current.id());
-            cluster.push(current.data('label'));
+            cluster.push({
+                id: current.id(),
+                label: current.data('label')
+            });
 
             current.neighborhood('node').forEach(n => {
                 if (!visited.has(n.id())) queue.push(n);
@@ -512,25 +547,67 @@ function detectClusters() {
         }
 
         if (cluster.length > 1) {
-            clusters.push(cluster);
+            clusters.push({
+                nodes: cluster,
+                color: CLUSTER_COLORS[clusters.length % CLUSTER_COLORS.length]
+            });
         }
     });
 
-    return clusters.sort((a, b) => b.length - a.length);
+    return clusters
+        .sort((a, b) => b.nodes.length - a.nodes.length)
+        .map((cluster, index) => ({
+            ...cluster,
+            color: CLUSTER_COLORS[index % CLUSTER_COLORS.length]
+        }));
 }
 
-function highlightCluster(clusterLabels) {
+function highlightCluster(cluster) {
+    if (!cluster) return;
     clearHighlights();
     state.cy.elements().addClass('dimmed');
 
-    const clusterNodes = state.cy.nodes().filter(n => clusterLabels.includes(n.data('label')));
+    const clusterNodeIds = new Set(cluster.nodes.map(n => n.id));
+    const clusterNodes = state.cy.nodes().filter(n => clusterNodeIds.has(n.id()));
     clusterNodes.removeClass('dimmed').addClass('highlighted');
     clusterNodes.connectedEdges().filter(e =>
-        clusterLabels.includes(state.cy.getElementById(e.data('source')).data('label')) &&
-        clusterLabels.includes(state.cy.getElementById(e.data('target')).data('label'))
+        clusterNodeIds.has(e.data('source')) &&
+        clusterNodeIds.has(e.data('target'))
     ).removeClass('dimmed').addClass('highlighted');
 
     state.cy.fit(clusterNodes, 50);
+}
+
+function applyClusterColors(clusters) {
+    if (!state.cy) return;
+
+    state.cy.elements().removeData('clusterColor clusterIndex');
+
+    clusters.forEach((cluster, index) => {
+        const clusterNodeIds = new Set(cluster.nodes.map(n => n.id));
+        cluster.nodes.forEach(node => {
+            state.cy.getElementById(node.id).data({
+                clusterColor: cluster.color,
+                clusterIndex: index
+            });
+        });
+        state.cy.edges().filter(edge =>
+            clusterNodeIds.has(edge.data('source')) &&
+            clusterNodeIds.has(edge.data('target'))
+        ).data({
+            clusterColor: cluster.color,
+            clusterIndex: index
+        });
+    });
+}
+
+export function clearClusterColors() {
+    if (!state.cy) return;
+
+    state.cy.elements()
+        .removeData('clusterColor clusterIndex')
+        .removeClass('hidden highlighted dimmed dependency-source dependency-target search-match');
+    state.cy.fit(undefined, 50);
 }
 
 // =====================================================

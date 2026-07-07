@@ -1630,7 +1630,10 @@ async function populateSourceTab(data) {
     container.innerHTML = '<div class="source-loading">Loading source code...</div>';
 
     try {
-        const response = await fetch(`/api/source?path=${encodeURIComponent(filePath)}&context=50`);
+        const params = new URLSearchParams({ path: filePath, context: '50' });
+        if (state.activeRevision) params.append('ref', state.activeRevision);
+
+        const response = await fetch(`/api/source?${params}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
