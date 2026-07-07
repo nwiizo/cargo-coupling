@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::metrics::dimensions::{Distance, Subdomain};
 use crate::metrics::project::ProjectMetrics;
@@ -88,6 +88,7 @@ pub fn analyze_project_balance_with_thresholds(
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
     });
+    dedupe_issues_by_stable_key(&mut all_issues);
 
     // Calculate summary statistics based on INTERNAL couplings only
     let total_couplings = metrics.couplings.len();
@@ -126,8 +127,20 @@ pub fn analyze_project_balance_with_thresholds(
         *issues_by_type.entry(issue.issue_type).or_insert(0) += 1;
     }
 
+    // The grade reflects structural defects and essential volatility. Diagnostics
+    // (raw git churn contradicting a declared subdomain) are reported but must not
+    // grade the project down: accidental volatility routes to the diagnostic, not
+    // to scoring (see .claude/rules/grading-integrity.md).
+    let mut gradable_by_severity: HashMap<Severity, usize> = HashMap::new();
+    for issue in all_issues
+        .iter()
+        .filter(|issue| !issue.issue_type.is_diagnostic())
+    {
+        *gradable_by_severity.entry(issue.severity).or_insert(0) += 1;
+    }
+
     // Determine overall health grade based on INTERNAL coupling issues
-    let health_grade = calculate_health_grade(&issues_by_severity, internal_couplings.max(1));
+    let health_grade = calculate_health_grade(&gradable_by_severity, internal_couplings);
     let grade_rationale =
         build_grade_rationale(&all_issues, internal_couplings, thresholds.japanese);
 
@@ -145,6 +158,13 @@ pub fn analyze_project_balance_with_thresholds(
         grade_rationale,
     }
     .with_top_priorities(5) // Increased from 3 to 5 for better actionability
+}
+
+pub(crate) fn dedupe_issues_by_stable_key(issues: &mut Vec<super::issue::CouplingIssue>) {
+    let mut seen = HashSet::new();
+    issues.retain(|issue| {
+        seen.insert((issue.issue_type, issue.source.clone(), issue.target.clone()))
+    });
 }
 
 /// Calculate overall project balance score

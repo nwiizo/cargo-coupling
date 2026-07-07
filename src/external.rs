@@ -9,13 +9,12 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::balance::action::RefactoringAction;
-use crate::balance::issue::CouplingIssue;
-use crate::balance::issue_type::IssueType;
-use crate::balance::severity::Severity;
+// Consume the crate's published facade rather than deep `balance::*` paths: the
+// re-exported surface stays stable when the balance package reorganizes internally.
 use crate::metrics::coupling::CouplingMetrics;
 use crate::metrics::dimensions::{Distance, IntegrationStrength};
 use crate::metrics::project::ProjectMetrics;
+use crate::{CouplingIssue, IssueType, RefactoringAction, Severity};
 
 /// Number of internal modules above which direct third-party usage is considered scattered.
 pub const SCATTERED_EXTERNAL_BREADTH_THRESHOLD: usize = 3;

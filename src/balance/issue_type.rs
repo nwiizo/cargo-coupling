@@ -65,6 +65,13 @@ impl std::fmt::Display for IssueType {
 }
 
 impl IssueType {
+    /// Whether this finding is a diagnostic observation rather than a structural
+    /// defect. Diagnostics (e.g. raw git churn contradicting a declared subdomain)
+    /// are reported for investigation but do not lower the health grade.
+    pub fn is_diagnostic(&self) -> bool {
+        matches!(self, IssueType::AccidentalVolatility)
+    }
+
     /// Get a detailed description of what this issue type means
     pub fn description(&self) -> &'static str {
         match self {

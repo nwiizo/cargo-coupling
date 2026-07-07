@@ -1193,8 +1193,12 @@ pub fn analyze_project_parallel_with_config(
                 continue;
             }
 
-            // Calculate distance
-            let distance = calculate_distance(&dep.path, &module_names);
+            // Calculate structural distance after resolving the target module.
+            let distance = calculate_distance(
+                &analyzed.module_name,
+                &target_module,
+                module_names.contains(&target_module),
+            );
 
             // Determine strength from usage context
             let strength = dep.usage.to_strength();
@@ -1477,9 +1481,15 @@ fn analyze_with_workspace(
                 continue;
             }
 
-            // Calculate distance with workspace awareness
-            let distance =
-                calculate_distance_with_workspace(&dep.path, &analyzed.crate_name, workspace);
+            // Calculate structural distance with workspace awareness.
+            let distance = calculate_distance_with_workspace(
+                &analyzed.module_name,
+                &target_module,
+                module_names.contains(&target_module),
+                &analyzed.crate_name,
+                resolved_crate.as_deref(),
+                workspace,
+            );
 
             // Determine strength from usage context (more accurate)
             let strength = dep.usage.to_strength();
@@ -1622,34 +1632,59 @@ fn cache_file_and_scan_path_attribute(
 
 // ===== Dependency Resolution =====
 
-/// Calculate distance using workspace information
+/// Calculate distance using workspace information.
 fn calculate_distance_with_workspace(
-    dep_path: &str,
+    source_module: &str,
+    target_module: &str,
+    target_is_known_internal_module: bool,
     current_crate: &str,
+    resolved_crate: Option<&str>,
     workspace: &WorkspaceInfo,
 ) -> Distance {
-    if dep_path.starts_with("crate::") || dep_path.starts_with("self::") {
-        // Same crate
-        Distance::SameModule
-    } else if dep_path.starts_with("super::") {
-        // Could be same crate or parent module
-        Distance::DifferentModule
-    } else {
-        // Resolve the target crate
-        if let Some(target_crate) = resolve_crate_from_path(dep_path, current_crate, workspace) {
-            if target_crate == current_crate {
-                Distance::SameModule
-            } else if workspace.is_workspace_member(&target_crate) {
-                // Another workspace member
-                Distance::DifferentModule
-            } else {
-                // External crate
-                Distance::DifferentCrate
-            }
+    let Some(target_crate) = resolved_crate else {
+        return Distance::DifferentCrate;
+    };
+
+    if target_crate != current_crate {
+        return if workspace.is_workspace_member(target_crate) {
+            Distance::DifferentModule
         } else {
             Distance::DifferentCrate
+        };
+    }
+
+    calculate_distance(
+        source_module,
+        target_module,
+        target_is_known_internal_module,
+    )
+}
+
+fn is_adjacent_module(source_module: &str, target_module: &str) -> bool {
+    let source_segments: Vec<&str> = source_module.split("::").collect();
+    let target_segments: Vec<&str> = target_module.split("::").collect();
+
+    if source_segments == target_segments {
+        return true;
+    }
+
+    if source_segments.len().abs_diff(target_segments.len()) == 1 {
+        let shorter_len = source_segments.len().min(target_segments.len());
+        let source_prefix = &source_segments[..shorter_len];
+        let target_prefix = &target_segments[..shorter_len];
+        if source_prefix == target_prefix {
+            return true;
         }
     }
+
+    let Some(source_parent) = source_segments.split_last().map(|(_, parent)| parent) else {
+        return false;
+    };
+    let Some(target_parent) = target_segments.split_last().map(|(_, parent)| parent) else {
+        return false;
+    };
+
+    !source_parent.is_empty() && source_parent == target_parent
 }
 
 /// Analyzed file with crate information
@@ -1791,16 +1826,20 @@ fn is_valid_dependency_path(path: &str) -> bool {
     true
 }
 
-/// Calculate distance based on dependency path
-fn calculate_distance(dep_path: &str, _known_modules: &HashSet<String>) -> Distance {
-    if dep_path.starts_with("crate::") || dep_path.starts_with("super::") {
-        // Internal dependency
-        Distance::DifferentModule
-    } else if dep_path.starts_with("self::") {
+/// Calculate same-crate structural distance after target resolution.
+fn calculate_distance(
+    source_module: &str,
+    target_module: &str,
+    target_is_known_internal_module: bool,
+) -> Distance {
+    if !target_is_known_internal_module {
+        return Distance::DifferentCrate;
+    }
+
+    if is_adjacent_module(source_module, target_module) {
         Distance::SameModule
     } else {
-        // External crate
-        Distance::DifferentCrate
+        Distance::DifferentModule
     }
 }
 
@@ -2047,6 +2086,119 @@ mod tests {
         assert_eq!(
             resolve_target_module("std::collections::HashMap", "balance::coupling", &known),
             "std"
+        );
+    }
+
+    #[test]
+    fn test_structural_distance_same_file_is_same_module() {
+        assert_eq!(
+            calculate_distance("balance::grade", "balance::grade", true),
+            Distance::SameModule
+        );
+    }
+
+    #[test]
+    fn test_structural_distance_siblings_are_same_module_when_parent_is_not_root() {
+        let known = HashSet::from([
+            "balance::grade".to_string(),
+            "balance::rationale".to_string(),
+        ]);
+
+        let super_target =
+            resolve_target_module("super::rationale::GradeRationale", "balance::grade", &known);
+        let crate_target = resolve_target_module(
+            "crate::balance::rationale::GradeRationale",
+            "balance::grade",
+            &known,
+        );
+
+        assert_eq!(super_target, "balance::rationale");
+        assert_eq!(crate_target, "balance::rationale");
+        assert_eq!(
+            calculate_distance(
+                "balance::grade",
+                &super_target,
+                known.contains(&super_target)
+            ),
+            Distance::SameModule
+        );
+        assert_eq!(
+            calculate_distance(
+                "balance::grade",
+                &crate_target,
+                known.contains(&crate_target)
+            ),
+            Distance::SameModule
+        );
+    }
+
+    #[test]
+    fn test_structural_distance_parent_child_is_same_module() {
+        assert_eq!(
+            calculate_distance("balance", "balance::grade", true),
+            Distance::SameModule
+        );
+        assert_eq!(
+            calculate_distance("balance::grade", "balance", true),
+            Distance::SameModule
+        );
+    }
+
+    #[test]
+    fn test_structural_distance_root_level_siblings_are_different_module() {
+        assert_eq!(
+            calculate_distance("diff", "analyzer", true),
+            Distance::DifferentModule
+        );
+        assert_eq!(
+            calculate_distance("diff", "balance::issue", true),
+            Distance::DifferentModule
+        );
+    }
+
+    #[test]
+    fn test_structural_distance_crate_syntax_does_not_make_far_module_close() {
+        let known = HashSet::from(["far::away".to_string()]);
+        let target = resolve_target_module("crate::far::away::X", "diff", &known);
+
+        assert_eq!(target, "far::away");
+        assert_eq!(
+            calculate_distance("diff", &target, known.contains(&target)),
+            Distance::DifferentModule
+        );
+    }
+
+    #[test]
+    fn test_structural_distance_workspace_member_and_external_crate() {
+        let workspace = WorkspaceInfo {
+            root: PathBuf::new(),
+            crates: HashMap::new(),
+            members: vec!["app".to_string(), "domain".to_string()],
+            dependency_graph: HashMap::new(),
+            reverse_deps: HashMap::new(),
+        };
+
+        assert_eq!(
+            calculate_distance_with_workspace(
+                "app_module",
+                "serde",
+                false,
+                "app",
+                Some("serde"),
+                &workspace,
+            ),
+            Distance::DifferentCrate
+        );
+        assert_eq!(
+            calculate_distance_with_workspace(
+                "app_module",
+                "domain_module",
+                false,
+                "app",
+                Some("domain"),
+                &workspace,
+            ),
+            Distance::DifferentModule
         );
     }
 

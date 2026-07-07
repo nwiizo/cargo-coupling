@@ -53,7 +53,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::balance::coupling::{is_crate_root_facade, is_entrypoint_module};
-    use crate::balance::grade::calculate_health_grade;
+    use crate::balance::grade::{build_grade_rationale, calculate_health_grade};
     use crate::metrics::dimensions::Visibility;
     use crate::metrics::module::ModuleMetrics;
     use crate::volatility::TemporalCoupling;
@@ -184,19 +184,31 @@ mod tests {
     }
 
     #[test]
-    fn test_identify_cascading_change() {
-        // Now only INTRUSIVE + High volatility triggers cascading change risk
-        let coupling = make_coupling(
+    fn test_identify_cascading_change_requires_far_distance() {
+        let close_coupling = make_coupling(
             IntegrationStrength::Intrusive,
             Distance::SameModule,
             Volatility::High,
         );
-        let issues = identify_issues(&coupling);
+        let close_issues = identify_issues(&close_coupling);
         assert!(
-            issues
+            !close_issues
                 .iter()
                 .any(|i| i.issue_type == IssueType::CascadingChangeRisk),
-            "Intrusive coupling + High volatility should detect CascadingChangeRisk"
+            "Intrusive + High + SameModule is cohesion, not cascading risk"
+        );
+
+        let far_coupling = make_coupling(
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::High,
+        );
+        let far_issues = identify_issues(&far_coupling);
+        assert!(
+            far_issues
+                .iter()
+                .any(|i| i.issue_type == IssueType::CascadingChangeRisk),
+            "Intrusive + High + DifferentModule should detect CascadingChangeRisk"
         );
     }
 
@@ -264,6 +276,29 @@ mod tests {
         assert_eq!(issue.severity, Severity::Medium);
         assert!(issue.description.contains("75% ratio"));
         assert!(issue.description.contains("6 co-changes"));
+    }
+
+    #[test]
+    fn accidental_volatility_diagnostics_do_not_lower_the_grade() {
+        // Same medium count: as structural defects it degrades the grade, as
+        // accidental-volatility diagnostics it must not (churn routes to the
+        // diagnostic, not to scoring — grading-integrity rule).
+        let internal = 100;
+        let mediums = 15; // 15% density: above the 10% A threshold
+
+        let mut structural: HashMap<Severity, usize> = HashMap::new();
+        structural.insert(Severity::Medium, mediums);
+        let degraded = calculate_health_grade(&structural, internal);
+        assert_ne!(degraded, HealthGrade::A);
+
+        // Diagnostics are excluded before the grade call (see balance/project.rs);
+        // an empty gradable map with enough couplings certifies A or S.
+        let gradable: HashMap<Severity, usize> = HashMap::new();
+        let ungraded = calculate_health_grade(&gradable, internal);
+        assert!(matches!(ungraded, HealthGrade::A | HealthGrade::S));
+
+        assert!(IssueType::AccidentalVolatility.is_diagnostic());
+        assert!(!IssueType::GodModule.is_diagnostic());
     }
 
     #[test]
@@ -543,6 +578,61 @@ mod tests {
                 .contains("Cascading Change Risk")
         );
         assert!(report.grade_rationale.volatility_note.is_some());
+    }
+
+    #[test]
+    fn test_duplicate_issue_keys_are_deduped_in_report() {
+        let mut metrics = ProjectMetrics::new();
+        metrics.add_coupling(CouplingMetrics::new(
+            "balance::grade".to_string(),
+            "balance::rationale".to_string(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::High,
+        ));
+        metrics.add_coupling(CouplingMetrics::new(
+            "balance::grade".to_string(),
+            "balance::rationale".to_string(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::High,
+        ));
+
+        let report = analyze_project_balance(&metrics);
+        let duplicate_key_count = report
+            .issues
+            .iter()
+            .filter(|issue| {
+                issue.issue_type == IssueType::CascadingChangeRisk
+                    && issue.source == "balance::grade"
+                    && issue.target == "balance::rationale"
+            })
+            .count();
+
+        assert_eq!(duplicate_key_count, 1);
+    }
+
+    #[test]
+    fn test_grade_rationale_mentions_data_limit_for_zero_and_low_couplings() {
+        let english_zero = build_grade_rationale(&[], 0, false);
+        assert!(english_zero.summary.contains("0 internal couplings"));
+        assert!(english_zero.summary.contains("grade capped at B"));
+
+        let english_low = build_grade_rationale(&[], 9, false);
+        assert!(
+            english_low
+                .summary
+                .contains("fewer than 10 internal couplings")
+        );
+        assert!(english_low.summary.contains("grade capped at B"));
+
+        let japanese_zero = build_grade_rationale(&[], 0, true);
+        assert!(japanese_zero.summary.contains("内部結合が 0 件"));
+        assert!(japanese_zero.summary.contains("グレードは B が上限"));
+
+        let japanese_low = build_grade_rationale(&[], 9, true);
+        assert!(japanese_low.summary.contains("10 件未満"));
+        assert!(japanese_low.summary.contains("グレードは B が上限"));
     }
 
     #[test]

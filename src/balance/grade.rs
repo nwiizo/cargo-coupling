@@ -13,7 +13,12 @@ pub(crate) fn build_grade_rationale(
     if issues.is_empty() {
         let summary = if japanese {
             if internal_couplings == 0 {
-                "問題密度の採点に使える内部結合はありませんでした。".to_string()
+                "内部結合が 0 件のため、バランスを認定するにはデータが少なすぎます。グレードは B が上限です。".to_string()
+            } else if internal_couplings < 10 {
+                format!(
+                    "内部結合が {} 件で 10 件未満のため、バランスを認定するにはデータが少なすぎます。グレードは B が上限です。",
+                    internal_couplings
+                )
             } else {
                 format!(
                     "{} 件の内部結合に検出対象の問題はありません。問題密度が低いため、このグレードになっています。",
@@ -21,7 +26,13 @@ pub(crate) fn build_grade_rationale(
                 )
             }
         } else if internal_couplings == 0 {
-            "No internal couplings were available for issue-density scoring.".to_string()
+            "0 internal couplings: too little data to certify balance; grade capped at B."
+                .to_string()
+        } else if internal_couplings < 10 {
+            format!(
+                "{} internal coupling(s): fewer than 10 internal couplings, too little data to certify balance; grade capped at B.",
+                internal_couplings
+            )
         } else {
             format!(
                 "No surfaced coupling issues across {} internal coupling(s); grade reflects low issue density.",
@@ -96,10 +107,13 @@ pub(crate) fn build_grade_rationale(
     let volatility_note = if volatility_issue_count > 0 {
         let accidental_suffix = if accidental_count > 0 {
             if japanese {
-                format!(" (偶発的な変更頻度 {} 件を含む)", accidental_count)
+                format!(
+                    " (偶発的な変更頻度 {} 件を含む。診断のためグレードには算入しない)",
+                    accidental_count
+                )
             } else {
                 format!(
-                    ", including {} accidental-volatility finding(s)",
+                    ", including {} accidental-volatility diagnostic(s) reported but not graded",
                     accidental_count
                 )
             }
