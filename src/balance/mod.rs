@@ -332,6 +332,68 @@ mod tests {
     }
 
     #[test]
+    fn test_hidden_coupling_skips_adjacent_modules_and_requires_evidence_for_high() {
+        // Parent/child co-change is cohesion, not hidden coupling.
+        let mut metrics = ProjectMetrics::new();
+        metrics.add_module(ModuleMetrics::new(
+            PathBuf::from("src/balance/mod.rs"),
+            "balance".to_string(),
+        ));
+        metrics.add_module(ModuleMetrics::new(
+            PathBuf::from("src/balance/project.rs"),
+            "balance::project".to_string(),
+        ));
+        metrics.temporal_couplings.push(TemporalCoupling {
+            file_a: "src/balance/mod.rs".to_string(),
+            file_b: "src/balance/project.rs".to_string(),
+            co_change_count: 12,
+            coupling_ratio: 0.9,
+        });
+        let report = analyze_project_balance(&metrics);
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| issue.issue_type == IssueType::HiddenCoupling),
+            "adjacent (parent/child) co-change must not be hidden coupling"
+        );
+
+        // High needs a repeated pattern: 5 co-changes at 100% is a burst -> Medium.
+        let mut sprint = ProjectMetrics::new();
+        sprint.add_module(ModuleMetrics::new(
+            PathBuf::from("src/alpha.rs"),
+            "alpha".to_string(),
+        ));
+        sprint.add_module(ModuleMetrics::new(
+            PathBuf::from("src/beta.rs"),
+            "beta".to_string(),
+        ));
+        sprint.temporal_couplings.push(TemporalCoupling {
+            file_a: "src/alpha.rs".to_string(),
+            file_b: "src/beta.rs".to_string(),
+            co_change_count: 5,
+            coupling_ratio: 1.0,
+        });
+        let report = analyze_project_balance(&sprint);
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.issue_type == IssueType::HiddenCoupling)
+            .expect("burst co-change is still reported");
+        assert_eq!(issue.severity, Severity::Medium);
+
+        // A persistent pattern (>= 8 co-changes at >= 80%) is High.
+        sprint.temporal_couplings[0].co_change_count = 9;
+        let report = analyze_project_balance(&sprint);
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.issue_type == IssueType::HiddenCoupling)
+            .expect("persistent co-change is reported");
+        assert_eq!(issue.severity, Severity::High);
+    }
+
+    #[test]
     fn test_hidden_coupling_skipped_when_code_dependency_exists() {
         let mut metrics = ProjectMetrics::new();
         metrics.add_module(ModuleMetrics::new(

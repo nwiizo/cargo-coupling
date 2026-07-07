@@ -38,6 +38,7 @@
 
 pub mod analyzer;
 pub mod balance;
+mod classification;
 pub mod cli_output;
 pub mod config;
 pub mod diff;
