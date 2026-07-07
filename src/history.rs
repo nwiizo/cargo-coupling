@@ -341,6 +341,11 @@ fn analyze_ref_in_repo(
     let mut metrics = analyze_workspace_with_config(&analysis_path, &config)
         .map_err(|e| HistoryError::Analysis(e.to_string()))?;
 
+    // Drift notes assert "the CURRENT config is stale". Historical revisions are
+    // analyzed with today's config against an old tree, so an unmatched pattern
+    // there says nothing about config rot — suppress to avoid false positives.
+    metrics.dead_config_patterns.clear();
+
     if metrics.modules.is_empty() {
         return Err(HistoryError::Analysis(
             "no modules found at this revision".to_string(),

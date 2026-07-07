@@ -25,6 +25,8 @@ pub struct ProjectMetrics {
     pub skipped_crates: Vec<String>,
     /// Module references skipped because they cross analyzed package/workspace boundaries.
     pub boundary_skipped_files: usize,
+    /// Config patterns that matched no paths in the analysis candidate set.
+    pub dead_config_patterns: Vec<String>,
     /// Workspace name (if available from cargo metadata)
     pub workspace_name: Option<String>,
     /// Workspace member crate names

@@ -32,6 +32,8 @@ pub struct ManifestContext {
     pub skipped_crates: Vec<String>,
     /// Module references skipped after resolving outside the analyzed boundary.
     pub boundary_skipped_files: usize,
+    /// Config patterns that matched no paths in this analysis run.
+    pub dead_config_patterns: Vec<String>,
 }
 
 /// The declared negative space of an analysis run.
@@ -148,6 +150,19 @@ pub fn build_manifest(ctx: &ManifestContext) -> AnalysisManifest {
             ctx.boundary_skipped_files
         ));
     }
+    if !ctx.dead_config_patterns.is_empty() {
+        let pattern_list = ctx.dead_config_patterns.join(", ");
+        notes.push(format!(
+            ".coupling.toml drift: {} pattern(s) matched no analyzed files ({}); the classifications they were meant to apply are not in effect.",
+            ctx.dead_config_patterns.len(),
+            pattern_list
+        ));
+        notes_ja.push(format!(
+            ".coupling.toml のドリフト: {} 件のパターンがどの解析対象ファイルにもマッチしません（{}）。意図した分類は適用されていません。",
+            ctx.dead_config_patterns.len(),
+            pattern_list
+        ));
+    }
 
     AnalysisManifest {
         blind_spots: STRUCTURAL_BLIND_SPOTS.to_vec(),
@@ -168,6 +183,7 @@ mod tests {
             parse_failures: 0,
             skipped_crates: Vec::new(),
             boundary_skipped_files: 0,
+            dead_config_patterns: Vec::new(),
         });
         assert_eq!(manifest.blind_spots.len(), STRUCTURAL_BLIND_SPOTS.len());
         assert!(
@@ -192,6 +208,7 @@ mod tests {
             parse_failures: 0,
             skipped_crates: Vec::new(),
             boundary_skipped_files: 0,
+            dead_config_patterns: Vec::new(),
         });
         assert!(manifest.notes.is_empty());
     }
@@ -213,6 +230,7 @@ mod tests {
             parse_failures: 0,
             skipped_crates: Vec::new(),
             boundary_skipped_files: 0,
+            dead_config_patterns: Vec::new(),
         });
         assert!(manifest.notes.iter().any(|n| n.contains("Test code")));
     }
@@ -225,6 +243,7 @@ mod tests {
             parse_failures: 3,
             skipped_crates: Vec::new(),
             boundary_skipped_files: 0,
+            dead_config_patterns: Vec::new(),
         });
         assert!(manifest.notes.iter().any(|n| n.contains("3 source file")));
     }
@@ -237,6 +256,7 @@ mod tests {
             parse_failures: 2,
             skipped_crates: Vec::new(),
             boundary_skipped_files: 0,
+            dead_config_patterns: Vec::new(),
         });
         assert_eq!(manifest.notes.len(), 3);
     }
@@ -249,6 +269,7 @@ mod tests {
             parse_failures: 0,
             skipped_crates: vec!["empty-member".to_string()],
             boundary_skipped_files: 0,
+            dead_config_patterns: Vec::new(),
         });
         assert!(manifest.notes.iter().any(|n| {
             n.contains(
@@ -268,6 +289,7 @@ mod tests {
             parse_failures: 0,
             skipped_crates: Vec::new(),
             boundary_skipped_files: 2,
+            dead_config_patterns: Vec::new(),
         });
 
         assert!(manifest.notes.iter().any(|n| {
@@ -278,5 +300,46 @@ mod tests {
         assert!(manifest.notes_ja.iter().any(|n| {
             n.contains("2 件のモジュール参照が解析対象パッケージ/ワークスペース境界の外を指しており、解析されていません。")
         }));
+    }
+
+    #[test]
+    fn dead_config_patterns_are_reported_in_both_languages() {
+        let manifest = build_manifest(&ManifestContext {
+            git_used: true,
+            tests_excluded: false,
+            parse_failures: 0,
+            skipped_crates: Vec::new(),
+            boundary_skipped_files: 0,
+            dead_config_patterns: vec![
+                "subdomains.core: src/old.rs".to_string(),
+                "volatility.high: src/dead.rs".to_string(),
+            ],
+        });
+
+        assert!(manifest.notes.iter().any(|n| {
+            n.contains(".coupling.toml drift: 2 pattern(s) matched no analyzed files (subdomains.core: src/old.rs, volatility.high: src/dead.rs); the classifications they were meant to apply are not in effect.")
+        }));
+        assert!(manifest.notes_ja.iter().any(|n| {
+            n.contains(".coupling.toml のドリフト: 2 件のパターンがどの解析対象ファイルにもマッチしません（subdomains.core: src/old.rs, volatility.high: src/dead.rs）。意図した分類は適用されていません。")
+        }));
+    }
+
+    #[test]
+    fn empty_dead_config_patterns_add_no_note() {
+        let manifest = build_manifest(&ManifestContext {
+            git_used: true,
+            tests_excluded: false,
+            parse_failures: 0,
+            skipped_crates: Vec::new(),
+            boundary_skipped_files: 0,
+            dead_config_patterns: Vec::new(),
+        });
+
+        assert!(
+            !manifest
+                .notes
+                .iter()
+                .any(|n| n.contains(".coupling.toml drift"))
+        );
     }
 }

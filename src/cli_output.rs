@@ -2259,6 +2259,7 @@ mod tests {
             parse_failures: 0,
             skipped_crates: Vec::new(),
             boundary_skipped_files: 0,
+            dead_config_patterns: Vec::new(),
         });
         let mut buf = Vec::new();
 

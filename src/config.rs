@@ -217,6 +217,15 @@ pub struct CompiledConfig {
     cache: HashMap<String, Option<Volatility>>,
 }
 
+/// A configured pattern that matched no paths during analysis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeadConfigPattern {
+    /// Config section containing the pattern.
+    pub section: &'static str,
+    /// Original pattern string from the config.
+    pub pattern: String,
+}
+
 impl CompiledConfig {
     /// Create a compiled config from raw config
     pub fn from_config(config: CouplingConfig) -> Result<Self, ConfigError> {
@@ -307,6 +316,76 @@ impl CompiledConfig {
     pub fn should_ignore(&self, path: &str) -> bool {
         self.ignore_patterns.iter().any(|p| p.matches(path))
             || self.exclude_patterns.iter().any(|p| p.matches(path))
+    }
+
+    /// Scoring-affecting pattern strings (subdomains, volatility overrides) that
+    /// matched none of the given analyzed paths.
+    ///
+    /// A dead subdomain/volatility pattern silently reverts scoring to raw git churn,
+    /// so it is reported as drift. `analysis.exclude` and `prelude_modules` are NOT
+    /// reported: an unmatched exclude analyzes nothing wrongly (defensive future-proof
+    /// excludes are idiomatic), and a dead prelude exemption surfaces as visible
+    /// afferent warnings rather than silent misclassification.
+    pub fn dead_patterns(&self, candidate_paths: &[String]) -> Vec<DeadConfigPattern> {
+        let mut dead = Vec::new();
+        Self::add_dead_patterns(
+            &mut dead,
+            "subdomains.core",
+            &self.core_patterns,
+            candidate_paths,
+        );
+        Self::add_dead_patterns(
+            &mut dead,
+            "subdomains.supporting",
+            &self.supporting_patterns,
+            candidate_paths,
+        );
+        Self::add_dead_patterns(
+            &mut dead,
+            "subdomains.generic",
+            &self.generic_patterns,
+            candidate_paths,
+        );
+        Self::add_dead_patterns(
+            &mut dead,
+            "volatility.high",
+            &self.high_patterns,
+            candidate_paths,
+        );
+        Self::add_dead_patterns(
+            &mut dead,
+            "volatility.medium",
+            &self.medium_patterns,
+            candidate_paths,
+        );
+        Self::add_dead_patterns(
+            &mut dead,
+            "volatility.low",
+            &self.low_patterns,
+            candidate_paths,
+        );
+        dead
+    }
+
+    fn add_dead_patterns(
+        dead: &mut Vec<DeadConfigPattern>,
+        section: &'static str,
+        patterns: &[Pattern],
+        candidate_paths: &[String],
+    ) {
+        dead.extend(patterns.iter().filter_map(|pattern| {
+            if candidate_paths
+                .iter()
+                .any(|path| pattern.matches(path.as_str()))
+            {
+                None
+            } else {
+                Some(DeadConfigPattern {
+                    section,
+                    pattern: pattern.as_str().to_string(),
+                })
+            }
+        }));
     }
 
     /// Get the list of prelude module patterns (for reporting)
@@ -715,6 +794,85 @@ mod tests {
         assert_eq!(
             compiled.get_volatility_override("src/analyzer.rs"),
             Some(Volatility::Low)
+        );
+    }
+
+    #[test]
+    fn dead_patterns_reports_only_unmatched_patterns_by_section() {
+        let toml = r#"
+            [analysis]
+            prelude_modules = ["src/lib.rs", "src/missing_prelude.rs"]
+            exclude = ["src/never_matches/**"]
+
+            [volatility]
+            high = ["src/core/**"]
+            medium = ["src/medium.rs"]
+            low = ["src/stable.rs"]
+
+            [subdomains]
+            core = ["src/core/**", "src/old_core.rs"]
+            supporting = ["src/supporting.rs"]
+            generic = ["src/generic.rs"]
+        "#;
+
+        let config: CouplingConfig = toml::from_str(toml).unwrap();
+        let compiled = CompiledConfig::from_config(config).unwrap();
+        let candidate_paths = vec![
+            "src/lib.rs".to_string(),
+            "src/core/mod.rs".to_string(),
+            "src/supporting.rs".to_string(),
+            "src/stable.rs".to_string(),
+        ];
+
+        let dead = compiled.dead_patterns(&candidate_paths);
+
+        assert_eq!(
+            dead,
+            vec![
+                DeadConfigPattern {
+                    section: "subdomains.core",
+                    pattern: "src/old_core.rs".to_string(),
+                },
+                DeadConfigPattern {
+                    section: "subdomains.generic",
+                    pattern: "src/generic.rs".to_string(),
+                },
+                DeadConfigPattern {
+                    section: "volatility.medium",
+                    pattern: "src/medium.rs".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn dead_patterns_never_reports_exclude_or_prelude() {
+        // A dead exclude analyzes nothing wrongly (defensive future-proof excludes are
+        // idiomatic) and a dead prelude exemption surfaces as visible warnings, so
+        // neither is drift.
+        let toml = r#"
+            [analysis]
+            prelude_modules = ["src/missing_prelude.rs"]
+            exclude = ["src/never_matches/**"]
+        "#;
+
+        let config: CouplingConfig = toml::from_str(toml).unwrap();
+        let compiled = CompiledConfig::from_config(config).unwrap();
+
+        assert!(
+            compiled
+                .dead_patterns(&["src/lib.rs".to_string()])
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn empty_config_has_no_dead_patterns() {
+        let candidate_paths = vec!["src/lib.rs".to_string()];
+        assert!(
+            CompiledConfig::empty()
+                .dead_patterns(&candidate_paths)
+                .is_empty()
         );
     }
 }

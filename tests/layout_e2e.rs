@@ -32,6 +32,7 @@ fn manifest_for(metrics: &ProjectMetrics) -> cargo_coupling::AnalysisManifest {
         parse_failures: metrics.parse_failures,
         skipped_crates: metrics.skipped_crates.clone(),
         boundary_skipped_files: metrics.boundary_skipped_files,
+        dead_config_patterns: metrics.dead_config_patterns.clone(),
     })
 }
 
@@ -487,6 +488,7 @@ path = "does-not-exist/main.rs"
         parse_failures: metrics.parse_failures,
         skipped_crates: metrics.skipped_crates,
         boundary_skipped_files: metrics.boundary_skipped_files,
+        dead_config_patterns: metrics.dead_config_patterns,
     });
 
     assert!(manifest.notes.iter().any(|note| {

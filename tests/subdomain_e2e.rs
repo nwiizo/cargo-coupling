@@ -4,8 +4,8 @@ use std::path::Path;
 use std::process::Command;
 
 use cargo_coupling::{
-    CompiledConfig, IssueType, Volatility, analyze_project_balance, analyze_workspace_with_config,
-    load_compiled_config,
+    AnalysisManifest, CompiledConfig, IssueType, ManifestContext, Volatility,
+    analyze_project_balance, analyze_workspace_with_config, build_manifest, load_compiled_config,
 };
 
 fn write(path: &Path, content: &str) {
@@ -47,6 +47,38 @@ fn mark_stable_as_git_churn(metrics: &mut cargo_coupling::ProjectMetrics) {
 
 fn cargo_coupling() -> Command {
     Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
+}
+
+fn manifest_for_config(config_toml: &str) -> AnalysisManifest {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+
+    write(
+        &root.join("Cargo.toml"),
+        r#"[package]
+name = "drift-fixture"
+version = "0.1.0"
+edition = "2024"
+"#,
+    );
+    write(&root.join(".coupling.toml"), config_toml);
+    write(&src.join("lib.rs"), "pub mod live;\npub mod excluded;\n");
+    write(&src.join("live.rs"), "pub struct Live;\n");
+    write(&src.join("excluded.rs"), "pub struct Excluded;\n");
+
+    let config = load_compiled_config(&src).unwrap();
+    let metrics = analyze_workspace_with_config(&src, &config).unwrap();
+
+    build_manifest(&ManifestContext {
+        git_used: true,
+        tests_excluded: config.exclude_tests,
+        parse_failures: metrics.parse_failures,
+        skipped_crates: metrics.skipped_crates,
+        boundary_skipped_files: metrics.boundary_skipped_files,
+        dead_config_patterns: metrics.dead_config_patterns,
+    })
 }
 
 #[test]
@@ -132,5 +164,129 @@ fn verbose_cli_reports_nonzero_applied_volatility_overrides() {
     assert!(
         !stderr.contains("Applied 0 volatility overrides"),
         "override count should be nonzero, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn stale_subdomain_pattern_is_declared_in_manifest() {
+    let manifest = manifest_for_config(
+        r#"
+[subdomains]
+core = ["src/missing.rs"]
+"#,
+    );
+
+    assert!(manifest.notes.iter().any(|note| {
+        note.contains(".coupling.toml drift:") && note.contains("subdomains.core: src/missing.rs")
+    }));
+}
+
+#[test]
+fn matching_subdomain_pattern_has_no_drift_note() {
+    let manifest = manifest_for_config(
+        r#"
+[subdomains]
+core = ["src/live.rs"]
+"#,
+    );
+
+    assert!(
+        !manifest
+            .notes
+            .iter()
+            .any(|note| note.contains(".coupling.toml drift"))
+    );
+}
+
+#[test]
+fn excluded_file_pattern_is_dead_for_subdomain_but_not_for_exclude() {
+    let manifest = manifest_for_config(
+        r#"
+[analysis]
+exclude = ["src/excluded.rs"]
+
+[subdomains]
+core = ["src/excluded.rs"]
+"#,
+    );
+
+    assert!(manifest.notes.iter().any(|note| {
+        note.contains(".coupling.toml drift:") && note.contains("subdomains.core: src/excluded.rs")
+    }));
+    assert!(
+        !manifest
+            .notes
+            .iter()
+            .any(|note| note.contains("analysis.exclude: src/excluded.rs"))
+    );
+}
+
+#[test]
+fn pattern_matching_only_a_parse_failing_file_is_not_drift() {
+    // The parse-failure note owns this degradation; a drift note would misdirect
+    // the user toward editing .coupling.toml when the real fix is the syntax error.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+
+    write(
+        &root.join("Cargo.toml"),
+        "[package]\nname = \"broken-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    );
+    write(
+        &root.join(".coupling.toml"),
+        "[subdomains]\ncore = [\"src/broken.rs\"]\n",
+    );
+    write(&src.join("lib.rs"), "pub mod broken;\n");
+    write(&src.join("broken.rs"), "pub struct {{{ not rust\n");
+
+    let config = load_compiled_config(&src).unwrap();
+    let metrics = analyze_workspace_with_config(&src, &config).unwrap();
+
+    assert!(metrics.parse_failures >= 1, "fixture must fail to parse");
+    assert!(
+        metrics.dead_config_patterns.is_empty(),
+        "parse-failing file still counts as a pattern match candidate, got {:?}",
+        metrics.dead_config_patterns
+    );
+}
+
+#[test]
+fn out_of_scope_pattern_is_not_drift_in_partial_scope_run() {
+    // A shared root .coupling.toml can describe sibling trees; analyzing one
+    // subtree (the non-workspace fallback path scopes strictly to the given dir)
+    // must not claim sibling-directed patterns are rotted.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(root.join("other")).unwrap();
+
+    write(
+        &root.join(".coupling.toml"),
+        "[subdomains]\ncore = [\"other/**\"]\nsupporting = [\"src/missing.rs\"]\n",
+    );
+    write(&src.join("lib.rs"), "pub struct Live;\n");
+    write(&root.join("other/thing.rs"), "pub struct Thing;\n");
+
+    let config = load_compiled_config(&src).unwrap();
+    let metrics = cargo_coupling::analyze_project_parallel_with_config(&src, &config).unwrap();
+
+    assert!(
+        !metrics
+            .dead_config_patterns
+            .iter()
+            .any(|p| p.contains("other/**")),
+        "sibling-tree pattern must not be judged by a src-scoped run, got {:?}",
+        metrics.dead_config_patterns
+    );
+    assert!(
+        metrics
+            .dead_config_patterns
+            .iter()
+            .any(|p| p.contains("subdomains.supporting: src/missing.rs")),
+        "in-scope stale pattern must still be reported, got {:?}",
+        metrics.dead_config_patterns
     );
 }
