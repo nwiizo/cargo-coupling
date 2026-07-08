@@ -304,10 +304,12 @@ Represents how tightly components depend on each other.
 
 | Level | Description | Rust Example | Score |
 |-------|-------------|--------------|-------|
-| **Intrusive** | Direct dependency on internal implementation | Direct access to `struct.field` | 1.00 (strong) |
+| **Intrusive** | Dependency on unpublished internals | Field access / construction of a crate-restricted (`pub(crate)`) type; `impl` on another module's type | 1.00 (strong) |
 | **Functional** | Dependency on behavior | Method calls on concrete types | 0.75 |
-| **Model** | Dependency on data structures | Sharing type definitions | 0.50 |
+| **Model** | Dependency on the published data model | Sharing type definitions; field access / construction of a `pub` type | 0.50 |
 | **Contract** | Dependency on interfaces only | Access via `trait` | 0.25 (weak) |
+
+> Cross-module access to a private field does not compile in Rust, so field access on a deliberately-public type is use of the published record (Model), not intrusion.
 
 → Lower in the table = **weaker** coupling (preferred)
 
@@ -317,9 +319,11 @@ The physical or logical distance between dependent components.
 
 | Level | Description | Score |
 |-------|-------------|-------|
-| **Same Module** | Within the same module | 0.25 (close) |
-| **Different Module** | Different module in the same crate | 0.50 |
+| **Same Module** | Same module, or structurally adjacent in the module tree (ancestor/descendant, or siblings under one parent package) | 0.25 (close) |
+| **Different Module** | A different subtree of the same crate | 0.50 |
 | **External Crate** | Dependency on external crate | 1.00 (far) |
+
+> Distance is structural: it is computed from the two modules' positions in the module tree, not from how the import is written (`crate::` vs `super::`).
 
 → Lower in the table = **farther** distance
 
@@ -412,7 +416,7 @@ BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
 ```rust
 // module_a.rs
 fn process_user(user: &User) {
-    // Direct access to struct internal fields (Intrusive)
+    // Direct access to a crate-internal type's fields (Intrusive)
     let name = &user.name;           // ← strong coupling
     let age = user.age;              // ← strong coupling
     let email = &user.email_address; // ← breaks if field name changes
@@ -422,15 +426,15 @@ fn process_user(user: &User) {
 
 ```rust
 // module_b.rs (frequently modified)
-pub struct User {
-    pub name: String,
-    pub age: u32,
-    pub email_address: String,  // ← renamed from email
+pub(crate) struct User {
+    pub(crate) name: String,
+    pub(crate) age: u32,
+    pub(crate) email_address: String,  // ← renamed from email
 }
 ```
 
 **Issues**:
-- Coupling strength: Intrusive (direct field access)
+- Coupling strength: Intrusive (field access on a crate-internal type that was never published as a contract)
 - Distance: Different Module
 - Volatility: High (User struct changes frequently)
 

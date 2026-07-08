@@ -38,3 +38,28 @@ resets, threshold/subdomain manipulation) — which would destroy the tool's onl
 you can trust. The honest grade for a tool mid-sprint with a genuinely central core (`balance`) and an
 entrypoint hub (`main`) is **D→C**; it rises naturally as churn settles. Integrity of the metric
 outranks the letter.
+
+## v0.3.7 learnings (scoring-model re-verification)
+
+8. **Distance must be structural, never syntactic.** Deriving distance from import syntax
+   (`crate::` = Same, `super::` = Different) inverted reality: it punished the tool's own
+   recommended god-module splits (siblings import via `super::`) and hid genuinely far
+   couplings written as `crate::far::x`. Distance now comes from module-tree adjacency.
+9. **Import-style changes can silently delete coupling — an adversarial reviewer caught it.**
+   Switching deep imports to facade re-exports (`use crate::Type`) looked like "consume the
+   stable contract", but bare re-exported type names failed module resolution, were classified
+   as external crates, and vanished from internal accounting — flipping the self-grade C→A for
+   the wrong reason. The fix was a resolver improvement (type registry lookup), not an import
+   revert. Lesson: any grade jump caused by an import/file-shape change is suspect until the
+   coupling is shown to be *still visible* under the new shape.
+10. **Rust visibility is the publication boundary for strength.** Cross-module access to a
+    private field does not compile, so blanket "field access = Intrusive" conflated use of the
+    published record (Model) with intrusion. Intrusive now means unpublished access:
+    crate-restricted types and foreign inherent impls.
+11. **Act-now severity needs evidence.** A refactoring sprint gave young sibling files perfect
+    co-change ratios with n=5 commits; Hidden Coupling High now requires a persistent pattern
+    (≥8 co-changes), and adjacent (same-package) pairs are exempt — their co-change is cohesion.
+12. **The honest grade can be B and that is the deliverable.** After all verified fixes, the
+    remaining mediums are this release's own cross-cutting burst, correctly observed; forcing
+    the last few off would have required threshold/classification gaming. Integrity of the
+    metric outranks the letter (see learning above — it keeps being true).

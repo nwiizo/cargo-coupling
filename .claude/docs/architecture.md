@@ -4,28 +4,34 @@
 
 ```
 src/
-├── main.rs       # CLI entry point (clap-based)
-├── lib.rs        # Public API exports
-├── analyzer.rs   # AST analysis with syn, parallel processing with Rayon
-├── aposd.rs      # APOSD metrics (shallow modules, pass-through, cognitive load)
-├── balance.rs    # Balance score calculation and issue detection
-├── config.rs     # Configuration loading (.coupling.toml)
-├── connascence.rs # Connascence pattern detection
-├── metrics.rs    # Data structures (CouplingMetrics, ProjectMetrics, etc.)
-├── report.rs     # Markdown report generation
-├── temporal.rs   # Temporal coupling analysis
-├── volatility.rs # Git history analysis
-└── workspace.rs  # Cargo workspace support via cargo_metadata
+├── main.rs            # CLI entry point (clap-based)
+├── lib.rs             # Public API exports (crate facade)
+├── analyzer.rs        # AST analysis with syn, parallel processing with Rayon
+├── discovery.rs       # Source discovery: cargo targets + module tree (#[path])
+├── classification.rs  # Target resolution (incl. re-exports), structural distance, strength
+├── balance/           # Balance score, issue detection, grading, rationale
+├── metrics/           # Data structures (CouplingMetrics, ProjectMetrics, dimensions)
+├── config.rs          # Configuration loading (.coupling.toml), drift detection
+├── manifest.rs        # Blind-spot manifest (declared negative space)
+├── volatility.rs      # Git history analysis (volatility + temporal coupling)
+├── history.rs         # Time-series analysis over git revisions (--history)
+├── diff.rs            # Baseline diff / ratchet gating (--baseline)
+├── external.rs        # External dependency usage aggregation (--deps)
+├── report.rs          # Markdown report generation (EN/JA)
+├── cli_output.rs      # CLI output (hotspots, impact, check)
+├── web/               # Web visualization server
+└── workspace.rs       # Cargo workspace support via cargo_metadata
 ```
 
 ## Analysis Pipeline
 
-1. **Workspace Resolution** (`workspace.rs`): Uses `cargo_metadata` to understand project structure
-2. **Parallel AST Analysis** (`analyzer.rs`): Parses Rust files with `syn`, uses Rayon for parallelism
-3. **Metrics Collection** (`metrics.rs`): IntegrationStrength, Distance, Volatility, Visibility
-4. **Balance Calculation** (`balance.rs`): `BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY`
-5. **APOSD Analysis** (`aposd.rs`): Module depth, pass-through methods, cognitive load
-6. **Report Generation** (`report.rs`): Markdown reports with refactoring recommendations
+1. **Workspace Resolution** (`workspace.rs`): `cargo_metadata`, target-driven source roots
+2. **Source Discovery** (`discovery.rs`): directory walk ∪ module-tree resolution
+3. **Parallel AST Analysis** (`analyzer.rs`): `syn` + Rayon
+4. **Classification** (`classification.rs`): target module, structural distance, strength
+5. **Volatility** (`volatility.rs` + `.coupling.toml` subdomains): essential over accidental
+6. **Balance & Issues** (`balance/`): `BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY`
+7. **Reporting** (`report.rs`, `cli_output.rs`, `web/`, `manifest.rs`)
 
 ## Integration Strength Detection
 
@@ -46,16 +52,20 @@ src/
 - Strong + Far = Bad (global complexity)
 - Strong + Volatile = Bad (cascading changes)
 
-## Detected Issue Types
+## Detected Issue Types (severity model)
 
 | Issue Type | Severity | Condition |
 |------------|----------|-----------|
-| GlobalComplexity | Critical | Intrusive + DifferentCrate |
-| CascadingChangeRisk | Critical | Strong + High volatility |
-| InappropriateIntimacy | High | Intrusive + DifferentModule |
-| HighEfferentCoupling | High | Dependencies > threshold |
-| HighAfferentCoupling | High | Dependents > threshold |
-| CircularDependency | High | A → B → C → A |
+| CircularDependency | Critical | A → B → C → A |
+| CascadingChangeRisk | High | Intrusive + DifferentModule + High volatility (Strong+Far+High quadrant) |
+| GlobalComplexity | Low–Medium | Intrusive + DifferentModule, low/medium volatility (Low = Acceptable) |
+| InappropriateIntimacy | Medium | Intrusive + DifferentModule + poor balance score |
+| HiddenCoupling | Medium (High needs ≥8 co-changes at ≥80%) | Strong temporal co-change, no code edge; adjacent pairs/entrypoint/facade exempt |
+| HighEfferentCoupling / HighAfferentCoupling | Medium (severity scales with hub volatility) | Count > threshold |
+| GodModule | Medium (High at >2× threshold) | Functions/types/impls > threshold |
+| AccidentalVolatility | Diagnostic (reported, not graded) | Supporting/generic subdomain with top-quartile churn |
+
+External-crate couplings (`DifferentCrate`) are excluded from issue detection.
 
 ## Dependencies
 

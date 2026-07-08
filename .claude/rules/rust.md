@@ -14,8 +14,10 @@ cargo test --all-features
 | File | Purpose |
 |------|---------|
 | `src/analyzer.rs` | AST analysis with syn |
-| `src/balance.rs` | Balance score and issue detection |
-| `src/metrics.rs` | Data structures, BalanceClassification |
+| `src/discovery.rs` | Source file discovery (cargo targets + module tree) |
+| `src/classification.rs` | Target resolution, structural distance, integration strength |
+| `src/balance/` | Balance score and issue detection |
+| `src/metrics/` | Data structures, BalanceClassification |
 | `src/volatility.rs` | Git history volatility analysis |
 | `src/report.rs` | Report generation (EN/JA) |
 | `src/cli_output.rs` | CLI output (hotspots, impact, check) |

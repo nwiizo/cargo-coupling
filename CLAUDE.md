@@ -47,7 +47,10 @@ docker push ghcr.io/nwiizo/cargo-coupling:latest
 | Path | Purpose |
 |------|---------|
 | `src/analyzer.rs` | AST analysis (syn) |
-| `src/balance.rs` | Balance score calculation |
+| `src/discovery.rs` | Source file discovery (cargo targets + module tree, `#[path]`) |
+| `src/classification.rs` | Coupling classification: target resolution, structural distance, strength |
+| `src/balance/` | Balance score calculation and issue detection |
+| `src/metrics/` | Data structures (ProjectMetrics, dimensions) |
 | `src/history.rs` | Time-series: re-analyzes past git revisions via worktrees (`--history`) |
 | `src/config.rs` | `.coupling.toml` loading and pattern compilation |
 | `src/workspace.rs` | cargo metadata / workspace resolution |

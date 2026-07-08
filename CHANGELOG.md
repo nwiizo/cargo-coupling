@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.3.7
+
+A scoring-model correctness release. A full re-verification of the tool (CLI surfaces, web API/frontend, and the scoring pipeline, including adversarial review with empirical fixtures) found and fixed several places where the implementation contradicted the documented Balanced Coupling model.
+
+### Fixed — scoring model
+
+- Distance is now structural: computed from the module tree (ancestor/descendant at any depth and siblings under one non-root parent are Same; other same-crate pairs are Different) instead of from import syntax. Previously `use crate::far::x` counted as Same no matter how far, and `use super::sibling` counted as Different — inversions that punished the tool's own recommended god-module splits.
+- Re-exported bare type names (`pub use module::Type;` + `use crate::Type;`) now resolve through the type registry to their defining module. They previously fell through to "external crate" and vanished from internal-coupling accounting entirely — hiding real coupling in any project using the common re-export idiom.
+- Integration strength is Rust-faithful: field access / struct construction on a public type is use of the published data model (Model); crate-restricted or unresolved targets, and inherent impls on foreign types, remain Intrusive. Cross-module access to private fields cannot compile, so blanket Intrusive conflated "uses the published record" with "reaches into internals".
+- Cascading Change Risk requires the documented Strong+Far+High quadrant; the implementation omitted the distance condition, flagging deliberately co-located volatile code (cohesion) as cascade risk.
+- Report issues are deduped by their stable key; duplicates previously appeared for repeated dependency records of one pair (note: N usage sites between the same two modules now count as one issue).
+- Accidental Volatility findings are diagnostics: still reported (and labeled "not graded"), but excluded from the health grade, per the declared design that raw git churn routes to diagnostics, not scoring. The grade rationale now narrates only gradable issues.
+- Hidden Coupling skips structurally adjacent pairs (a package and its own submodules co-change by design) and requires a persistent pattern (≥8 co-changes at ≥80%) before claiming High severity — a burst of a few co-commits stays a Medium observation.
+- Grade rationale for data-starved projects (<10 internal couplings) now says the B cap is a data limitation instead of claiming "low issue density".
+
+### Fixed — web UI
+
+- "Detect Clusters" / "Clear Colors" buttons were dead, and the cluster panel went stale after timeline revision swaps.
+- The details-modal Source tab ignored the scrubbed revision (`?ref=`), so the modal and the sidebar viewer could show different code for the same module.
+- Selecting a 3D link no longer drops its own selection highlight (cytoscape/API id mismatch).
+
+### Changed
+
+- Coupling classification (target resolution, structural distance, strength) extracted from `analyzer` into a dedicated `classification` module; scattered-external issue production moved into `balance::external_crates`.
+- `.coupling.toml` subdomains refined to file granularity: the dimension enums (`src/metrics/dimensions.rs`) are the model's stable vocabulary (supporting), unlike the evolving model data in the rest of `metrics/`.
+- Public API: `IssueKey` moved to the crate root re-export (`cargo_coupling::IssueKey` unchanged; the deep path `cargo_coupling::diff::IssueKey` no longer resolves).
+
+### Honest self-assessment
+
+Dogfooding this release: grade B (0 High/Critical). The earlier self-reported A grades were partly artifacts of the bugs above; the remaining Medium findings are dominated by this release's own cross-cutting development burst, which the tool now correctly observes and which decays as history normalizes. ripgrep keeps its unchanged, honest C.
+
 ## v0.3.5
 
 ### Added
