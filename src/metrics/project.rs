@@ -62,8 +62,19 @@ impl ProjectMetrics {
         module_name: String,
         visibility: Visibility,
     ) {
-        self.type_registry
-            .insert(type_name, (module_name, visibility));
+        match self.type_registry.get(&type_name) {
+            Some((existing_module, existing_visibility))
+                if should_keep_existing_type_registration(
+                    existing_module,
+                    *existing_visibility,
+                    &module_name,
+                    visibility,
+                ) => {}
+            _ => {
+                self.type_registry
+                    .insert(type_name, (module_name, visibility));
+            }
+        }
     }
 
     /// Look up visibility of a type by name
@@ -540,6 +551,22 @@ impl ProjectMetrics {
                     .map(move |t| (module_name.as_str(), t))
             })
             .collect()
+    }
+}
+
+fn should_keep_existing_type_registration(
+    existing_module: &str,
+    existing_visibility: Visibility,
+    candidate_module: &str,
+    candidate_visibility: Visibility,
+) -> bool {
+    match (
+        existing_visibility == Visibility::Public,
+        candidate_visibility == Visibility::Public,
+    ) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => existing_module <= candidate_module,
     }
 }
 

@@ -40,6 +40,7 @@ import {
     setupAnalysisButtons,
     enableAnalysisButtons,
     setupClusterView,
+    refreshClusterView,
     populatePathFinderSelects,
     setupJobButtons,
     updateWhatBreaksButton,
@@ -389,6 +390,7 @@ async function replaceGraphData(data) {
     populateIssueList();
     populateTrustPanel();
     populatePathFinderSelects();
+    refreshClusterView();
     clearDetails();
 }
 
@@ -466,9 +468,10 @@ function selectEdgeFromGraphData(edgeData) {
 
     if (edge?.length) {
         const selectedEdge = edge.first();
+        const apiLinkId = edgeData.id || selectedEdge.data('originalIds')?.[0] || selectedEdge.id();
         highlightDependencyPath(selectedEdge);
         showEdgeDetails(selectedEdge.data());
-        focusLink3d(selectedEdge.id(), [selectedEdge.data('source'), selectedEdge.data('target')]);
+        focusLink3d(apiLinkId, [selectedEdge.data('source'), selectedEdge.data('target')]);
         return;
     }
 

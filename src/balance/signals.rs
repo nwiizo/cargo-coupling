@@ -28,13 +28,17 @@ pub(crate) fn analyze_hidden_temporal_coupling(metrics: &ProjectMetrics) -> Vec<
         // The binary entrypoint co-changes with whatever it wires up (it edits when
         // any wired feature changes), and the crate-root facade (lib.rs) co-changes
         // with whatever it declares/re-exports — both are expected co-change by
-        // design, not hidden coupling.
+        // design, not hidden coupling. Structurally adjacent modules (parent/child,
+        // or siblings in one package) co-change because they form one cohesive
+        // unit; hidden coupling's premise (a missing abstraction between DISTANT
+        // files) does not apply to them.
         if source == target
             || has_code_coupling(metrics, &source, &target)
             || super::coupling::is_entrypoint_module(&source)
             || super::coupling::is_entrypoint_module(&target)
             || is_facade_module(metrics, &source)
             || is_facade_module(metrics, &target)
+            || crate::classification::is_adjacent_module(&source, &target)
         {
             continue;
         }
@@ -47,7 +51,11 @@ pub(crate) fn analyze_hidden_temporal_coupling(metrics: &ProjectMetrics) -> Vec<
         let ratio_pct = temporal.coupling_ratio * 100.0;
         issues.push(CouplingIssue {
             issue_type: IssueType::HiddenCoupling,
-            severity: if temporal.coupling_ratio >= 0.8 {
+            // High is an act-now claim; it needs a repeated pattern, not a burst.
+            // A handful of co-commits (e.g. one refactoring sprint touching young
+            // files) can hit a high ratio with almost no evidence — that stays
+            // Medium until the pattern persists.
+            severity: if temporal.coupling_ratio >= 0.8 && temporal.co_change_count >= 8 {
                 Severity::High
             } else {
                 Severity::Medium

@@ -28,11 +28,11 @@ supporting = ["src/stable.rs"]
     write(&src.join("lib.rs"), "pub mod caller;\npub mod stable;\n");
     write(
         &src.join("stable.rs"),
-        "pub struct Stable {\n    pub value: i32,\n}\n",
+        "pub(crate) struct Stable {\n    pub value: i32,\n}\n",
     );
     write(
         &src.join("caller.rs"),
-        "use crate::stable::Stable;\n\npub fn make() -> Stable {\n    Stable { value: 1 }\n}\n",
+        "use crate::stable::Stable;\n\npub(crate) fn make() -> Stable {\n    Stable { value: 1 }\n}\n",
     );
 
     tmp

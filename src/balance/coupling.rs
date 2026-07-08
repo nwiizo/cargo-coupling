@@ -94,9 +94,10 @@ pub fn identify_issues_with_thresholds(
         });
     }
 
-    // Pattern 2: Cascading Change Risk (intrusive coupling + high volatility)
-    // Only flag if volatility is actually high (from Git data)
+    // Pattern 2: Cascading Change Risk is the Strong + Far + High quadrant.
+    // Strong + Close + High is cohesion around volatile code, not a defect.
     if coupling.strength == IntegrationStrength::Intrusive
+        && coupling.distance == Distance::DifferentModule
         && coupling.volatility == Volatility::High
         && !target_is_facade
     {

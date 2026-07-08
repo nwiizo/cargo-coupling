@@ -1,5 +1,11 @@
 // ===== External Crate Heuristics =====
 
+use crate::external::ExternalDependencyUsage;
+use crate::{CouplingIssue, IssueType, RefactoringAction, Severity};
+
+/// Number of internal modules above which direct third-party usage is considered scattered.
+pub const SCATTERED_EXTERNAL_BREADTH_THRESHOLD: usize = 3;
+
 /// Crate stability classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrateStability {
@@ -91,4 +97,82 @@ pub fn is_external_crate(target: &str, source: &str) -> bool {
         stability,
         CrateStability::Fundamental | CrateStability::Stable | CrateStability::Infrastructure
     )
+}
+
+/// Detect external crates used directly from many internal modules.
+pub fn detect_scattered_external_coupling(
+    dependencies: &[ExternalDependencyUsage],
+) -> Vec<CouplingIssue> {
+    dependencies
+        .iter()
+        .filter(|dependency| dependency.breadth > SCATTERED_EXTERNAL_BREADTH_THRESHOLD)
+        .map(|dependency| {
+            let severity = scattered_severity(dependency.breadth);
+            CouplingIssue {
+                issue_type: IssueType::ScatteredExternalCoupling,
+                severity,
+                source: format!("{} internal modules", dependency.breadth),
+                target: dependency.crate_name.clone(),
+                description: format!(
+                    "{} is directly used from {} internal modules ({} references). Third-party upgrade risk is spread across the codebase.",
+                    dependency.crate_name, dependency.breadth, dependency.total_references
+                ),
+                refactoring: RefactoringAction::General {
+                    action: format!(
+                        "Introduce a `{}` facade/wrapper module and route direct crate usage through it",
+                        facade_module_name(&dependency.crate_name)
+                    ),
+                },
+                balance_score: scattered_balance_score(dependency.breadth),
+            }
+        })
+        .collect()
+}
+
+fn scattered_severity(breadth: usize) -> Severity {
+    if breadth >= 10 {
+        Severity::Critical
+    } else if breadth >= 6 {
+        Severity::High
+    } else {
+        Severity::Medium
+    }
+}
+
+fn scattered_balance_score(breadth: usize) -> f64 {
+    1.0 - (breadth as f64 / 12.0).min(1.0)
+}
+
+fn facade_module_name(crate_name: &str) -> String {
+    format!("{}_facade", crate_name.replace('-', "_"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scattered_coupling_is_flagged_above_threshold() {
+        let dependency = ExternalDependencyUsage {
+            crate_name: "reqwest".to_string(),
+            versions: vec![],
+            breadth: 4,
+            total_references: 9,
+            dominant_strength: "Functional".to_string(),
+            source_modules: vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string(),
+            ],
+        };
+
+        let issues = detect_scattered_external_coupling(&[dependency]);
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].issue_type, IssueType::ScatteredExternalCoupling);
+        assert_eq!(issues[0].severity, Severity::Medium);
+        assert_eq!(issues[0].target, "reqwest");
+        assert!(format!("{}", issues[0].refactoring).contains("facade"));
+    }
 }

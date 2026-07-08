@@ -6,59 +6,10 @@
 
 use std::collections::HashSet;
 
-use crate::balance::grade::{HealthGrade, ProjectBalanceReport};
-use crate::balance::issue::CouplingIssue;
-use crate::balance::issue_type::IssueType;
-use crate::balance::severity::Severity;
+// Consume the crate's published facade rather than deep `balance::*` paths: the
+// re-exported surface stays stable when the balance package reorganizes internally.
 use crate::history::RefAnalysis;
-
-/// Stable identity for a coupling issue across snapshots.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct IssueKey {
-    /// Issue category used as the primary diff discriminator.
-    pub issue_type: IssueType,
-    /// Normalized issue source; count-only sources are canonicalized.
-    pub source: String,
-    /// Normalized issue target; count-only targets are canonicalized.
-    pub target: String,
-}
-
-impl IssueKey {
-    fn normalized_source(issue: &CouplingIssue) -> String {
-        match issue.issue_type {
-            IssueType::HighAfferentCoupling if is_count_target(&issue.source, "dependents") => {
-                "<dependent-count>".to_string()
-            }
-            _ => issue.source.clone(),
-        }
-    }
-
-    fn normalized_target(issue: &CouplingIssue) -> String {
-        match issue.issue_type {
-            IssueType::HighEfferentCoupling if is_count_target(&issue.target, "dependencies") => {
-                "<dependency-count>".to_string()
-            }
-            _ => issue.target.clone(),
-        }
-    }
-}
-
-impl From<&CouplingIssue> for IssueKey {
-    fn from(issue: &CouplingIssue) -> Self {
-        Self {
-            issue_type: issue.issue_type,
-            source: Self::normalized_source(issue),
-            target: Self::normalized_target(issue),
-        }
-    }
-}
-
-fn is_count_target(value: &str, unit: &str) -> bool {
-    let Some((count, suffix)) = value.split_once(' ') else {
-        return false;
-    };
-    count.chars().all(|c| c.is_ascii_digit()) && suffix == unit
-}
+use crate::{CouplingIssue, HealthGrade, IssueKey, ProjectBalanceReport, Severity};
 
 /// Difference between a baseline report and the current report.
 #[derive(Debug, Clone)]
@@ -82,7 +33,7 @@ impl BaselineDiff {
     pub fn ratchet_failures(&self, severity: Severity) -> Vec<&CouplingIssue> {
         self.new_issues
             .iter()
-            .filter(|issue| issue.severity >= severity)
+            .filter(|issue| issue.meets(severity))
             .collect()
     }
 }
@@ -133,9 +84,8 @@ pub fn diff_ref_analysis(baseline: &RefAnalysis, current: &ProjectBalanceReport)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::balance::action::RefactoringAction;
     use crate::balance::rationale::GradeRationale;
-    use crate::balance::severity::Severity;
+    use crate::{IssueType, RefactoringAction};
 
     fn issue(
         issue_type: IssueType,
@@ -170,18 +120,6 @@ mod tests {
             top_priorities: Vec::new(),
             grade_rationale: GradeRationale::empty(),
         }
-    }
-
-    #[test]
-    fn is_count_target_requires_digits_and_exact_unit() {
-        assert!(is_count_target("3 dependencies", "dependencies"));
-        assert!(is_count_target("12 dependents", "dependents"));
-        // digits but wrong unit -> false (guards against `&&` -> `||`).
-        assert!(!is_count_target("3 widgets", "dependencies"));
-        // non-digit count -> false.
-        assert!(!is_count_target("many dependencies", "dependencies"));
-        // no space separator -> false.
-        assert!(!is_count_target("dependencies", "dependencies"));
     }
 
     #[test]

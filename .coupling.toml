@@ -12,14 +12,21 @@
 # of "balanced coupling" deepens. High essential volatility is expected here.
 core = [
     "src/balance/**",
-    "src/metrics/**",
+    "src/metrics/project.rs",
+    "src/metrics/coupling.rs",
+    "src/metrics/module.rs",
+    "src/metrics/mod.rs",
 ]
 
 # Supporting: analysis machinery and output around the model. Changes track the
 # core but are not themselves the differentiator. Low essential volatility.
 supporting = [
     "src/analyzer.rs",
+    "src/classification.rs",
     "src/discovery.rs",
+    # The model VOCABULARY (dimension enums) is stable by nature, unlike the
+    # evolving model logic/data in balance/ and the rest of metrics/.
+    "src/metrics/dimensions.rs",
     "src/report.rs",
     "src/cli_output.rs",
     "src/history.rs",

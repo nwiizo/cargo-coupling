@@ -9,16 +9,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::balance::action::RefactoringAction;
-use crate::balance::issue::CouplingIssue;
-use crate::balance::issue_type::IssueType;
-use crate::balance::severity::Severity;
+pub use crate::balance::external_crates::SCATTERED_EXTERNAL_BREADTH_THRESHOLD;
+// Consume the crate's published facade rather than deep `balance::*` paths: the
+// re-exported surface stays stable when the balance package reorganizes internally.
+use crate::CouplingIssue;
 use crate::metrics::coupling::CouplingMetrics;
 use crate::metrics::dimensions::{Distance, IntegrationStrength};
 use crate::metrics::project::ProjectMetrics;
-
-/// Number of internal modules above which direct third-party usage is considered scattered.
-pub const SCATTERED_EXTERNAL_BREADTH_THRESHOLD: usize = 3;
 
 /// External dependency coupling report.
 #[derive(Debug, Clone)]
@@ -126,7 +123,8 @@ pub fn analyze_external_dependencies(
             .then_with(|| left.crate_name.cmp(&right.crate_name))
     });
 
-    let scattered_couplings = detect_scattered_external_coupling(&dependencies);
+    let scattered_couplings =
+        crate::balance::external_crates::detect_scattered_external_coupling(&dependencies);
 
     ExternalDependencyReport {
         dependencies,
@@ -156,30 +154,7 @@ fn known_external_crates(
 pub fn detect_scattered_external_coupling(
     dependencies: &[ExternalDependencyUsage],
 ) -> Vec<CouplingIssue> {
-    dependencies
-        .iter()
-        .filter(|dependency| dependency.breadth > SCATTERED_EXTERNAL_BREADTH_THRESHOLD)
-        .map(|dependency| {
-            let severity = scattered_severity(dependency.breadth);
-            CouplingIssue {
-                issue_type: IssueType::ScatteredExternalCoupling,
-                severity,
-                source: format!("{} internal modules", dependency.breadth),
-                target: dependency.crate_name.clone(),
-                description: format!(
-                    "{} is directly used from {} internal modules ({} references). Third-party upgrade risk is spread across the codebase.",
-                    dependency.crate_name, dependency.breadth, dependency.total_references
-                ),
-                refactoring: RefactoringAction::General {
-                    action: format!(
-                        "Introduce a `{}` facade/wrapper module and route direct crate usage through it",
-                        facade_module_name(&dependency.crate_name)
-                    ),
-                },
-                balance_score: 1.0 - (dependency.breadth as f64 / 12.0).min(1.0),
-            }
-        })
-        .collect()
+    crate::balance::external_crates::detect_scattered_external_coupling(dependencies)
 }
 
 /// Read resolved package versions from the nearest Cargo.lock. Missing or
@@ -255,20 +230,6 @@ fn external_crate_name(coupling: &CouplingMetrics) -> String {
 
 fn normalize_crate_name(crate_name: &str) -> String {
     crate_name.replace('-', "_")
-}
-
-fn scattered_severity(breadth: usize) -> Severity {
-    if breadth >= 10 {
-        Severity::Critical
-    } else if breadth >= 6 {
-        Severity::High
-    } else {
-        Severity::Medium
-    }
-}
-
-fn facade_module_name(crate_name: &str) -> String {
-    format!("{}_facade", crate_name.replace('-', "_"))
 }
 
 fn strength_index(strength: IntegrationStrength) -> usize {
@@ -392,31 +353,6 @@ mod tests {
 
         assert_eq!(report.dependencies.len(), 1);
         assert_eq!(report.dependencies[0].crate_name, "serde");
-    }
-
-    #[test]
-    fn scattered_coupling_is_flagged_above_threshold() {
-        let dependency = ExternalDependencyUsage {
-            crate_name: "reqwest".to_string(),
-            versions: vec![],
-            breadth: 4,
-            total_references: 9,
-            dominant_strength: "Functional".to_string(),
-            source_modules: vec![
-                "a".to_string(),
-                "b".to_string(),
-                "c".to_string(),
-                "d".to_string(),
-            ],
-        };
-
-        let issues = detect_scattered_external_coupling(&[dependency]);
-
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].issue_type, IssueType::ScatteredExternalCoupling);
-        assert_eq!(issues[0].severity, Severity::Medium);
-        assert_eq!(issues[0].target, "reqwest");
-        assert!(format!("{}", issues[0].refactoring).contains("facade"));
     }
 
     #[test]
