@@ -115,7 +115,14 @@ pub(crate) fn build_grade_rationale(
 
     let dominant_dimension = by_dimension
         .into_iter()
-        .max_by_key(|(_, score)| *score)
+        .max_by(
+            |(left_dimension, left_score), (right_dimension, right_score)| {
+                left_score.cmp(right_score).then_with(|| {
+                    grade_dimension_tie_break_order(*left_dimension)
+                        .cmp(&grade_dimension_tie_break_order(*right_dimension))
+                })
+            },
+        )
         .map(|(dimension, _)| dimension);
 
     let volatility_issue_count = gradable
@@ -231,6 +238,17 @@ fn grade_dimension_japanese_label(dimension: GradeDimension) -> &'static str {
         GradeDimension::Strength => "結合強度",
         GradeDimension::Distance => "距離",
         GradeDimension::Volatility => "変更頻度",
+    }
+}
+
+/// Stable tie-break order for `max_by`; larger values win.
+///
+/// Volatility is shown before Distance and Strength when their contributions tie.
+fn grade_dimension_tie_break_order(dimension: GradeDimension) -> u8 {
+    match dimension {
+        GradeDimension::Strength => 0,
+        GradeDimension::Distance => 1,
+        GradeDimension::Volatility => 2,
     }
 }
 

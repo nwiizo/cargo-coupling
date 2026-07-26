@@ -6,7 +6,7 @@
 //! - Check: CI/CD quality gate with exit codes
 //! - JSON: Machine-readable output for automation
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{self, Write};
 
 use serde::Serialize;
@@ -163,8 +163,17 @@ pub fn calculate_hotspots(
     thresholds: &IssueThresholds,
     limit: usize,
 ) -> Vec<Hotspot> {
-    let report = analyze_project_balance_with_thresholds(metrics, thresholds);
     let circular_deps = metrics.detect_circular_dependencies();
+    calculate_hotspots_with_cycles(metrics, thresholds, limit, &circular_deps)
+}
+
+fn calculate_hotspots_with_cycles(
+    metrics: &ProjectMetrics,
+    thresholds: &IssueThresholds,
+    limit: usize,
+    circular_deps: &[Vec<String>],
+) -> Vec<Hotspot> {
+    let report = analyze_project_balance_with_thresholds(metrics, thresholds);
     let cycle_modules: HashSet<String> = circular_deps.iter().flatten().cloned().collect();
 
     // Group issues by source module
@@ -271,8 +280,8 @@ pub fn calculate_hotspots(
         }
     }
 
-    // Sort by score descending
-    hotspots.sort_by_key(|h| std::cmp::Reverse(h.score));
+    // Sort by score descending, then module name for deterministic ties.
+    hotspots.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.module.cmp(&b.module)));
     hotspots.truncate(limit);
 
     hotspots
@@ -419,10 +428,18 @@ pub struct CascadingImpact {
     pub second_order: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ModuleLookup {
+    Found(String),
+    Ambiguous(Vec<String>),
+    NotFound,
+}
+
 /// Analyze impact of changing a specific module
 pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<ImpactAnalysis> {
-    // Find exact match or partial match
-    let module = find_module(metrics, module_name)?;
+    let ModuleLookup::Found(module) = find_module(metrics, module_name) else {
+        return None;
+    };
 
     let circular_deps = metrics.detect_circular_dependencies();
     let cycle_modules: HashSet<String> = circular_deps.iter().flatten().cloned().collect();
@@ -465,7 +482,7 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
     }
 
     // Convert to DependencyInfo with grouped strengths
-    let dependencies: Vec<DependencyInfo> = dep_map
+    let mut dependencies: Vec<DependencyInfo> = dep_map
         .into_iter()
         .map(|(mod_name, (distance, strengths))| {
             let total_count: usize = strengths.values().sum();
@@ -476,8 +493,12 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
                     count: c,
                 })
                 .collect();
-            // Sort by count descending
-            strength_list.sort_by_key(|s| std::cmp::Reverse(s.count));
+            // Sort by count descending, then label for deterministic ties.
+            strength_list.sort_by(|a, b| {
+                b.count
+                    .cmp(&a.count)
+                    .then_with(|| a.strength.cmp(&b.strength))
+            });
             DependencyInfo {
                 module: mod_name,
                 distance,
@@ -486,8 +507,9 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
             }
         })
         .collect();
+    dependencies.sort_by(|a, b| a.module.cmp(&b.module));
 
-    let dependents: Vec<DependencyInfo> = dependent_map
+    let mut dependents: Vec<DependencyInfo> = dependent_map
         .into_iter()
         .map(|(mod_name, (distance, strengths))| {
             let total_count: usize = strengths.values().sum();
@@ -498,7 +520,11 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
                     count: c,
                 })
                 .collect();
-            strength_list.sort_by_key(|s| std::cmp::Reverse(s.count));
+            strength_list.sort_by(|a, b| {
+                b.count
+                    .cmp(&a.count)
+                    .then_with(|| a.strength.cmp(&b.strength))
+            });
             DependencyInfo {
                 module: mod_name,
                 distance,
@@ -507,6 +533,7 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
             }
         })
         .collect();
+    dependents.sort_by(|a, b| a.module.cmp(&b.module));
 
     // Calculate second-order impact (what depends on our dependents)
     let mut second_order: HashSet<String> = HashSet::new();
@@ -558,6 +585,9 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
 
     let volatility = format!("{:?}", volatility_max);
 
+    let mut second_order: Vec<_> = second_order.into_iter().collect();
+    second_order.sort();
+
     Some(ImpactAnalysis {
         module: module.clone(),
         risk_score,
@@ -567,49 +597,44 @@ pub fn analyze_impact(metrics: &ProjectMetrics, module_name: &str) -> Option<Imp
         cascading_impact: CascadingImpact {
             total_affected,
             percentage,
-            second_order: second_order.into_iter().collect(),
+            second_order,
         },
         in_cycle,
         volatility,
     })
 }
 
-fn find_module(metrics: &ProjectMetrics, name: &str) -> Option<String> {
-    // First check couplings since those are the names we use for matching
-    // Prefer full coupling source/target names over short module names
-    for coupling in &metrics.couplings {
-        // Exact match
-        if coupling.source == name {
-            return Some(coupling.source.clone());
-        }
-        if coupling.target == name {
-            return Some(coupling.target.clone());
-        }
+fn find_module(metrics: &ProjectMetrics, name: &str) -> ModuleLookup {
+    // Exact names always win, whether they came from the module map or only
+    // appear as a coupling endpoint.
+    if metrics.modules.contains_key(name)
+        || metrics
+            .couplings
+            .iter()
+            .any(|coupling| coupling.source == name || coupling.target == name)
+    {
+        return ModuleLookup::Found(name.to_string());
     }
 
-    // Suffix match in couplings (e.g., "main" matches "cargo-coupling::main")
-    for coupling in &metrics.couplings {
-        if coupling.source.ends_with(&format!("::{}", name)) {
-            return Some(coupling.source.clone());
-        }
-        if coupling.target.ends_with(&format!("::{}", name)) {
-            return Some(coupling.target.clone());
-        }
-    }
+    // A short name may match a fully-qualified module at a segment boundary.
+    let suffix = format!("::{name}");
+    // Only the module registry is eligible for short-name expansion. Coupling
+    // endpoints can contain item/type-qualified display names that happen to end
+    // in the same segment but are not valid module choices.
+    let mut matches: Vec<_> = metrics
+        .modules
+        .keys()
+        .filter(|module_name| module_name.ends_with(&suffix))
+        .cloned()
+        .collect();
+    matches.sort();
+    matches.dedup();
 
-    // Exact match in modules map
-    if metrics.modules.contains_key(name) {
-        return Some(name.to_string());
+    match matches.len() {
+        0 => ModuleLookup::NotFound,
+        1 => ModuleLookup::Found(matches.pop().expect("single module match")),
+        _ => ModuleLookup::Ambiguous(matches),
     }
-
-    // Partial match (suffix) in modules
-    for module_name in metrics.modules.keys() {
-        if module_name.ends_with(name) || module_name.ends_with(&format!("::{}", name)) {
-            return Some(module_name.clone());
-        }
-    }
-
-    None
 }
 
 /// Format strength counts for display
@@ -639,13 +664,24 @@ pub fn generate_impact_output<W: Write>(
     module_name: &str,
     writer: &mut W,
 ) -> io::Result<bool> {
-    let analysis = match analyze_impact(metrics, module_name) {
-        Some(a) => a,
-        None => {
+    let resolved_module = match find_module(metrics, module_name) {
+        ModuleLookup::Found(module) => module,
+        ModuleLookup::Ambiguous(candidates) => {
+            writeln!(writer, "❌ Module '{}' is ambiguous.", module_name)?;
+            writeln!(writer)?;
+            writeln!(writer, "Use one of these fully qualified names:")?;
+            for candidate in candidates {
+                writeln!(writer, "  - {}", candidate)?;
+            }
+            return Ok(false);
+        }
+        ModuleLookup::NotFound => {
             writeln!(writer, "❌ Module '{}' not found.", module_name)?;
             writeln!(writer)?;
             writeln!(writer, "Available modules:")?;
-            for (i, name) in metrics.modules.keys().take(10).enumerate() {
+            let mut module_names: Vec<_> = metrics.modules.keys().collect();
+            module_names.sort();
+            for (i, name) in module_names.iter().take(10).enumerate() {
                 writeln!(writer, "  {}. {}", i + 1, name)?;
             }
             if metrics.modules.len() > 10 {
@@ -654,6 +690,8 @@ pub fn generate_impact_output<W: Write>(
             return Ok(false);
         }
     };
+    let analysis = analyze_impact(metrics, &resolved_module)
+        .expect("an exact resolved module must remain resolvable");
 
     writeln!(writer, "Impact Analysis: {}", analysis.module)?;
     writeln!(
@@ -757,7 +795,7 @@ pub struct CheckConfig {
     pub min_grade: Option<HealthGrade>,
     /// Maximum allowed critical issues
     pub max_critical: Option<usize>,
-    /// Maximum allowed circular dependencies
+    /// Maximum allowed representative cycle paths
     pub max_circular: Option<usize>,
     /// Fail on any issue of this severity or higher
     pub fail_on: Option<Severity>,
@@ -839,13 +877,13 @@ pub fn run_check(
         failures.push(format!("{} critical issues (max: {})", critical_count, max));
     }
 
-    // Check circular dependencies
+    // Check representative cycle paths
     if let Some(max) = config.max_circular
         && circular_count > max
     {
         passed = false;
         failures.push(format!(
-            "{} circular dependencies (max: {})",
+            "{} representative cycle paths (max: {})",
             circular_count, max
         ));
     }
@@ -912,7 +950,11 @@ pub fn generate_check_output<W: Write>(
     writeln!(writer, "  Critical issues: {}", result.critical_count)?;
     writeln!(writer, "  High issues: {}", result.high_count)?;
     writeln!(writer, "  Medium issues: {}", result.medium_count)?;
-    writeln!(writer, "  Circular dependencies: {}", result.circular_count)?;
+    writeln!(
+        writer,
+        "  Representative cycle paths: {}",
+        result.circular_count
+    )?;
 
     if !result.passed {
         writeln!(writer)?;
@@ -1420,7 +1462,7 @@ fn generate_json_output_with_optional_diff<W: Write>(
     let external_dependencies = analyze_external_dependencies(metrics, &HashMap::new());
     let circular_deps = metrics.detect_circular_dependencies();
     let cycle_modules: HashSet<String> = circular_deps.iter().flatten().cloned().collect();
-    let hotspots = calculate_hotspots(metrics, thresholds, 10);
+    let hotspots = calculate_hotspots_with_cycles(metrics, thresholds, 10, &circular_deps);
 
     // Count couplings per module
     let mut couplings_out: HashMap<String, usize> = HashMap::new();
@@ -1453,10 +1495,9 @@ fn generate_json_output_with_optional_diff<W: Write>(
         .get(&Severity::Medium)
         .unwrap_or(&0);
 
-    let temporal_couplings: Vec<JsonTemporalCoupling> = metrics
+    let mut temporal_couplings: Vec<JsonTemporalCoupling> = metrics
         .temporal_couplings
         .iter()
-        .take(20)
         .map(|tc| JsonTemporalCoupling {
             file_a: tc.file_a.clone(),
             file_b: tc.file_b.clone(),
@@ -1465,6 +1506,39 @@ fn generate_json_output_with_optional_diff<W: Write>(
             is_strong: tc.is_strong(),
         })
         .collect();
+    temporal_couplings.sort_by(|a, b| {
+        b.co_change_count
+            .cmp(&a.co_change_count)
+            .then_with(|| {
+                b.coupling_ratio
+                    .partial_cmp(&a.coupling_ratio)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| a.file_a.cmp(&b.file_a))
+            .then_with(|| a.file_b.cmp(&b.file_b))
+    });
+    temporal_couplings.truncate(20);
+
+    let mut modules: Vec<JsonModule> = metrics
+        .modules
+        .iter()
+        .map(|(name, module)| {
+            let avg_score = balance_scores
+                .get(name)
+                .map(|scores| scores.iter().sum::<f64>() / scores.len() as f64)
+                .unwrap_or(1.0);
+            JsonModule {
+                name: name.clone(),
+                file_path: Some(module.path.display().to_string()),
+                subdomain: module.subdomain.map(|subdomain| subdomain.to_string()),
+                couplings_out: couplings_out.get(name).copied().unwrap_or(0),
+                couplings_in: couplings_in.get(name).copied().unwrap_or(0),
+                balance_score: avg_score,
+                in_cycle: cycle_modules.contains(name),
+            }
+        })
+        .collect();
+    modules.sort_by(|a, b| a.name.cmp(&b.name));
 
     let output = JsonOutput {
         summary: JsonSummary {
@@ -1517,25 +1591,7 @@ fn generate_json_output_with_optional_diff<W: Write>(
         issues: report.issues.iter().map(json_issue).collect(),
         circular_dependencies: circular_deps,
         temporal_couplings,
-        modules: metrics
-            .modules
-            .iter()
-            .map(|(name, module)| {
-                let avg_score = balance_scores
-                    .get(name)
-                    .map(|scores| scores.iter().sum::<f64>() / scores.len() as f64)
-                    .unwrap_or(1.0);
-                JsonModule {
-                    name: name.clone(),
-                    file_path: Some(module.path.display().to_string()),
-                    subdomain: module.subdomain.map(|subdomain| subdomain.to_string()),
-                    couplings_out: couplings_out.get(name).copied().unwrap_or(0),
-                    couplings_in: couplings_in.get(name).copied().unwrap_or(0),
-                    balance_score: avg_score,
-                    in_cycle: cycle_modules.contains(name),
-                }
-            })
-            .collect(),
+        modules,
     };
 
     let json = serde_json::to_string_pretty(&output).map_err(io::Error::other)?;
@@ -1713,6 +1769,26 @@ pub fn generate_trace_output<W: Write>(
         }
     }
 
+    found_in_modules.sort_by(|a, b| a.0.cmp(b.0));
+    outgoing.sort_by(|a, b| {
+        a.item
+            .cmp(&b.item)
+            .then_with(|| a.module.cmp(&b.module))
+            .then_with(|| a.file_path.cmp(&b.file_path))
+            .then_with(|| a.line.cmp(&b.line))
+            .then_with(|| a.dep_type.cmp(&b.dep_type))
+            .then_with(|| a.strength.cmp(&b.strength))
+    });
+    incoming.sort_by(|a, b| {
+        a.item
+            .cmp(&b.item)
+            .then_with(|| a.module.cmp(&b.module))
+            .then_with(|| a.file_path.cmp(&b.file_path))
+            .then_with(|| a.line.cmp(&b.line))
+            .then_with(|| a.dep_type.cmp(&b.dep_type))
+            .then_with(|| a.strength.cmp(&b.strength))
+    });
+
     // If not found, try partial match
     if found_in_modules.is_empty() && outgoing.is_empty() && incoming.is_empty() {
         writeln!(writer, "Item '{}' not found.", item_name)?;
@@ -1740,6 +1816,8 @@ pub fn generate_trace_output<W: Write>(
         if suggestions.is_empty() {
             writeln!(writer, "  No similar items found.")?;
         } else {
+            suggestions.sort();
+            suggestions.dedup();
             for s in suggestions.iter().take(10) {
                 writeln!(writer, "{}", s)?;
             }
@@ -1782,7 +1860,7 @@ pub fn generate_trace_output<W: Write>(
         writeln!(writer, "   (none)")?;
     } else {
         // Group by target
-        let mut by_target: HashMap<String, Vec<&TraceDependency>> = HashMap::new();
+        let mut by_target: BTreeMap<String, Vec<&TraceDependency>> = BTreeMap::new();
         for dep in &outgoing {
             by_target.entry(dep.item.clone()).or_default().push(dep);
         }
@@ -1814,7 +1892,7 @@ pub fn generate_trace_output<W: Write>(
         writeln!(writer, "   (none)")?;
     } else {
         // Group by source
-        let mut by_source: HashMap<String, Vec<&TraceDependency>> = HashMap::new();
+        let mut by_source: BTreeMap<String, Vec<&TraceDependency>> = BTreeMap::new();
         for dep in &incoming {
             by_source.entry(dep.item.clone()).or_default().push(dep);
         }
@@ -1920,7 +1998,7 @@ pub fn generate_trace_output<W: Write>(
         "   If you modify '{}', you may need to update:",
         item_name
     )?;
-    let affected_modules: HashSet<_> = incoming.iter().map(|d| d.module.clone()).collect();
+    let affected_modules: BTreeSet<_> = incoming.iter().map(|d| d.module.clone()).collect();
     if affected_modules.is_empty() {
         writeln!(writer, "   (no other modules directly affected)")?;
     } else {
@@ -2250,6 +2328,94 @@ mod tests {
     }
 
     #[test]
+    fn test_impact_analysis_orders_hash_map_derived_output() {
+        use crate::metrics::coupling::CouplingMetrics;
+        use crate::metrics::dimensions::IntegrationStrength;
+        use crate::metrics::module::ModuleMetrics;
+        use crate::volatility::Volatility;
+
+        let mut metrics = ProjectMetrics::new();
+        for name in ["root", "zeta", "alpha", "middle"] {
+            metrics.add_module(ModuleMetrics::new(
+                PathBuf::from(format!("src/{name}.rs")),
+                name.to_string(),
+            ));
+        }
+        for (source, target, strength) in [
+            ("root", "zeta", IntegrationStrength::Model),
+            ("root", "alpha", IntegrationStrength::Functional),
+            ("root", "alpha", IntegrationStrength::Model),
+            ("middle", "root", IntegrationStrength::Contract),
+            ("zeta", "middle", IntegrationStrength::Model),
+            ("alpha", "middle", IntegrationStrength::Model),
+        ] {
+            metrics.add_coupling(CouplingMetrics::new(
+                source.to_string(),
+                target.to_string(),
+                strength,
+                Distance::DifferentModule,
+                Volatility::Low,
+            ));
+        }
+
+        let analysis = analyze_impact(&metrics, "root").unwrap();
+
+        assert_eq!(
+            analysis
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.module.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha", "zeta"]
+        );
+        assert_eq!(
+            analysis.dependencies[0]
+                .strengths
+                .iter()
+                .map(|strength| strength.strength.as_str())
+                .collect::<Vec<_>>(),
+            ["Functional", "Model"]
+        );
+        assert_eq!(analysis.cascading_impact.second_order, ["alpha", "zeta"]);
+    }
+
+    #[test]
+    fn test_impact_module_lookup_rejects_substrings_and_reports_ambiguity() {
+        use crate::metrics::module::ModuleMetrics;
+
+        let mut metrics = ProjectMetrics::new();
+        for name in ["crate_a::config", "crate_b::config", "report"] {
+            metrics.add_module(ModuleMetrics::new(
+                PathBuf::from(format!("src/{}.rs", name.replace("::", "/"))),
+                name.to_string(),
+            ));
+        }
+        metrics.add_coupling(crate::metrics::coupling::CouplingMetrics::new(
+            "TypeName::crate_c::config".to_string(),
+            "target".to_string(),
+            crate::metrics::dimensions::IntegrationStrength::Model,
+            Distance::DifferentModule,
+            crate::volatility::Volatility::Low,
+        ));
+
+        assert_eq!(find_module(&metrics, "port"), ModuleLookup::NotFound);
+        assert_eq!(
+            find_module(&metrics, "config"),
+            ModuleLookup::Ambiguous(vec![
+                "crate_a::config".to_string(),
+                "crate_b::config".to_string()
+            ])
+        );
+
+        let mut output = Vec::new();
+        assert!(!generate_impact_output(&metrics, "config", &mut output).unwrap());
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("Module 'config' is ambiguous"));
+        assert!(text.contains("crate_a::config"));
+        assert!(text.contains("crate_b::config"));
+    }
+
+    #[test]
     fn test_json_output_includes_analysis_manifest() {
         let metrics = ProjectMetrics::new();
         let thresholds = IssueThresholds::default();
@@ -2346,5 +2512,83 @@ mod tests {
             Some("Cascading Change Risk")
         );
         assert!(rationale["note"].as_str().is_some());
+    }
+
+    #[test]
+    fn test_json_output_is_deterministic() {
+        use crate::metrics::coupling::CouplingMetrics;
+        use crate::metrics::dimensions::IntegrationStrength;
+        use crate::metrics::module::ModuleMetrics;
+        use crate::volatility::{TemporalCoupling, Volatility};
+
+        let mut metrics = ProjectMetrics::new();
+        for name in ["zeta", "gamma", "epsilon", "delta", "beta", "alpha"] {
+            metrics.add_module(ModuleMetrics::new(
+                PathBuf::from(format!("src/{name}.rs")),
+                name.to_string(),
+            ));
+        }
+        for (source, target) in [
+            ("alpha", "beta"),
+            ("alpha", "gamma"),
+            ("beta", "alpha"),
+            ("beta", "gamma"),
+            ("gamma", "alpha"),
+        ] {
+            metrics.add_coupling(CouplingMetrics::new(
+                source.to_string(),
+                target.to_string(),
+                IntegrationStrength::Model,
+                Distance::DifferentModule,
+                Volatility::Low,
+            ));
+        }
+        metrics.temporal_couplings = vec![
+            TemporalCoupling {
+                file_a: "src/delta.rs".to_string(),
+                file_b: "src/zeta.rs".to_string(),
+                co_change_count: 5,
+                coupling_ratio: 0.5,
+            },
+            TemporalCoupling {
+                file_a: "src/delta.rs".to_string(),
+                file_b: "src/epsilon.rs".to_string(),
+                co_change_count: 5,
+                coupling_ratio: 0.5,
+            },
+        ];
+
+        let thresholds = IssueThresholds::default();
+        let manifest = build_manifest(&ManifestContext::default());
+        let mut expected = Vec::new();
+        generate_json_output(&metrics, &thresholds, &manifest, &mut expected).unwrap();
+
+        for _ in 0..32 {
+            let mut actual = Vec::new();
+            generate_json_output(&metrics, &thresholds, &manifest, &mut actual).unwrap();
+            assert_eq!(actual, expected);
+        }
+
+        let parsed: serde_json::Value = serde_json::from_slice(&expected).unwrap();
+        let module_names: Vec<_> = parsed["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|module| module["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            module_names,
+            ["alpha", "beta", "delta", "epsilon", "gamma", "zeta"]
+        );
+        assert_eq!(
+            parsed["circular_dependencies"],
+            serde_json::json!([
+                ["alpha", "beta"],
+                ["alpha", "beta", "gamma"],
+                ["alpha", "gamma"]
+            ])
+        );
+        assert_eq!(parsed["temporal_couplings"][0]["file_b"], "src/epsilon.rs");
+        assert_eq!(parsed["temporal_couplings"][1]["file_b"], "src/zeta.rs");
     }
 }

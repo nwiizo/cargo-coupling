@@ -251,11 +251,15 @@ impl VolatilityAnalyzer {
             .collect();
 
         result.sort_by(|a, b| {
-            b.co_change_count.cmp(&a.co_change_count).then(
-                b.coupling_ratio
-                    .partial_cmp(&a.coupling_ratio)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-            )
+            b.co_change_count
+                .cmp(&a.co_change_count)
+                .then_with(|| {
+                    b.coupling_ratio
+                        .partial_cmp(&a.coupling_ratio)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| a.file_a.cmp(&b.file_a))
+                .then_with(|| a.file_b.cmp(&b.file_b))
         });
         Ok(result)
     }

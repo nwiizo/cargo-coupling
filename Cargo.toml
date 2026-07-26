@@ -1,12 +1,25 @@
 [package]
 name = "cargo-coupling"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2024"
 description = "A coupling analysis tool for Rust projects - measuring the 'right distance' in your code"
 license = "MIT"
 repository = "https://github.com/nwiizo/cargo-coupling"
 keywords = ["coupling", "analysis", "architecture", "metrics", "cargo-subcommand"]
 categories = ["development-tools", "command-line-utilities"]
+exclude = [
+    "/.claude/**",
+    "/.github/**",
+    "/.coupling.toml",
+    "/.dockerignore",
+    "/AGENTS.md",
+    "/CLAUDE.md",
+    "/Dockerfile",
+    "/Dockerfile.full",
+    "/PROPOSAL.md",
+    "/docker-compose.yml",
+    "/renovate.json",
+]
 
 [dependencies]
 syn = { version = "2.0", features = ["full", "visit"] }

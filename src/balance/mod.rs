@@ -699,6 +699,33 @@ mod tests {
     }
 
     #[test]
+    fn test_grade_rationale_uses_stable_dimension_tie_break_order() {
+        let make_issue = |issue_type| CouplingIssue {
+            issue_type,
+            severity: Severity::Medium,
+            source: "source".to_string(),
+            target: "target".to_string(),
+            description: "test issue".to_string(),
+            refactoring: RefactoringAction::General {
+                action: "test action".to_string(),
+            },
+            balance_score: 0.5,
+        };
+        let issues = [
+            make_issue(IssueType::PublicFieldExposure),
+            make_issue(IssueType::GlobalComplexity),
+            make_issue(IssueType::HiddenCoupling),
+        ];
+
+        let rationale = build_grade_rationale(&issues, 10, false);
+
+        assert_eq!(
+            rationale.dominant_dimension,
+            Some(GradeDimension::Volatility)
+        );
+    }
+
+    #[test]
     fn test_health_grade_calculation() {
         let mut issues = HashMap::new();
 

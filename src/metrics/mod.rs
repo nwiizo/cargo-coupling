@@ -94,6 +94,62 @@ mod tests {
     }
 
     #[test]
+    fn test_overlapping_circular_dependencies_are_deterministic() {
+        let mut project = ProjectMetrics::new();
+
+        for (source, target) in [
+            ("module_a", "module_b"),
+            ("module_a", "module_c"),
+            ("module_b", "module_a"),
+            ("module_b", "module_c"),
+            ("module_c", "module_a"),
+        ] {
+            project.add_coupling(CouplingMetrics::new(
+                source.to_string(),
+                target.to_string(),
+                IntegrationStrength::Model,
+                Distance::DifferentModule,
+                Volatility::Low,
+            ));
+        }
+
+        let expected = vec![
+            vec!["module_a".to_string(), "module_b".to_string()],
+            vec![
+                "module_a".to_string(),
+                "module_b".to_string(),
+                "module_c".to_string(),
+            ],
+            vec!["module_a".to_string(), "module_c".to_string()],
+        ];
+
+        for _ in 0..32 {
+            assert_eq!(project.detect_circular_dependencies(), expected);
+        }
+
+        let covered_edges: std::collections::BTreeSet<_> = expected
+            .iter()
+            .flat_map(|cycle| {
+                cycle
+                    .iter()
+                    .zip(cycle.iter().cycle().skip(1))
+                    .take(cycle.len())
+                    .map(|(source, target)| (source.as_str(), target.as_str()))
+            })
+            .collect();
+        assert_eq!(
+            covered_edges,
+            std::collections::BTreeSet::from([
+                ("module_a", "module_b"),
+                ("module_a", "module_c"),
+                ("module_b", "module_a"),
+                ("module_b", "module_c"),
+                ("module_c", "module_a"),
+            ])
+        );
+    }
+
+    #[test]
     fn test_no_circular_dependencies() {
         let mut project = ProjectMetrics::new();
 
@@ -115,6 +171,47 @@ mod tests {
 
         let cycles = project.detect_circular_dependencies();
         assert!(cycles.is_empty());
+    }
+
+    #[test]
+    fn test_large_acyclic_graph_has_no_cycle_witnesses() {
+        let mut project = ProjectMetrics::new();
+
+        for index in 0..2_000 {
+            project.add_coupling(CouplingMetrics::new(
+                format!("module_{index:04}"),
+                format!("module_{:04}", index + 1),
+                IntegrationStrength::Model,
+                Distance::DifferentModule,
+                Volatility::Low,
+            ));
+        }
+
+        assert!(project.detect_circular_dependencies().is_empty());
+    }
+
+    #[test]
+    fn test_self_dependency_inside_cycle_is_ignored() {
+        let mut project = ProjectMetrics::new();
+
+        for (source, target) in [
+            ("module_a", "module_a"),
+            ("module_a", "module_b"),
+            ("module_b", "module_a"),
+        ] {
+            project.add_coupling(CouplingMetrics::new(
+                source.to_string(),
+                target.to_string(),
+                IntegrationStrength::Model,
+                Distance::DifferentModule,
+                Volatility::Low,
+            ));
+        }
+
+        assert_eq!(
+            project.detect_circular_dependencies(),
+            vec![vec!["module_a".to_string(), "module_b".to_string()]]
+        );
     }
 
     #[test]

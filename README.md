@@ -538,7 +538,7 @@ Job-Focused Commands:
       --check                   CI/CD quality gate (exit code 1 on failure)
       --min-grade <GRADE>       Minimum grade for --check (A/B/C/D/F)
       --max-critical <N>        Max critical issues for --check
-      --max-circular <N>        Max circular dependencies for --check
+      --max-circular <N>        Max representative cycle paths for --check
       --fail-on <SEVERITY>      Fail --check on severity (critical/high/medium/low)
       --json                    Output in JSON format
       --blind-spots             Show the full structural blind-spot list in text output
@@ -754,7 +754,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Detect circular dependencies
     let circular = metrics.circular_dependency_summary();
     if circular.total_cycles > 0 {
-        println!("Found {} cycles!", circular.total_cycles);
+        println!(
+            "Found circular dependencies in {} modules ({} representative paths)",
+            circular.affected_modules, circular.total_cycles
+        );
     }
 
     // Generate report with custom thresholds

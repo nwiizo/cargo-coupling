@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
 
 use crate::volatility::{TemporalCoupling, Volatility};
@@ -301,8 +301,8 @@ impl ProjectMetrics {
     }
 
     /// Build a dependency graph from couplings
-    fn build_dependency_graph(&self) -> HashMap<String, HashSet<String>> {
-        let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
+    fn build_dependency_graph(&self) -> BTreeMap<String, BTreeSet<String>> {
+        let mut graph: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
         for coupling in &self.couplings {
             // Only consider internal couplings (not external crates)
@@ -322,75 +322,183 @@ impl ProjectMetrics {
 
     /// Detect circular dependencies in the project
     ///
-    /// Returns a list of cycles, where each cycle is a list of module names
-    /// forming the circular dependency chain.
+    /// Returns a deterministic set of cycle witnesses. Every internal edge that
+    /// belongs to a multi-module cycle is covered by at least one returned
+    /// chain, without exhaustively enumerating all simple cycles (which can be
+    /// exponential).
     pub fn detect_circular_dependencies(&self) -> Vec<Vec<String>> {
         let graph = self.build_dependency_graph();
-        let mut cycles: Vec<Vec<String>> = Vec::new();
-        let mut visited: HashSet<String> = HashSet::new();
-        let mut rec_stack: HashSet<String> = HashSet::new();
+        let mut cycles = BTreeSet::new();
 
-        for node in graph.keys() {
-            if !visited.contains(node) {
-                let mut path = Vec::new();
-                self.dfs_find_cycles(
-                    node,
-                    &graph,
-                    &mut visited,
-                    &mut rec_stack,
-                    &mut path,
-                    &mut cycles,
-                );
+        // Only non-trivial strongly connected components can contain the
+        // multi-module cycles reported here. This keeps acyclic projects at
+        // linear graph-traversal cost instead of running a BFS from every node.
+        for component in Self::strongly_connected_components(&graph)
+            .into_iter()
+            .filter(|component| component.len() > 1)
+        {
+            let mut incoming: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+            for source in &component {
+                let Some(targets) = graph.get(source) else {
+                    continue;
+                };
+                for target in targets {
+                    if component.contains(target) {
+                        incoming
+                            .entry(target.clone())
+                            .or_default()
+                            .insert(source.clone());
+                    }
+                }
+            }
+
+            // One BFS per distinct target supplies return paths for all incoming
+            // edges inside this cyclic component.
+            for (target, sources) in incoming {
+                let parents = Self::shortest_path_tree(&graph, &target, &component);
+                for source in sources {
+                    // Same-module references are not architectural cycles.
+                    if source == target {
+                        continue;
+                    }
+
+                    // source -> target is cyclic because both nodes belong to the
+                    // same non-trivial strongly connected component.
+                    if let Some(mut return_path) = Self::path_from_tree(&parents, &target, &source)
+                    {
+                        return_path.pop(); // source closes the cycle; do not repeat it.
+                        let mut cycle = Vec::with_capacity(return_path.len() + 1);
+                        cycle.push(source);
+                        cycle.extend(return_path);
+                        cycles.insert(Self::normalize_cycle(&cycle));
+                    }
+                }
             }
         }
 
-        // Deduplicate cycles (same cycle can be detected from different starting points)
-        let mut unique_cycles: Vec<Vec<String>> = Vec::new();
-        for cycle in cycles {
-            let normalized = Self::normalize_cycle(&cycle);
-            if !unique_cycles
-                .iter()
-                .any(|c| Self::normalize_cycle(c) == normalized)
-            {
-                unique_cycles.push(cycle);
-            }
-        }
-
-        unique_cycles
+        cycles.into_iter().collect()
     }
 
-    /// DFS helper for cycle detection
-    fn dfs_find_cycles(
-        &self,
-        node: &str,
-        graph: &HashMap<String, HashSet<String>>,
-        visited: &mut HashSet<String>,
-        rec_stack: &mut HashSet<String>,
-        path: &mut Vec<String>,
-        cycles: &mut Vec<Vec<String>>,
-    ) {
-        visited.insert(node.to_string());
-        rec_stack.insert(node.to_string());
-        path.push(node.to_string());
+    /// Partition the graph deterministically using iterative Kosaraju traversal.
+    fn strongly_connected_components(
+        graph: &BTreeMap<String, BTreeSet<String>>,
+    ) -> Vec<BTreeSet<String>> {
+        let mut nodes = BTreeSet::new();
+        for (source, targets) in graph {
+            nodes.insert(source.clone());
+            nodes.extend(targets.iter().cloned());
+        }
 
-        if let Some(neighbors) = graph.get(node) {
-            for neighbor in neighbors {
-                if !visited.contains(neighbor) {
-                    self.dfs_find_cycles(neighbor, graph, visited, rec_stack, path, cycles);
-                } else if rec_stack.contains(neighbor) {
-                    // Found a cycle - extract the cycle from path
-                    if let Some(start_idx) = path.iter().position(|n| n == neighbor) {
-                        let cycle: Vec<String> = path[start_idx..].to_vec();
-                        if cycle.len() >= 2 {
-                            cycles.push(cycle);
+        let mut visited = BTreeSet::new();
+        let mut finish_order = Vec::with_capacity(nodes.len());
+        for start in &nodes {
+            if visited.contains(start) {
+                continue;
+            }
+
+            let mut stack = vec![(start.clone(), false)];
+            while let Some((node, expanded)) = stack.pop() {
+                if expanded {
+                    finish_order.push(node);
+                    continue;
+                }
+                if !visited.insert(node.clone()) {
+                    continue;
+                }
+
+                stack.push((node.clone(), true));
+                if let Some(neighbors) = graph.get(&node) {
+                    for neighbor in neighbors.iter().rev() {
+                        if !visited.contains(neighbor) {
+                            stack.push((neighbor.clone(), false));
                         }
                     }
                 }
             }
         }
 
-        path.pop();
-        rec_stack.remove(node);
+        let mut reverse: BTreeMap<String, BTreeSet<String>> = nodes
+            .iter()
+            .cloned()
+            .map(|node| (node, BTreeSet::new()))
+            .collect();
+        for (source, targets) in graph {
+            for target in targets {
+                reverse
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(source.clone());
+            }
+        }
+
+        let mut assigned = BTreeSet::new();
+        let mut components = Vec::new();
+        for start in finish_order.into_iter().rev() {
+            if !assigned.insert(start.clone()) {
+                continue;
+            }
+
+            let mut component = BTreeSet::new();
+            let mut stack = vec![start];
+            while let Some(node) = stack.pop() {
+                component.insert(node.clone());
+                if let Some(predecessors) = reverse.get(&node) {
+                    for predecessor in predecessors.iter().rev() {
+                        if assigned.insert(predecessor.clone()) {
+                            stack.push(predecessor.clone());
+                        }
+                    }
+                }
+            }
+            components.push(component);
+        }
+
+        components
+    }
+
+    /// Build a deterministic shortest-path tree from one module.
+    fn shortest_path_tree(
+        graph: &BTreeMap<String, BTreeSet<String>>,
+        start: &str,
+        component: &BTreeSet<String>,
+    ) -> BTreeMap<String, String> {
+        let mut queue = VecDeque::from([start.to_string()]);
+        let mut visited = BTreeSet::from([start.to_string()]);
+        let mut parents: BTreeMap<String, String> = BTreeMap::new();
+
+        while let Some(node) = queue.pop_front() {
+            let Some(neighbors) = graph.get(&node) else {
+                continue;
+            };
+            for neighbor in neighbors {
+                if !component.contains(neighbor) {
+                    continue;
+                }
+                if !visited.insert(neighbor.clone()) {
+                    continue;
+                }
+                parents.insert(neighbor.clone(), node.clone());
+                queue.push_back(neighbor.clone());
+            }
+        }
+
+        parents
+    }
+
+    /// Reconstruct a path from a deterministic shortest-path tree.
+    fn path_from_tree(
+        parents: &BTreeMap<String, String>,
+        start: &str,
+        goal: &str,
+    ) -> Option<Vec<String>> {
+        let mut path = vec![goal.to_string()];
+        let mut cursor = goal.to_string();
+        while cursor != start {
+            cursor = parents.get(&cursor)?.clone();
+            path.push(cursor.clone());
+        }
+        path.reverse();
+        Some(path)
     }
 
     /// Normalize a cycle for deduplication
@@ -667,13 +775,19 @@ fn normalize_path_for_matching(path: &Path) -> PathBuf {
     normalized
 }
 
-/// Summary of circular dependencies
+/// Summary of circular dependencies.
+///
+/// The paths are deterministic witnesses that cover every multi-module cyclic
+/// internal edge. They are not an exhaustive enumeration of all simple cycles,
+/// whose count can be exponential.
 #[derive(Debug, Clone)]
 pub struct CircularDependencySummary {
-    /// Total number of circular dependency cycles
+    /// Number of representative cycle witness paths.
+    ///
+    /// The field name is retained for API compatibility.
     pub total_cycles: usize,
     /// Number of modules involved in cycles
     pub affected_modules: usize,
-    /// The actual cycles (list of module names)
+    /// Representative cycle witness paths (lists of module names)
     pub cycles: Vec<Vec<String>>,
 }

@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.3.8
+
+A reproducibility and dependency-security release. Analysis results are now stable across processes, circular-dependency reporting covers every multi-module cyclic internal edge without claiming to enumerate an exponential number of simple cycles, and CI verifies the exact reviewed dependency graph.
+
+### Fixed
+
+- Circular-dependency detection no longer depends on randomized `HashMap` / `HashSet` iteration. It now emits a deterministic set of representative cycle paths that covers every multi-module cyclic internal edge and module.
+- JSON output is byte-stable for identical inputs: cycle paths, issues, hotspots, modules, temporal couplings, and tied grade dimensions all use explicit deterministic ordering.
+- Markdown, impact, and trace output now use deterministic tie-breakers instead of inheriting randomized map iteration order.
+- `--impact` no longer treats arbitrary string suffixes as module matches or silently chooses one crate when a short module name is ambiguous; it now requires a segment match and lists fully qualified candidates.
+- Hotspot generation reuses the cycle analysis already computed for JSON output, and cycle return-path searches are restricted to strongly connected components instead of traversing acyclic regions once per node.
+- CLI, Markdown, AI, and library documentation now describe the reported paths as representative cycle witnesses instead of presenting their count as an exhaustive count of all simple cycles.
+
+### Security
+
+- Updated `crossbeam-epoch` to 0.9.20, fixing `RUSTSEC-2026-0204` (invalid pointer dereference in pointer formatting). `cargo audit` is clean.
+- Added a RustSec audit workflow for dependency changes and scheduled advisory checks.
+
+### Changed
+
+- Refreshed the remaining compatible dependency updates waiting behind the bot rate limit: Tokio 1.53.1, serde_json 1.0.151, and thiserror 2.0.19.
+- CI and release workflows now use `--locked` for tests, Clippy, release builds, and publishing, so automation cannot silently test or publish a dependency graph different from `Cargo.lock`.
+- Dependency updates are managed by Renovate only; the duplicate Dependabot configuration was removed.
+- `--max-circular` now counts deterministic representative cycle paths. The recommended zero threshold remains equivalent to “no circular dependencies”; non-zero thresholds from earlier releases may need recalibration.
+- Development-only agent, CI, Docker, and Renovate files are excluded from the published crate package.
+
 ## v0.3.7
 
 A scoring-model correctness release. A full re-verification of the tool (CLI surfaces, web API/frontend, and the scoring pipeline, including adversarial review with empirical fixtures) found and fixed several places where the implementation contradicted the documented Balanced Coupling model.

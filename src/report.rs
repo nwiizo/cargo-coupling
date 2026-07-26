@@ -16,6 +16,7 @@ use crate::balance::severity::Severity;
 use crate::manifest::{AnalysisManifest, ManifestContext, build_manifest};
 use crate::metrics::dimensions::{Distance, IntegrationStrength};
 use crate::metrics::project::ProjectMetrics;
+use crate::volatility::TemporalCoupling;
 
 const DEFAULT_STRONG_TEMPORAL_LIMIT: usize = 5;
 
@@ -356,13 +357,13 @@ pub fn generate_summary_with_options<W: Write>(
         if jp {
             writeln!(
                 writer,
-                "⚠️ 循環依存: {} サイクル ({} モジュール)",
+                "⚠️ 循環依存: {} 個の代表経路 ({} モジュール)",
                 circular.total_cycles, circular.affected_modules
             )?;
         } else {
             writeln!(
                 writer,
-                "⚠️ Circular Dependencies: {} cycles ({} modules)",
+                "⚠️ Circular Dependencies: {} representative paths ({} modules)",
                 circular.total_cycles, circular.affected_modules
             )?;
         }
@@ -844,7 +845,9 @@ fn write_issues_by_type<W: Write>(
         let b_max = grouped
             .get(b)
             .and_then(|v| v.iter().map(|i| i.severity).max());
-        b_max.cmp(&a_max)
+        b_max
+            .cmp(&a_max)
+            .then_with(|| a.to_string().cmp(&b.to_string()))
     });
 
     for issue_type in issue_types {
@@ -1009,22 +1012,42 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
 
     // External (DifferentCrate) couplings are outside our control and are excluded
     // from issue detection everywhere else; the crate-root re-export facade is a
-    // stable Contract. Exclude both, and dedupe by (source, target), so this shows
-    // distinct, actionable internal couplings.
-    let mut seen_worst = std::collections::HashSet::new();
-    let mut couplings_with_scores: Vec<_> = metrics
+    // stable Contract. Exclude both, and keep the worst record for each
+    // (source, target) pair, so repeated use sites cannot hide a more severe
+    // coupling merely because they were encountered later.
+    let mut worst_by_pair = std::collections::BTreeMap::new();
+    for coupling in metrics
         .couplings
         .iter()
         .filter(|c| c.distance != Distance::DifferentCrate)
         .filter(|c| !is_crate_root_facade(&c.target))
-        .filter(|c| seen_worst.insert((c.source.clone(), c.target.clone())))
-        .map(|c| (c, BalanceScore::calculate(c)))
-        .collect();
+    {
+        let score = BalanceScore::calculate(coupling);
+        let key = (coupling.source.as_str(), coupling.target.as_str());
+        match worst_by_pair.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert((coupling, score));
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let (selected, selected_score) = entry.get();
+                if score.score.total_cmp(&selected_score.score).is_lt()
+                    || (score.score.total_cmp(&selected_score.score).is_eq()
+                        && coupling_dimension_tie_order(coupling)
+                            < coupling_dimension_tie_order(selected))
+                {
+                    entry.insert((coupling, score));
+                }
+            }
+        }
+    }
+    let mut couplings_with_scores: Vec<_> = worst_by_pair.into_values().collect();
 
     couplings_with_scores.sort_by(|a, b| {
         a.1.score
             .partial_cmp(&b.1.score)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.source.cmp(&b.0.source))
+            .then_with(|| a.0.target.cmp(&b.0.target))
     });
 
     writeln!(
@@ -1087,6 +1110,29 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
     Ok(())
 }
 
+fn coupling_dimension_tie_order(
+    coupling: &crate::metrics::coupling::CouplingMetrics,
+) -> (u8, u8, u8) {
+    let strength = match coupling.strength {
+        IntegrationStrength::Intrusive => 0,
+        IntegrationStrength::Functional => 1,
+        IntegrationStrength::Model => 2,
+        IntegrationStrength::Contract => 3,
+    };
+    let distance = match coupling.distance {
+        Distance::DifferentCrate => 0,
+        Distance::DifferentModule => 1,
+        Distance::SameModule => 2,
+        Distance::SameFunction => 3,
+    };
+    let volatility = match coupling.volatility {
+        crate::volatility::Volatility::High => 0,
+        crate::volatility::Volatility::Medium => 1,
+        crate::volatility::Volatility::Low => 2,
+    };
+    (strength, distance, volatility)
+}
+
 fn write_module_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
     if metrics.modules.is_empty() {
         return Ok(());
@@ -1122,7 +1168,7 @@ fn write_module_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> i
     modules.sort_by(|a, b| {
         let a_deps = a.1.internal_deps.len() + a.1.external_deps.len();
         let b_deps = b.1.internal_deps.len() + b.1.external_deps.len();
-        b_deps.cmp(&a_deps)
+        b_deps.cmp(&a_deps).then_with(|| a.0.cmp(b.0))
     });
 
     for (name, module) in modules.iter().take(20) {
@@ -1178,7 +1224,7 @@ fn write_volatility_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) 
         .filter(|&(_, count)| *count > 10)
         .collect();
 
-    high_vol.sort_by(|a, b| b.1.cmp(a.1));
+    high_vol.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
 
     if high_vol.is_empty() {
         writeln!(
@@ -1216,11 +1262,7 @@ fn write_temporal_coupling_section<W: Write>(
         .iter()
         .filter(|tc| tc.is_strong())
         .collect();
-    strong.sort_by(|a, b| {
-        b.coupling_ratio
-            .partial_cmp(&a.coupling_ratio)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    strong.sort_by(|a, b| compare_temporal_couplings(a, b));
 
     if !show_all && strong.is_empty() {
         return Ok(());
@@ -1273,11 +1315,12 @@ fn write_temporal_coupling_section<W: Write>(
         return Ok(());
     }
 
-    let moderate: Vec<_> = metrics
+    let mut moderate: Vec<_> = metrics
         .temporal_couplings
         .iter()
         .filter(|tc| !tc.is_strong())
         .collect();
+    moderate.sort_by(|a, b| compare_temporal_couplings(a, b));
 
     if !moderate.is_empty() {
         writeln!(writer, "### Moderate Temporal Coupling\n")?;
@@ -1299,6 +1342,15 @@ fn write_temporal_coupling_section<W: Write>(
     Ok(())
 }
 
+fn compare_temporal_couplings(a: &TemporalCoupling, b: &TemporalCoupling) -> std::cmp::Ordering {
+    b.coupling_ratio
+        .partial_cmp(&a.coupling_ratio)
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| b.co_change_count.cmp(&a.co_change_count))
+        .then_with(|| a.file_a.cmp(&b.file_a))
+        .then_with(|| a.file_b.cmp(&b.file_b))
+}
+
 fn write_circular_dependencies_section<W: Write>(
     metrics: &ProjectMetrics,
     writer: &mut W,
@@ -1314,8 +1366,8 @@ fn write_circular_dependencies_section<W: Write>(
     writeln!(writer, "## ⚠️ Circular Dependencies\n")?;
     writeln!(
         writer,
-        "Found **{} circular dependency cycle(s)** involving **{} modules**.\n",
-        summary.total_cycles, summary.affected_modules
+        "Found circular dependencies involving **{} modules**. Showing **{} representative cycle path(s)** that cover every multi-module cyclic edge.\n",
+        summary.affected_modules, summary.total_cycles
     )?;
 
     writeln!(
@@ -1327,7 +1379,7 @@ fn write_circular_dependencies_section<W: Write>(
     writeln!(writer, "2. Inverting dependencies using traits/interfaces")?;
     writeln!(writer, "3. Moving functionality to reduce coupling\n")?;
 
-    writeln!(writer, "### Detected Cycles\n")?;
+    writeln!(writer, "### Representative Cycle Paths\n")?;
 
     for (i, cycle) in summary.cycles.iter().take(10).enumerate() {
         let cycle_str = cycle.join(" → ");
@@ -1343,7 +1395,7 @@ fn write_circular_dependencies_section<W: Write>(
     if summary.cycles.len() > 10 {
         writeln!(
             writer,
-            "\n*...and {} more cycles*",
+            "\n*...and {} more representative paths*",
             summary.cycles.len() - 10
         )?;
     }
@@ -1496,7 +1548,7 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
     if circular.total_cycles > 0 {
         writeln!(
             writer,
-            "Circular Dependencies ({} cycles):",
+            "Circular Dependencies ({} representative paths):",
             circular.total_cycles
         )?;
         for cycle in circular.cycles.iter().take(5) {
@@ -1511,11 +1563,12 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
     }
 
     // Temporal coupling (important for AI to understand implicit dependencies)
-    let strong_temporal: Vec<_> = metrics
+    let mut strong_temporal: Vec<_> = metrics
         .temporal_couplings
         .iter()
         .filter(|tc| tc.is_strong())
         .collect();
+    strong_temporal.sort_by(|a, b| compare_temporal_couplings(a, b));
     if !strong_temporal.is_empty() {
         writeln!(writer, "Temporal Coupling (implicit dependencies):")?;
         for tc in strong_temporal.iter().take(5) {
@@ -1951,6 +2004,124 @@ mod tests {
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("| Module | Subdomain |"));
         assert!(output_str.contains("| `report` | Supporting |"));
+    }
+
+    #[test]
+    fn test_report_uses_deterministic_tie_breakers_for_ranked_sections() {
+        use crate::metrics::module::ModuleMetrics;
+        use crate::volatility::TemporalCoupling;
+
+        let mut metrics = ProjectMetrics::new();
+        for index in (0..=20).rev() {
+            let name = format!("module_{index:02}");
+            let mut module =
+                ModuleMetrics::new(PathBuf::from(format!("src/{name}.rs")), name.clone());
+            module.internal_deps.push("shared".to_string());
+            metrics.add_module(module);
+        }
+        for index in (0..=10).rev() {
+            metrics
+                .file_changes
+                .insert(format!("src/file_{index:02}.rs"), 11);
+        }
+        metrics.temporal_couplings = (0..=5)
+            .rev()
+            .map(|index| TemporalCoupling {
+                file_a: format!("src/temporal_{index:02}.rs"),
+                file_b: "src/shared.rs".to_string(),
+                co_change_count: 8,
+                coupling_ratio: 0.8,
+            })
+            .collect();
+
+        let mut output = Vec::new();
+        generate_report(&metrics, &mut output).unwrap();
+        let text = String::from_utf8(output).unwrap();
+
+        assert!(text.find("`module_00`").unwrap() < text.find("`module_19`").unwrap());
+        assert!(!text.contains("`module_20`"));
+        assert!(text.find("`src/file_00.rs`").unwrap() < text.find("`src/file_09.rs`").unwrap());
+        assert!(!text.contains("`src/file_10.rs`"));
+        assert!(
+            text.find("`src/temporal_00.rs`").unwrap() < text.find("`src/temporal_04.rs`").unwrap()
+        );
+        assert!(!text.contains("`src/temporal_05.rs`"));
+    }
+
+    #[test]
+    fn test_issue_categories_use_name_as_severity_tie_breaker() {
+        use crate::balance::rationale::GradeRationale;
+        use std::collections::HashMap;
+
+        let make_issue = |issue_type| CouplingIssue {
+            issue_type,
+            severity: Severity::Medium,
+            source: "source".to_string(),
+            target: "target".to_string(),
+            description: "description".to_string(),
+            refactoring: RefactoringAction::General {
+                action: "action".to_string(),
+            },
+            balance_score: 0.5,
+        };
+        let issues = vec![
+            make_issue(IssueType::GlobalComplexity),
+            make_issue(IssueType::CircularDependency),
+        ];
+        let report = ProjectBalanceReport {
+            total_couplings: 2,
+            balanced_count: 0,
+            needs_review: 2,
+            needs_refactoring: 0,
+            average_score: 0.5,
+            health_grade: HealthGrade::B,
+            issues_by_severity: HashMap::from([(Severity::Medium, 2)]),
+            issues_by_type: HashMap::from([
+                (IssueType::GlobalComplexity, 1),
+                (IssueType::CircularDependency, 1),
+            ]),
+            top_priorities: issues.clone(),
+            issues,
+            grade_rationale: GradeRationale::empty(),
+        };
+
+        let mut output = Vec::new();
+        write_issues_by_type(&report, false, &mut output).unwrap();
+        let text = String::from_utf8(output).unwrap();
+
+        assert!(
+            text.find("### Circular Dependency").unwrap()
+                < text.find("### Global Complexity").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_worst_couplings_keep_worst_record_for_duplicate_pair() {
+        use crate::metrics::coupling::CouplingMetrics;
+        use crate::volatility::Volatility;
+
+        let mut metrics = ProjectMetrics::new();
+        metrics.add_coupling(CouplingMetrics::new(
+            "source".to_string(),
+            "target".to_string(),
+            IntegrationStrength::Contract,
+            Distance::SameModule,
+            Volatility::Low,
+        ));
+        metrics.add_coupling(CouplingMetrics::new(
+            "source".to_string(),
+            "target".to_string(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::High,
+        ));
+
+        let mut output = Vec::new();
+        write_coupling_section(&metrics, &mut output).unwrap();
+        let text = String::from_utf8(output).unwrap();
+
+        assert!(text.contains("| `source` | `target` | Intrusive | Diff Mod | High |"));
+        assert!(!text.contains("| `source` | `target` | Contract |"));
     }
 
     #[test]

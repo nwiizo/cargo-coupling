@@ -155,7 +155,7 @@ struct Args {
     #[arg(long, value_name = "N", requires = "check")]
     max_critical: Option<usize>,
 
-    /// Maximum circular dependencies for --check. Default: 0
+    /// Maximum representative cycle paths for --check. Default: 0
     #[arg(long, value_name = "N", requires = "check")]
     max_circular: Option<usize>,
 

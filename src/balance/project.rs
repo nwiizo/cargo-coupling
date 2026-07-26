@@ -80,13 +80,22 @@ pub fn analyze_project_balance_with_thresholds(
         all_issues.retain(|issue| issue.severity >= Severity::Medium);
     }
 
-    // Sort by severity (critical first), then by balance score (worst first)
+    // Sort by severity (critical first), then by balance score (worst first).
+    // Stable identity fields break ties so JSON and text reports do not inherit
+    // randomized HashMap iteration order from module-level analyses.
     all_issues.sort_by(|a, b| {
-        b.severity.cmp(&a.severity).then_with(|| {
-            a.balance_score
-                .partial_cmp(&b.balance_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
+        b.severity
+            .cmp(&a.severity)
+            .then_with(|| {
+                a.balance_score
+                    .partial_cmp(&b.balance_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| a.issue_type.to_string().cmp(&b.issue_type.to_string()))
+            .then_with(|| a.source.cmp(&b.source))
+            .then_with(|| a.target.cmp(&b.target))
+            .then_with(|| a.description.cmp(&b.description))
+            .then_with(|| a.refactoring.to_string().cmp(&b.refactoring.to_string()))
     });
     dedupe_issues_by_stable_key(&mut all_issues);
 
