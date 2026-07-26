@@ -6,11 +6,13 @@ on:
     paths:
       - "**/Cargo.toml"
       - "**/Cargo.lock"
+      - ".github/workflows/audit.yml"
   pull_request:
     branches: [main]
     paths:
       - "**/Cargo.toml"
       - "**/Cargo.lock"
+      - ".github/workflows/audit.yml"
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
@@ -22,14 +24,14 @@ jobs:
   audit:
     name: RustSec
     runs-on: ubuntu-latest
-    permissions:
-      checks: write
-      contents: read
-      issues: write
     steps:
       - uses: actions/checkout@v7
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
       - name: Audit Cargo.lock
-        uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+        run: cargo audit
