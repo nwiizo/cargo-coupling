@@ -118,6 +118,8 @@ pub struct ModuleItem {
     pub visibility: String,
     /// Dependencies of this item (what it calls/uses)
     pub dependencies: Vec<ItemDepInfo>,
+    pub file_path: Option<String>,
+    pub line: Option<usize>,
 }
 
 /// Information about an item-level dependency
@@ -306,6 +308,17 @@ fn paths_match(module_path: &str, git_path: &str) -> bool {
 
 /// Convert ProjectMetrics to GraphData for visualization
 pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) -> GraphData {
+    let target_subdomains = crate::balance::subdomain::build_target_subdomain_map(metrics);
+    let effective_couplings: Vec<_> = metrics
+        .couplings
+        .iter()
+        .map(|coupling| {
+            crate::balance::subdomain::coupling_with_essential_volatility(
+                coupling,
+                &target_subdomains,
+            )
+        })
+        .collect();
     // Use the caller's configured thresholds so the web grade matches the CLI grade
     // (the previous default-thresholds call produced an inconsistent grade).
     let balance_report =
@@ -337,42 +350,44 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
 
     // Build a mapping from full path to short name for internal modules
     // This allows us to normalize edge source/target to match node IDs
-    let module_short_names: HashSet<&str> = metrics.modules.keys().map(|s| s.as_str()).collect();
+    let module_names = crate::design::graph::DependencyGraph {
+        nodes: metrics.modules.keys().cloned().collect(),
+        ..Default::default()
+    };
 
     // Build a mapping from type/function names to their module names
     // This allows us to resolve paths like "BalanceScore::calculate" to "balance"
-    let mut item_to_module: HashMap<&str, &str> = HashMap::new();
+    let mut item_to_module: HashMap<&str, Option<&str>> = HashMap::new();
     for (module_name, module) in &metrics.modules {
-        for type_name in module.type_definitions.keys() {
-            item_to_module.insert(type_name.as_str(), module_name.as_str());
-        }
-        for fn_name in module.function_definitions.keys() {
-            item_to_module.insert(fn_name.as_str(), module_name.as_str());
+        for name in module
+            .type_definitions
+            .keys()
+            .chain(module.function_definitions.keys())
+        {
+            item_to_module
+                .entry(name.as_str())
+                .and_modify(|owner| {
+                    if *owner != Some(module_name.as_str()) {
+                        *owner = None;
+                    }
+                })
+                .or_insert(Some(module_name.as_str()));
         }
     }
 
     // Helper closure to normalize a path to existing node ID
     let normalize_to_node_id = |path: &str| -> String {
-        // First try direct module name match
-        let short = get_short_name(path);
-        if module_short_names.contains(short) {
-            return short.to_string();
+        // Complete module identities take precedence over item-name heuristics.
+        if let Some(module) = module_names.resolve(path) {
+            return module;
         }
 
         // Try to resolve via item name (type or function)
         // e.g., "BalanceScore::calculate" -> look up "BalanceScore" -> "balance"
-        let parts: Vec<&str> = path.split("::").collect();
-        for part in &parts {
-            if let Some(module_name) = item_to_module.get(part) {
-                return (*module_name).to_string();
-            }
-        }
-
-        // Also try the first part which might be the module name
-        if let Some(first) = parts.first()
-            && module_short_names.contains(*first)
+        if let Some(first) = path.split("::").next()
+            && let Some(Some(module)) = item_to_module.get(first)
         {
-            return (*first).to_string();
+            return (*module).to_string();
         }
 
         // Keep full path for external crates
@@ -385,7 +400,7 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
     let mut node_balance_scores: HashMap<String, Vec<f64>> = HashMap::new();
     let mut node_volatility: HashMap<String, f64> = HashMap::new();
 
-    for coupling in &metrics.couplings {
+    for coupling in &effective_couplings {
         let source_id = normalize_to_node_id(&coupling.source);
         let target_id = normalize_to_node_id(&coupling.target);
 
@@ -470,6 +485,8 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
                 kind: if def.is_trait { "trait" } else { "type" }.to_string(),
                 visibility: format!("{}", def.visibility),
                 dependencies: item_deps_map.get(&def.name).cloned().unwrap_or_default(),
+                file_path: Some(module.path.display().to_string()),
+                line: module.item_locations.get(&def.name).copied(),
             })
             .collect();
 
@@ -479,7 +496,20 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
             kind: "fn".to_string(),
             visibility: format!("{}", def.visibility),
             dependencies: item_deps_map.get(&def.name).cloned().unwrap_or_default(),
+            file_path: Some(module.path.display().to_string()),
+            line: module.item_locations.get(&def.name).copied(),
         }));
+        for (name, visibility) in &module.method_definitions {
+            items.push(ModuleItem {
+                name: name.clone(),
+                kind: "fn".into(),
+                visibility: visibility.to_string(),
+                dependencies: item_deps_map.get(name).cloned().unwrap_or_default(),
+                file_path: Some(module.path.display().to_string()),
+                line: module.item_locations.get(name).copied(),
+            });
+        }
+        items.sort_by(|a, b| a.name.cmp(&b.name));
 
         // Count functions and types
         let fn_count = module.function_definitions.len();
@@ -520,7 +550,7 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
     }
 
     // Add nodes that appear only in couplings but not in modules (external crates)
-    for coupling in &metrics.couplings {
+    for coupling in &effective_couplings {
         for full_path in [&coupling.source, &coupling.target] {
             // Skip glob imports (e.g., "crate::*", "foo::*")
             if full_path.ends_with("::*") || full_path == "*" {
@@ -552,7 +582,7 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
             // Determine if this is an external crate
             let is_external = full_path.contains("::")
                 && !full_path.starts_with("crate::")
-                && !module_short_names.contains(get_short_name(full_path));
+                && module_names.resolve(full_path).is_none();
 
             nodes.push(Node {
                 id: node_id.clone(),
@@ -586,7 +616,7 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
     // Build edges (using normalized node IDs)
     let mut edges: Vec<Edge> = Vec::new();
 
-    for (edge_id, coupling) in metrics.couplings.iter().enumerate() {
+    for (edge_id, coupling) in effective_couplings.iter().enumerate() {
         // Skip edges involving glob imports
         if coupling.source.ends_with("::*")
             || coupling.source == "*"
@@ -1030,6 +1060,87 @@ fn find_issue_for_coupling(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_dimensions_use_declared_essential_volatility() {
+        let mut metrics = ProjectMetrics::new();
+        metrics.add_module(crate::ModuleMetrics::new(
+            "consumer.rs".into(),
+            "consumer".into(),
+        ));
+        let mut provider = crate::ModuleMetrics::new("provider.rs".into(), "provider".into());
+        provider.subdomain = Some(crate::Subdomain::Generic);
+        metrics.add_module(provider);
+        metrics.add_coupling(CouplingMetrics::new(
+            "consumer".into(),
+            "provider".into(),
+            IntegrationStrength::Intrusive,
+            Distance::DifferentModule,
+            Volatility::High,
+        ));
+        let graph = project_to_graph(&metrics, &IssueThresholds::default());
+        assert_eq!(
+            graph.edges[0].dimensions.volatility.value,
+            crate::Subdomain::Generic.expected_volatility().value()
+        );
+    }
+
+    #[test]
+    fn qualified_module_identity_wins_over_an_unrelated_item_with_the_same_name() {
+        let mut metrics = ProjectMetrics::new();
+        let original = crate::ModuleMetrics::new("a.rs".into(), "app::service".into());
+        let mut other = crate::ModuleMetrics::new("b.rs".into(), "other".into());
+        other.add_function_definition("service".into(), crate::Visibility::Public);
+        metrics.add_module(original);
+        metrics.add_module(other);
+        metrics.add_coupling(CouplingMetrics::new(
+            "app::service".into(),
+            "other".into(),
+            IntegrationStrength::Functional,
+            Distance::DifferentModule,
+            Volatility::High,
+        ));
+        let graph = project_to_graph(&metrics, &IssueThresholds::default());
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|edge| edge.source == "app::service" && edge.target == "other")
+        );
+    }
+
+    #[test]
+    fn method_names_and_locations_belong_to_the_analyzed_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lib.rs");
+        std::fs::write(
+            &path,
+            "pub struct Service;\nimpl Service { pub fn submit(&self) {} }\n",
+        )
+        .unwrap();
+        let metrics = crate::analyzer::analyze_project(dir.path()).unwrap();
+        std::fs::write(
+            &path,
+            "pub struct Service;\nimpl Service { pub fn changed(&self) {} }\n",
+        )
+        .unwrap();
+        let graph = project_to_graph(&metrics, &IssueThresholds::default());
+        let method = graph
+            .nodes
+            .iter()
+            .flat_map(|node| &node.items)
+            .find(|item| item.name == "Service::submit")
+            .unwrap();
+        assert_eq!(method.line, Some(2));
+        assert_eq!(method.kind, "fn");
+        assert!(
+            !graph
+                .nodes
+                .iter()
+                .flat_map(|node| &node.items)
+                .any(|item| item.name == "Service::changed")
+        );
+    }
 
     #[test]
     fn test_empty_project() {

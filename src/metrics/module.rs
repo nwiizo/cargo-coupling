@@ -274,6 +274,10 @@ pub struct ModuleMetrics {
     pub type_definitions: HashMap<String, TypeDefinition>,
     /// Function definitions in this module with visibility info
     pub function_definitions: HashMap<String, FunctionDefinition>,
+    /// Associated methods captured with the analysis snapshot.
+    pub method_definitions: HashMap<String, Visibility>,
+    /// One-based source lines for named items in this snapshot.
+    pub item_locations: HashMap<String, usize>,
     /// Item-level dependencies (function → function, function → type, etc.)
     pub item_dependencies: Vec<ItemDependency>,
     /// Whether this module is a test module (mod tests or #[cfg(test)])

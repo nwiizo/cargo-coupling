@@ -117,7 +117,7 @@ fn baseline_diff_reports_new_issue_and_ratchet_results() {
     );
     let fail_stdout = String::from_utf8_lossy(&fail.stdout);
     assert!(fail_stdout.contains("Coupling Ratchet Gate"));
-    assert!(fail_stdout.contains("Blocking New Issues"));
+    assert!(fail_stdout.contains("Blocking New/Worsened Issues"));
     assert!(fail_stdout.contains("High Efferent Coupling"));
 
     let pass = cargo_coupling()

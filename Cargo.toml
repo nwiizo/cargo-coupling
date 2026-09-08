@@ -1,6 +1,6 @@
 [package]
 name = "cargo-coupling"
-version = "0.3.8"
+version = "0.4.0"
 edition = "2024"
 description = "A coupling analysis tool for Rust projects - measuring the 'right distance' in your code"
 license = "MIT"
@@ -23,6 +23,8 @@ exclude = [
 
 [dependencies]
 syn = { version = "2.0", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
 walkdir = "2.5"
 thiserror = "2.0"
 clap = { version = "4.6", features = ["derive"] }

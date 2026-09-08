@@ -41,6 +41,7 @@ pub mod balance;
 mod classification;
 pub mod cli_output;
 pub mod config;
+pub mod design;
 pub mod diff;
 mod discovery;
 pub mod external;

@@ -5,6 +5,9 @@
 import { state, setGraph3d, set3dMode } from './state.js';
 import { t } from './i18n.js';
 import { escapeHtml } from './utils.js';
+import { setup3dLabels, update3dLabels } from './graph-labels-3d.js';
+import { buildElements } from './coupling-graph-2d.js';
+import { arrangeNetwork } from './network-layout.js';
 
 const COLORS = {
     core: '#fb7185',
@@ -31,6 +34,7 @@ let onNodeSelected = null;
 let onEdgeSelected = null;
 let selected3dNodeId = null;
 let selected3dLinkId = null;
+let fitPending = false;
 
 export function initCouplingGraph3d(data, nodeHandler, edgeHandler) {
     const container = document.getElementById('graph-3d');
@@ -47,13 +51,15 @@ export function initCouplingGraph3d(data, nodeHandler, edgeHandler) {
     const graph = ForceGraph3D()(container)
         .backgroundColor('#08111f')
         .showNavInfo(false)
+        .enableNavigationControls(true)
+        .enableNodeDrag(false)
         .nodeLabel(node => node.tooltip || node.label || node.id)
         .nodeColor(nodeColor)
         .nodeVal(nodeValue)
         .linkLabel(link => link.tooltip || `${link.source?.id || link.source} -> ${link.target?.id || link.target}`)
         .linkColor(linkColor)
         .linkWidth(linkWidth)
-        .linkOpacity(0.72)
+        .linkOpacity(0.35)
         .linkDirectionalArrowLength(link => link.isAxis ? 0 : 3)
         .linkDirectionalArrowRelPos(0.92)
         .linkDirectionalParticles(link => {
@@ -67,6 +73,20 @@ export function initCouplingGraph3d(data, nodeHandler, edgeHandler) {
         .onLinkClick(handleLinkClick);
 
     setGraph3d(graph);
+    setup3dLabels(graph, handleNodeClick);
+    graph.onEngineStop(() => {
+        if (fitPending) { fitPending = false; graph.zoomToFit(500, 65); }
+        update3dLabels();
+    });
+    container.addEventListener('pointerdown', () => { fitPending = false; });
+    const help = document.createElement('p'); help.className = 'graph-navigation-help';
+    container.append(help);
+    refresh3dLanguage();
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden || container.style.display === 'none') graph.pauseAnimation();
+        else graph.resumeAnimation();
+    });
+    window.addEventListener('pagehide', () => graph.pauseAnimation());
     render3dMode(data, state.current3dMode || 'network');
     window.addEventListener('resize', resize3dGraph);
     return graph;
@@ -85,22 +105,21 @@ export function render3dMode(data = state.graphData, mode = state.current3dMode 
     }
 
     if (mode === 'dimension-space') {
+        fitPending = false;
         const graphData = buildDimensionSpaceData(data);
         state.graph3d
             .graphData(graphData)
             .cooldownTicks(0);
         state.graph3d.cameraPosition({ x: 260, y: 220, z: 320 }, { x: 0, y: 0, z: 0 }, 900);
+        requestAnimationFrame(update3dLabels);
         return;
     }
 
+    fitPending = true;
     state.graph3d
-        .cooldownTicks(120)
+        .cooldownTicks(1)
         .graphData(buildNetworkData(data));
-    const linkForce = state.graph3d.d3Force('link');
-    if (linkForce) {
-        linkForce.distance(link => linkDistance(link));
-    }
-    state.graph3d.cameraPosition({ x: 0, y: 0, z: 420 }, { x: 0, y: 0, z: 0 }, 900);
+    state.graph3d.cameraPosition({ x: 320, y: 240, z: 460 }, { x: 0, y: 0, z: 0 });
 }
 
 export function refresh3dGraph() {
@@ -153,7 +172,7 @@ function buildNetworkData(data) {
     const showHidden = document.getElementById('show-hidden-coupling')?.checked ?? true;
     const nodeIds = new Set();
     const nodes = data.nodes
-        .filter(node => !hideExternal || !node.file_path?.startsWith('[external]'))
+        .filter(node => !hideExternal || node.file_path?.endsWith('.rs') && !node.file_path.startsWith('[external]'))
         .map(node => {
             nodeIds.add(node.id);
             return {
@@ -181,7 +200,19 @@ function buildNetworkData(data) {
         }
     }
 
-    return { nodes, links };
+    if (state.showItems) {
+        const elements = buildElements(data, { showItems: true });
+        for (const { data: item } of elements) {
+            if (item.nodeType === 'item' && nodeIds.has(item.parentModule)) {
+                nodeIds.add(item.id);
+                nodes.push({ id: item.id, label: `${item.itemKind === 'fn' ? 'fn ' : ''}${item.label}`, parentModule: item.parentModule, couplings: 0, balance: 1 });
+            }
+        }
+        for (const { data: edge } of elements) if (['parent', 'item-dep'].includes(edge.edgeType) && nodeIds.has(edge.source) && nodeIds.has(edge.target)) {
+            links.push({ id: edge.id, source: edge.source, target: edge.target, strength: .25, distance: .25, balance: 1, parent: edge.edgeType === 'parent' });
+        }
+    }
+    return { nodes: arrangeNetwork(nodes), links };
 }
 
 function buildDimensionSpaceData(data) {
@@ -261,7 +292,7 @@ function handleNodeClick(node) {
 }
 
 function handleLinkClick(link) {
-    if (link.isAxis) return;
+    if (link.isAxis || !link.edgeData) return;
     selected3dLinkId = link.id;
     state.graph3d?.linkWidth(linkWidth);
     onEdgeSelected?.(link.edgeData);
@@ -297,12 +328,7 @@ function linkWidth(link) {
     if (link.isAxis) return 1.5;
     if (link.id === selected3dLinkId) return 7;
     if (link.hidden) return 2.5 + (link.edgeData?.coupling_ratio || 0.5) * 3;
-    return 1 + (link.strength || 0.5) * 5;
-}
-
-function linkDistance(link) {
-    if (link.isAxis) return 180;
-    return 45 + (link.distance || 0.5) * 190;
+    return 0.4 + (link.strength || 0.5);
 }
 
 function touchesNode(link, nodeId) {
@@ -409,8 +435,20 @@ function labelValue(value) {
     }[value] || value;
 }
 
-function resize3dGraph() {
+export function resize3dGraph() {
     const container = document.getElementById('graph-3d');
     if (!state.graph3d || !container) return;
     state.graph3d.width(container.clientWidth).height(container.clientHeight);
+    state.graph3d.controls().handleResize?.();
+    update3dLabels();
+}
+
+export function refresh3dLanguage() {
+    const help = document.querySelector('.graph-navigation-help');
+    if (help) help.textContent = state.currentLang === 'ja' ? '左ドラッグ: 回転 · 右ドラッグ: 移動 · ホイール: ズーム · Tab / Enter: 名前を選択' : 'Left drag: rotate · Right drag: pan · Wheel: zoom · Tab / Enter: select a name';
+}
+
+export function fitActiveGraph() {
+    if (state.currentGraphProjection === '3d') state.graph3d?.zoomToFit(500, 65);
+    else state.cy?.fit(state.cy.elements(':visible'), 50);
 }

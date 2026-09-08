@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
+use syn::spanned::Spanned;
 use syn::visit::Visit;
 use syn::{
     Expr, ExprCall, ExprField, ExprMethodCall, ExprStruct, File, FnArg, ItemFn, ItemImpl, ItemMod,
@@ -191,6 +192,8 @@ impl DependencyKind {
 /// AST visitor for coupling analysis
 #[derive(Debug)]
 pub struct CouplingAnalyzer {
+    /// Location of the syntax currently being visited.
+    current_line: usize,
     /// Current module being analyzed
     pub current_module: String,
     /// File path
@@ -307,6 +310,7 @@ impl CouplingAnalyzer {
             type_visibility: HashMap::new(),
             current_item: None,
             item_dependencies: Vec::new(),
+            current_line: 0,
         }
     }
 
@@ -331,7 +335,7 @@ impl CouplingAnalyzer {
         self.dependencies.push(Dependency {
             path,
             kind,
-            line: 0,
+            line: self.current_line,
             usage,
         });
     }
@@ -362,7 +366,7 @@ impl CouplingAnalyzer {
                 target,
                 target_module,
                 dep_type,
-                line,
+                line: if line == 0 { self.current_line } else { line },
                 expression,
             });
         }
@@ -528,6 +532,26 @@ impl CouplingAnalyzer {
 }
 
 impl<'ast> Visit<'ast> for CouplingAnalyzer {
+    fn visit_item(&mut self, node: &'ast syn::Item) {
+        let previous = self.current_line;
+        self.current_line = node.span().start().line;
+        syn::visit::visit_item(self, node);
+        self.current_line = previous;
+    }
+
+    fn visit_expr(&mut self, node: &'ast syn::Expr) {
+        let previous = self.current_line;
+        self.current_line = node.span().start().line;
+        syn::visit::visit_expr(self, node);
+        self.current_line = previous;
+    }
+
+    fn visit_type(&mut self, node: &'ast syn::Type) {
+        let previous = self.current_line;
+        self.current_line = node.span().start().line;
+        syn::visit::visit_type(self, node);
+        self.current_line = previous;
+    }
     fn visit_item_use(&mut self, node: &'ast ItemUse) {
         let paths = self.extract_use_paths(&node.tree, "");
 
@@ -563,6 +587,30 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
     }
 
     fn visit_item_impl(&mut self, node: &'ast ItemImpl) {
+        let parent = self
+            .extract_type_name(&node.self_ty)
+            .unwrap_or_else(|| "Self".into());
+        for item in &node.items {
+            if let syn::ImplItem::Fn(method) = item {
+                let name = if let Some((_, path, _)) = &node.trait_ {
+                    let trait_name = path
+                        .segments
+                        .iter()
+                        .map(|segment| segment.ident.to_string())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    format!("<{parent} as {trait_name}>::{}", method.sig.ident)
+                } else {
+                    format!("{parent}::{}", method.sig.ident)
+                };
+                self.metrics
+                    .item_locations
+                    .insert(name.clone(), method.sig.span().start().line);
+                self.metrics
+                    .method_definitions
+                    .insert(name, convert_visibility(&method.vis));
+            }
+        }
         if let Some((_, trait_path, _)) = &node.trait_ {
             // Trait implementation = Contract coupling
             self.metrics.trait_impl_count += 1;
@@ -602,6 +650,9 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
         // Record function definition
         let fn_name = node.sig.ident.to_string();
+        self.metrics
+            .item_locations
+            .insert(fn_name.clone(), node.sig.span().start().line);
         let visibility = convert_visibility(&node.vis);
         self.defined_functions.insert(fn_name.clone(), visibility);
 
@@ -808,6 +859,17 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
     fn visit_item_trait(&mut self, node: &'ast ItemTrait) {
         let name = node.ident.to_string();
         let visibility = convert_visibility(&node.vis);
+        for item in &node.items {
+            if let syn::TraitItem::Fn(method) = item {
+                let method_name = format!("{name}::{}", method.sig.ident);
+                self.metrics
+                    .item_locations
+                    .insert(method_name.clone(), method.sig.span().start().line);
+                self.metrics
+                    .method_definitions
+                    .insert(method_name, visibility);
+            }
+        }
 
         self.defined_traits.insert(name.clone());
         self.type_visibility.insert(name.clone(), visibility);
@@ -1220,7 +1282,8 @@ pub fn analyze_project_parallel_with_config(
                 visibility,
                 analyzed.file_path.clone(),
                 dep.line,
-            );
+            )
+            .with_observed_usage(format!("{:?}", dep.usage));
 
             project.add_coupling(coupling);
         }
@@ -1264,10 +1327,16 @@ pub fn analyze_workspace_with_config(
 
 /// Analyze project with workspace information (parallel version)
 fn analyze_with_workspace(
-    _project_root: &Path,
+    path: &Path,
     workspace: &WorkspaceInfo,
     config: &CompiledConfig,
 ) -> Result<ProjectMetrics, AnalyzerError> {
+    let analysis_scope = if path.file_name().is_some_and(|name| name == "Cargo.toml") {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    let canonical_scope = canonical_file_key(analysis_scope);
     // Exclude patterns are rooted at the config file when known. Otherwise fall back
     // to the workspace root returned by `cargo metadata`.
     let exclude_base = config.config_root().unwrap_or(workspace.root.as_path());
@@ -1287,11 +1356,18 @@ fn analyze_with_workspace(
 
     // Collect file paths and names; module-tree parsing only runs for members using `#[path]`.
     let mut discovered_files: Vec<DiscoveredWorkspaceFile> = Vec::new();
+    let mut selected_members = HashSet::new();
 
     for member_name in &workspace.members {
         if let Some(crate_info) = workspace.get_crate(member_name) {
+            let member_root =
+                canonical_file_key(crate_info.manifest_path.parent().unwrap_or(&workspace.root));
+            // Selecting a package includes all of its targets and #[path] modules;
+            // selecting a source path includes only files beneath that path.
+            let whole_member = member_root.starts_with(&canonical_scope);
             let mut member_files: HashMap<PathBuf, DiscoveredWorkspaceFile> = HashMap::new();
             let mut source_contents = HashMap::new();
+            let mut boundary_skipped_files = 0;
 
             for source_root in &crate_info.source_roots {
                 if !source_root.exists() {
@@ -1334,7 +1410,7 @@ fn analyze_with_workspace(
                         &mut visited,
                         &mut source_contents,
                     );
-                    project.boundary_skipped_files += discovery.boundary_skipped_files;
+                    boundary_skipped_files += discovery.boundary_skipped_files;
 
                     for module_file in discovery.files {
                         if is_path_excluded(&module_file.file_path, exclude_base, config) {
@@ -1357,8 +1433,17 @@ fn analyze_with_workspace(
                 }
             }
 
+            if !whole_member {
+                member_files.retain(|file_path, _| file_path.starts_with(&canonical_scope));
+            }
+            if whole_member || !member_files.is_empty() {
+                selected_members.insert(member_name.clone());
+                project.boundary_skipped_files += boundary_skipped_files;
+            }
             if member_files.is_empty() {
-                project.skipped_crates.push(member_name.clone());
+                if whole_member {
+                    project.skipped_crates.push(member_name.clone());
+                }
             } else {
                 discovered_files.extend(member_files.into_values());
             }
@@ -1488,8 +1573,14 @@ fn analyze_with_workspace(
                 resolved_crate
             };
 
-            // Skip if target module looks invalid (but allow known module names)
-            if !target_is_known_internal_module && !is_valid_dependency_path(&target_module) {
+            // Out-of-scope crates remain valid targets even without analyzed modules.
+            let target_is_known_crate = resolved_crate
+                .as_deref()
+                .is_some_and(|name| workspace.get_crate(name).is_some());
+            if !target_is_known_internal_module
+                && !target_is_known_crate
+                && !is_valid_dependency_path(&target_module)
+            {
                 continue;
             }
 
@@ -1524,7 +1615,8 @@ fn analyze_with_workspace(
                 visibility_for_dependency(dep, target_visibility),
                 analyzed.file_path.clone(),
                 dep.line,
-            );
+            )
+            .with_observed_usage(format!("{:?}", dep.usage));
 
             // Add crate-level info
             coupling.source_crate = Some(analyzed.crate_name.clone());
@@ -1536,7 +1628,7 @@ fn analyze_with_workspace(
 
     // Add crate-level dependency information
     for (crate_name, deps) in &workspace.dependency_graph {
-        if workspace.is_workspace_member(crate_name) {
+        if selected_members.contains(crate_name) {
             for dep in deps {
                 // Track crate-level dependencies
                 project
@@ -1549,7 +1641,7 @@ fn analyze_with_workspace(
     }
 
     project.dead_config_patterns =
-        format_dead_config_patterns(config, &candidate_config_paths, &workspace.root);
+        format_dead_config_patterns(config, &candidate_config_paths, analysis_scope);
 
     Ok(project)
 }

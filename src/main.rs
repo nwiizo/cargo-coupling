@@ -22,8 +22,8 @@ use cargo_coupling::{
     cli_output::{
         CheckConfig, generate_baseline_diff_output, generate_check_output,
         generate_external_dependencies_output, generate_history_output, generate_hotspots_output,
-        generate_impact_output, generate_json_output, generate_json_output_with_diff,
-        generate_ratchet_check_output, parse_grade, parse_severity,
+        generate_json_output, generate_json_output_with_diff, generate_ratchet_check_output,
+        parse_grade, parse_severity,
     },
     diff_ref_analysis, generate_ai_output_with_thresholds, generate_report_with_options,
     generate_summary_with_options, load_compiled_config, load_lock_versions_near,
@@ -48,7 +48,7 @@ enum Commands {
 
 #[derive(Parser, Debug)]
 struct Args {
-    /// Path to the project or directory to analyze
+    /// Workspace/package root, source directory, source file, or Cargo.toml to analyze
     #[arg(default_value = "./src")]
     path: PathBuf,
 
@@ -126,6 +126,22 @@ struct Args {
     /// Show third-party crate coupling breadth and scattered usage risks
     #[arg(long)]
     deps: bool,
+
+    /// Review change impact, design alternatives, ownership and supporting evidence
+    #[arg(long, conflicts_with_all = ["history", "deps", "impact", "trace", "hotspots", "summary", "check"])]
+    design: bool,
+
+    /// Optional versioned design facts (default: search for .coupling-context.toml)
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["history", "deps", "impact", "trace", "hotspots", "summary", "check"])]
+    context: Option<PathBuf>,
+
+    /// Analyze working-tree changes against a Git ref, including test candidates
+    #[arg(long, value_name = "GIT_REF", conflicts_with_all = ["baseline", "history", "deps", "impact", "trace", "hotspots", "summary", "check"])]
+    changed_since: Option<String>,
+
+    /// Maximum dependency hops for impact traversal (default: all reachable modules)
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
+    impact_depth: Option<u32>,
 
     /// Analyze change impact for a specific module
     #[arg(long, value_name = "MODULE")]
@@ -422,6 +438,10 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
             git_months: args.git_months,
             history_max_points: DEFAULT_HISTORY_MAX_POINTS,
             no_git: args.no_git,
+            context_path: args.context.clone(),
+            changed_since: args.changed_since.clone(),
+            baseline: args.baseline.clone(),
+            impact_depth: args.impact_depth.map(|n| n as usize),
         };
 
         // Run the web server using tokio runtime
@@ -442,6 +462,38 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     };
 
     let mut writer = output;
+
+    if args.design || args.changed_since.is_some() || args.context.is_some() {
+        let assessment = cargo_coupling::design::assessment::assess(
+            &metrics,
+            &config,
+            &thresholds,
+            cargo_coupling::design::assessment::AssessmentRequest {
+                path: &args.path,
+                context_path: args.context.as_deref(),
+                changed_since: args.changed_since.as_deref(),
+                baseline: args.baseline.as_deref(),
+                max_depth: args.impact_depth.map(|n| n as usize),
+                git_months: args.git_months,
+                git_used,
+            },
+        )?;
+        if args.json {
+            let mut snapshot = Vec::new();
+            generate_json_output(&metrics, &thresholds, &manifest, &mut snapshot)?;
+            let mut json: serde_json::Value = serde_json::from_slice(&snapshot)?;
+            json["design"] = serde_json::to_value(assessment)?;
+            serde_json::to_writer_pretty(&mut writer, &json)?;
+            writeln!(writer)?;
+        } else {
+            cargo_coupling::design::output::write_assessment(
+                &assessment,
+                args.japanese,
+                &mut writer,
+            )?;
+        }
+        return Ok(0);
+    }
 
     // Job-focused CLI modes (mutually exclusive with other modes)
 
@@ -484,6 +536,19 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
 
     // --json: Machine-readable JSON output
     if args.json {
+        if let Some(module) = &args.impact {
+            let impact = cargo_coupling::cli_output::analyze_impact_with_depth(
+                &metrics,
+                module,
+                args.impact_depth.map(|n| n as usize),
+            )
+            .ok_or_else(|| {
+                invalid_cli_input(format!("Module '{module}' is missing or ambiguous"))
+            })?;
+            serde_json::to_writer_pretty(&mut writer, &impact)?;
+            writeln!(writer)?;
+            return Ok(0);
+        }
         generate_json_output(&metrics, &thresholds, &manifest, &mut writer)?;
         return Ok(0);
     }
@@ -503,7 +568,12 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
 
     // --impact: Analyze impact of a specific module
     if let Some(module_name) = &args.impact {
-        let found = generate_impact_output(&metrics, module_name, &mut writer)?;
+        let found = cargo_coupling::cli_output::generate_impact_output_with_depth(
+            &metrics,
+            module_name,
+            args.impact_depth.map(|n| n as usize),
+            &mut writer,
+        )?;
         if !found {
             return Ok(1);
         }
@@ -577,7 +647,17 @@ fn output_mode_conflict(args: &Args) -> Option<(&'static str, Vec<&'static str>)
     if args.web {
         modes.push("--web");
     }
-    if args.json && args.history.is_none() && !args.deps {
+    if !args.web && (args.design || args.context.is_some() || args.changed_since.is_some()) {
+        modes.push("--design");
+    }
+    if args.json
+        && args.history.is_none()
+        && !args.deps
+        && !args.design
+        && args.context.is_none()
+        && args.changed_since.is_none()
+        && args.impact.is_none()
+    {
         modes.push("--json");
     }
     if args.deps {
@@ -670,6 +750,10 @@ mod tests {
             path,
             output: None,
             summary: false,
+            design: false,
+            context: None,
+            changed_since: None,
+            impact_depth: None,
             ai: false,
             git_months: 6,
             no_git: true,

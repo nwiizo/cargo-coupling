@@ -33,9 +33,15 @@ pub struct CouplingMetrics {
     pub target_visibility: Visibility,
     /// Location where the coupling occurs
     pub location: CouplingLocation,
+    /// Rust syntax observed at the source; strength is an inference from it.
+    pub observed_usage: Option<String>,
 }
 
 impl CouplingMetrics {
+    pub fn with_observed_usage(mut self, usage: String) -> Self {
+        self.observed_usage = Some(usage);
+        self
+    }
     /// Create new coupling metrics
     pub fn new(
         source: String,
@@ -54,6 +60,7 @@ impl CouplingMetrics {
             target_crate: None,
             target_visibility: Visibility::default(),
             location: CouplingLocation::default(),
+            observed_usage: None,
         }
     }
 
@@ -67,15 +74,8 @@ impl CouplingMetrics {
         visibility: Visibility,
     ) -> Self {
         Self {
-            source,
-            target,
-            strength,
-            distance,
-            volatility,
-            source_crate: None,
-            target_crate: None,
             target_visibility: visibility,
-            location: CouplingLocation::default(),
+            ..Self::new(source, target, strength, distance, volatility)
         }
     }
 
@@ -104,6 +104,7 @@ impl CouplingMetrics {
                 file_path: Some(file_path),
                 line,
             },
+            observed_usage: None,
         }
     }
 

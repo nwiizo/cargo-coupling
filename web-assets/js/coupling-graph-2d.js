@@ -5,6 +5,8 @@
 import { state, setCy, setCurrentLayout } from './state.js';
 import { t } from './i18n.js';
 import { STABLE_CRATES, isExternalCrate, estimateVolatility } from './utils.js';
+import { moduleLabel } from './module-labels.js';
+import { ScreenLabels } from './screen-labels.js';
 
 const COLORS = {
     core: '#fb7185',
@@ -28,15 +30,26 @@ export function initCytoscape(data, onNodeTap, onEdgeTap, onBackgroundTap, optio
         container: document.getElementById('cy'),
         elements: elements,
         style: getCytoscapeStyle(),
-        layout: getLayoutConfig('cose'),
-        minZoom: 0.2,
+        layout: { ...getLayoutConfig('dagre'), animate: false },
+        minZoom: 0.05,
         maxZoom: 3,
-        wheelSensitivity: 0.3,
         pixelRatio: 'auto'
     });
 
     setCy(cy);
     setupGraphEventHandlers(cy, onNodeTap, onEdgeTap, onBackgroundTap);
+    const labels = new ScreenLabels(document.getElementById('cy'), id => onNodeTap(cy.getElementById(id)));
+    const updateLabels = () => {
+        if (cy.zoom() >= .65) { labels.render([]); return; }
+        const nodes = cy.nodes(':visible').sort((a, b) => Number(b.id() === state.selectedNode?.id()) - Number(a.id() === state.selectedNode?.id()) || b.degree() - a.degree() || a.id().localeCompare(b.id()));
+        labels.render(nodes.map(node => ({ id: node.id(), text: node.data('graph_label') || node.data('label'), ...node.renderedPosition() })));
+    };
+    let labelFrame;
+    cy.on('pan zoom resize layoutstop data add remove', () => {
+        if (!labelFrame) labelFrame = requestAnimationFrame(() => { labelFrame = undefined; updateLabels(); });
+    });
+    cy.on('destroy', () => { cancelAnimationFrame(labelFrame); labels.layer.remove(); });
+    updateLabels();
     return cy;
 }
 
@@ -62,14 +75,12 @@ export function buildElements(data, options = {}) {
         const implCount = node.metrics?.impl_count ?? ((node.metrics?.trait_impl_count || 0) + (node.metrics?.inherent_impl_count || 0));
 
         const statsStr = `${fnCount} functions, ${typeCount} types, ${implCount} impls`;
-        const labelForGraph = compactModuleLabel(node.label);
-        const hasStats = fnCount > 0 || typeCount > 0 || implCount > 0;
 
         nodes.push({
             data: {
                 id: node.id,
                 label: node.label,
-                graph_label: hasStats ? `${labelForGraph}\n${fnCount} fn  ${typeCount} types  ${implCount} impls` : labelForGraph,
+                graph_label: moduleLabel(node),
                 label_title: node.label,
                 crate: crate,
                 nodeType: 'module',
@@ -277,7 +288,7 @@ export function getCytoscapeStyle() {
                 'text-valign': 'center',
                 'text-halign': 'center',
                 'text-wrap': 'wrap',
-                'text-max-width': '168px',
+                'text-max-width': '240px',
                 'background-color': node => getNodeColor(node.data()),
                 'border-width': 2.5,
                 'border-color': node => node.data('accidental_volatility') ? '#f97316' : '#475569',
@@ -287,7 +298,7 @@ export function getCytoscapeStyle() {
                 'line-height': 1.18,
                 'text-outline-color': '#020617',
                 'text-outline-width': 3,
-                'min-zoomed-font-size': 7,
+                'min-zoomed-font-size': 7.8,
                 'width': node => moduleNodeWidth(node),
                 'height': node => moduleNodeHeight(node),
                 'shape': 'roundrectangle'
@@ -300,13 +311,15 @@ export function getCytoscapeStyle() {
                 'label': 'data(label)',
                 'text-valign': 'center',
                 'text-halign': 'center',
-                'font-size': '7px',
+                'font-size': '11px',
+                'text-wrap': 'wrap',
+                'text-max-width': 200,
                 'color': '#f8fafc',
                 'text-outline-color': '#0f172a',
                 'text-outline-width': 1,
-                'width': 20,
-                'height': 20,
-                'shape': 'ellipse',
+                'width': node => Math.min(220, Math.max(80, node.data('label').length * 7)),
+                'height': 40,
+                'shape': 'roundrectangle',
                 'background-color': node => {
                     const kind = node.data('itemKind');
                     if (kind === 'fn') return '#3b82f6';
@@ -319,7 +332,7 @@ export function getCytoscapeStyle() {
         },
         // Fallback for nodes without nodeType
         {
-            selector: 'node:not([nodeType])',
+            selector: 'node[!nodeType]',
             style: {
                 'label': 'data(label)',
                 'text-valign': 'center',
@@ -508,27 +521,14 @@ export function getCytoscapeStyle() {
     ];
 }
 
-function compactModuleLabel(label = '') {
-    if (label.length <= 34) return label;
-    const parts = label.split('::');
-    const last = parts.pop() || label;
-    if (last.length <= 28 && parts.length > 0) {
-        return `${parts[0]}::...::${last}`;
-    }
-    return `${label.slice(0, 31)}...`;
-}
-
 function moduleNodeWidth(node) {
-    const label = node.data('label') || '';
-    const couplings = (node.data('couplings_in') || 0) + (node.data('couplings_out') || 0);
-    const labelWidth = Math.min(176, Math.max(92, label.length * 6.8));
-    return Math.min(190, labelWidth + Math.min(32, couplings * 1.4));
+    const lines = (node.data('graph_label') || node.data('label') || '').split('\n');
+    return Math.min(260, Math.max(120, ...lines.map(line => line.length * 7 + 28)));
 }
 
 function moduleNodeHeight(node) {
-    const hasStats = (node.data('fn_count') || 0) + (node.data('type_count') || 0) + (node.data('impl_count') || 0) > 0;
-    const couplings = (node.data('couplings_in') || 0) + (node.data('couplings_out') || 0);
-    return Math.min(96, (hasStats ? 58 : 46) + Math.min(22, couplings));
+    const lines = (node.data('graph_label') || '').split('\n');
+    return 30 + lines.reduce((height, line) => height + Math.max(1, Math.ceil(line.length / 32)) * 16, 0);
 }
 
 /**
@@ -543,6 +543,9 @@ export function getLayoutConfig(name) {
             fit: true,
             padding: 70,
             nodeRepulsion: 11000,
+            nodeDimensionsIncludeLabels: true,
+            nodeOverlap: 30,
+            componentSpacing: 100,
             idealEdgeLength: 140,
             edgeElasticity: 100,
             gravity: 0.25,
@@ -550,10 +553,11 @@ export function getLayoutConfig(name) {
         },
         dagre: {
             name: 'dagre',
-            rankDir: 'TB',
+            rankDir: 'LR',
+            nodeDimensionsIncludeLabels: true,
             nodeSep: 50,
-            rankSep: 96,
-            edgeSep: 10,
+            rankSep: 140,
+            edgeSep: 20,
             animate: true,
             animationDuration: 420,
             fit: true,
@@ -579,7 +583,7 @@ export function getLayoutConfig(name) {
 export function applyLayout(name) {
     if (!state.cy) return;
     setCurrentLayout(name);
-    state.cy.layout(getLayoutConfig(name)).run();
+    state.cy.elements(':visible').layout(getLayoutConfig(name)).run();
 }
 
 /**
@@ -618,9 +622,9 @@ export function centerOnNode(node, useRelayout = false) {
  */
 export function focusOnNode(node) {
     if (!state.cy) return;
+    const neighborhood = node.closedNeighborhood().filter(':visible');
     state.cy.animate({
-        center: { eles: node },
-        zoom: 1.5,
+        fit: { eles: neighborhood, padding: 70 },
         duration: 400,
         easing: 'ease-out-cubic'
     });

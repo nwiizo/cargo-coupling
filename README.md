@@ -52,6 +52,19 @@ cargo coupling --summary --jp ./src
 cargo coupling --summary --all ./src
 ```
 
+The path selects the analysis scope. A workspace root includes all members; a
+package root (or its `Cargo.toml`) includes that package's targets and `#[path]`
+modules. A source directory or `.rs` file includes only sources under that path,
+while Cargo metadata is retained to resolve dependencies outside the selection.
+Use the workspace root when you need a complete cross-crate picture; results for
+a subtree do not describe coupling originating in the rest of the workspace.
+
+```bash
+cargo coupling .                         # Entire workspace
+cargo coupling crates/parser            # One package
+cargo coupling crates/parser/src/lexer  # One source subtree
+```
+
 ### 3. Track Coupling Health Over Time
 
 ```bash
@@ -73,14 +86,14 @@ cargo coupling --history=8 --json ./src
 # Diff current issues against a git ref
 cargo coupling --baseline main ./src
 
-# Ratchet gate: fail only on NEW High/Critical issues
+# Ratchet gate: fail on new or worsened High/Critical issues
 cargo coupling --check --baseline main ./src
 
 # Ratchet on Medium or higher
 cargo coupling --check --baseline main --fail-on=medium ./src
 ```
 
-Baseline diffs use `(issue_type, source, target)` as the stable issue key. `--check --baseline <ref>` is useful in CI because existing debt does not fail the build; only new issues at the configured severity do.
+Baseline diffs use `(issue_type, source, target)` as the stable issue key. `--check --baseline <ref>` fails when a new or worsened finding reaches the configured severity. Unchanged existing findings do not fail this gate. Worsening includes severity escalation, a lower balance score, or a larger affected set.
 
 ### 5. Review Blind Spots
 
@@ -154,7 +167,11 @@ cargo coupling --web --port 8080 ./src
 ```
 
 The web UI provides:
+- A readable initial **Structure** overview, source-directory cards, and a directed dependency matrix
 - Interactive 2D and 3D coupling graph views
+- Function, method, and type names in both projections, with bounded previews and full inspector details
+- 3D mouse rotation (left drag), pan (right drag), zoom (wheel), and keyboard-selectable names
+- **Plan a change**: Git changes, multi-hop impact paths, source evidence, alternatives, scenarios, and retained decisions
 - Dimension-Space exploration for strength, distance, volatility, and balance
 - Timeline view for `--history` data with auto-play
 - Trust panels that expose analysis confidence, run notes, and declared blind spots
@@ -489,15 +506,36 @@ fn process_user(user: &impl UserInfo) {
 
 Coupling balance is not about "eliminating coupling" but about "placing the right strength of coupling in the right place."
 
+## Plan a Change and Review Design Decisions
+
+```bash
+cargo coupling --design .
+cargo coupling --changed-since main --impact-depth 4 --json .
+cargo coupling --impact analyzer --impact-depth 3 --json .
+cargo coupling --web --context ./design-context.toml --no-open .
+```
+
+Optional context describes change plans, business importance, effort, ownership,
+shared build/test/release units, runtime constraints, hypothetical scenarios,
+and accepted decisions. Static observations, supplied facts, and unknowns stay
+distinct. See the [design-analysis guide](docs/design-analysis.md) for a complete
+input example, Web workflows, scoring rules, and analysis limits.
+
 ## Numeric Implementation
 
 In the actual implementation:
 
 ```rust
-let alignment = 1.0 - (strength - (1.0 - distance)).abs();
-let volatility_impact = 1.0 - (volatility * strength);
-let score = alignment * volatility_impact;
+let alignment = (strength - distance).abs();
+let stability = 1.0 - volatility;
+let score = alignment.max(stability);
 ```
+
+All dimensions are normalized to `[0, 1]`. Stability compensates for any
+strength/distance combination; strong, nearby dependencies can remain balanced
+even when volatile. v0.4.0 identifies this methodology as
+`khononov-compensation-v2`. Scores from the previous formula are not directly
+comparable. Health grades continue to use the issue-based grading policy.
 
 ## CLI Options
 
@@ -530,8 +568,12 @@ Web Visualization:
       --api-endpoint <URL>      API endpoint URL (for separate deployments)
 
 Job-Focused Commands:
+      --design                  Review change plans, design options and evidence
+      --context <PATH>          Load versioned design context from TOML
+      --changed-since <GIT_REF> Inspect changed items, impact and test candidates
       --hotspots[=<N>]          Show top N refactoring targets [default: 5]
       --impact <MODULE>         Analyze change impact for a module
+      --impact-depth <N>        Limit traversal depth (default: all reachable modules)
       --trace <ITEM>            Trace dependencies for a function/type
       --history[=<N>]           Show coupling health over git history [default: 12 samples]
       --baseline <GIT_REF>      Compare current issues against a baseline ref
@@ -937,6 +979,7 @@ Please keep the following limitations in mind:
 ### What This Tool Cannot Do
 
 - **Understand Business Context**: The tool analyzes structural patterns but cannot understand why certain couplings exist. Some "problematic" patterns may be intentional design decisions.
+  `--design` accepts explicit business rules, plans and retained decisions; it distinguishes these inputs from syntax observations and inferred recommendations.
 - **Replace Human Judgment**: Coupling metrics are heuristics. A high coupling score doesn't always mean bad code, and a low score doesn't guarantee good design.
 - **Detect All Issues**: Static analysis has inherent limitations. Runtime behavior, dynamic dispatch, and macro-generated code may not be fully analyzed.
 - **Provide Perfect Thresholds**: The default thresholds are calibrated for typical Rust projects but may not fit every codebase. Adjust them based on your project's needs.

@@ -32,6 +32,8 @@ pub struct AppState {
     pub analysis_config: CompiledConfig,
     pub git_months: usize,
     pub no_git: bool,
+    pub design: crate::design::model::DesignAssessment,
+    pub context_path: Option<PathBuf>,
 }
 
 /// Configuration for the web server
@@ -44,6 +46,10 @@ pub struct ServerConfig {
     pub git_months: usize,
     pub history_max_points: usize,
     pub no_git: bool,
+    pub context_path: Option<PathBuf>,
+    pub changed_since: Option<String>,
+    pub baseline: Option<String>,
+    pub impact_depth: Option<usize>,
 }
 
 impl Default for ServerConfig {
@@ -57,6 +63,10 @@ impl Default for ServerConfig {
             git_months: 6,
             history_max_points: DEFAULT_HISTORY_MAX_POINTS,
             no_git: false,
+            context_path: None,
+            changed_since: None,
+            baseline: None,
+            impact_depth: None,
         }
     }
 }
@@ -69,6 +79,21 @@ pub async fn start_server(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let history = load_history(&config, &thresholds);
     let source_root = analysis_source_root(&config.analysis_path);
+    let design = crate::design::assessment::assess(
+        &metrics,
+        &config.analysis_config,
+        &thresholds,
+        crate::design::assessment::AssessmentRequest {
+            path: &config.analysis_path,
+            context_path: config.context_path.as_deref(),
+            changed_since: config.changed_since.as_deref(),
+            baseline: config.baseline.as_deref(),
+            max_depth: config.impact_depth,
+            git_months: config.git_months,
+            git_used: !config.no_git
+                && (!metrics.file_changes.is_empty() || !metrics.temporal_couplings.is_empty()),
+        },
+    )?;
 
     let state = Arc::new(AppState {
         metrics,
@@ -80,6 +105,8 @@ pub async fn start_server(
         analysis_config: config.analysis_config.clone(),
         git_months: config.git_months,
         no_git: config.no_git,
+        design,
+        context_path: config.context_path,
     });
 
     let app = Router::new()

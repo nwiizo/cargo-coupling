@@ -15,7 +15,7 @@ export const state = {
     cy: null,
     graph3d: null,
     graphData: null,
-    currentLayout: 'cose',
+    currentLayout: 'dagre',
     currentGraphProjection: '2d',
     current3dMode: 'network',
     selectedNode: null,

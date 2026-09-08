@@ -1,5 +1,66 @@
 # Changelog
 
+## v0.4.0
+
+Change-oriented design analysis, a structure-first Web UI, and refactoring guided
+by running cargo-coupling on its own source. See the
+[design guide](docs/design-analysis.md) and
+[verification record](docs/v0.4.0-verification.md).
+
+### Added
+
+- `--design`, `--context`, `--changed-since` and `--impact-depth`: inspect changed
+  functions/types, transitive impact paths, test candidates, inherited exposure,
+  abstraction findings, shared change reasons, and item-to-workspace boundaries.
+- Validated, versioned TOML context for future changes, frozen code, business
+  importance, effort estimates, CODEOWNERS overrides, shared build/test/release
+  units, supplied runtime relationships, scenarios and retained decisions.
+- Explainable priorities and alternative designs, including retaining a design.
+  Observations, declarations, inferences and missing information remain distinct;
+  scenario scores describe assumptions rather than predicting system quality.
+- Source evidence and reproducibility metadata in JSON, including effective
+  settings, scoring version, source fingerprints and baseline conditions.
+- Web **Plan a change** uses the same Rust assessment as the CLI. It supports
+  Git comparisons, impact tracing, source navigation, scenario review and
+  decision review triggers, with English/Japanese navigation and JSON export.
+- Web **Structure** is the initial view: directory cards, searchable modules and
+  a directed dependency matrix provide an entry point before opening a graph.
+
+### Fixed
+
+- Issue #86: selecting a workspace member, manifest, source directory or file
+  analyzes only that scope while retaining workspace metadata. Symlinks and
+  `#[path]` modules are covered; the real similarity-rs member stays at six files.
+- Balance now follows compensation: `max(abs(strength - distance), 1 - volatility)`.
+  JSON and Web apply the same essential-volatility classification as the core.
+  The scoring version is `khononov-compensation-v2`; old numeric scores should
+  not be compared without reanalysis under the same settings.
+- Baseline ratchets reject worsened existing findings as well as new findings.
+- Canonical module aliases produce consistent direct/transitive impact,
+  hotspot counts and JSON counts. The longest known module suffix takes
+  precedence over a shorter suffix; ambiguous names are not chosen arbitrarily.
+- Both graph projections display function, method and type names. Initial
+  layouts separate nodes; projected labels avoid collisions and retain full
+  details through selection. 3D initializes after its container is visible,
+  restores mouse rotation/pan/zoom, and pauses rendering when hidden.
+- Web comparisons reject stale source snapshots, including newly added files.
+  Historical source navigation handles deleted directories while rejecting
+  traversal and symlink escapes. Keyboard-accessible labels and source dialogs,
+  mobile controls and independently scrolling planning navigation remain usable.
+
+### Refactored and verified
+
+- Split CLI impact, hotspots and JSON into focused modules while preserving
+  public re-exports; separated planning from assessment and Web HTTP adapters
+  from analysis. Reuse score calculation, alias resolution and label placement.
+- Self-analysis with Git and `--exclude-tests` reports grade A, no High/Critical
+  findings and 44 Medium findings. The focused CLI refactor reduced its outgoing
+  dependencies from 36 to 28 and hotspot score from 176 to 132; its God Module
+  finding was resolved. Remaining findings and similarity candidates are recorded
+  in the verification document rather than hidden by threshold changes.
+- Added regression coverage for scope, scoring, impact, Git/source evidence,
+  input validation, Web endpoints and frontend layout/data behavior.
+
 ## v0.3.8
 
 A reproducibility and dependency-security release. Analysis results are now stable across processes, circular-dependency reporting covers every multi-module cyclic internal edge without claiming to enumerate an exponential number of simple cycles, and CI verifies the exact reviewed dependency graph.

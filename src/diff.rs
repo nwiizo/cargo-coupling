@@ -4,7 +4,7 @@
 //! `(issue_type, source, target)`, so ratchet checks can focus on regressions
 //! introduced by the current change rather than the codebase's absolute state.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 // Consume the crate's published facade rather than deep `balance::*` paths: the
 // re-exported surface stays stable when the balance package reorganizes internally.
@@ -18,6 +18,8 @@ pub struct BaselineDiff {
     pub new_issues: Vec<CouplingIssue>,
     /// Issues present only in the baseline report.
     pub resolved_issues: Vec<CouplingIssue>,
+    /// Existing findings whose severity, breadth, or balance deteriorated.
+    pub worsened_issues: Vec<CouplingIssue>,
     /// Number of stable issue keys present in both reports.
     pub unchanged: usize,
     /// Current average score minus baseline average score.
@@ -33,6 +35,7 @@ impl BaselineDiff {
     pub fn ratchet_failures(&self, severity: Severity) -> Vec<&CouplingIssue> {
         self.new_issues
             .iter()
+            .chain(&self.worsened_issues)
             .filter(|issue| issue.meets(severity))
             .collect()
     }
@@ -45,6 +48,25 @@ pub fn diff_reports(
 ) -> BaselineDiff {
     let baseline_keys: HashSet<IssueKey> = baseline.issues.iter().map(IssueKey::from).collect();
     let current_keys: HashSet<IssueKey> = current.issues.iter().map(IssueKey::from).collect();
+    let baseline_by_key: HashMap<_, _> = baseline
+        .issues
+        .iter()
+        .map(|issue| (IssueKey::from(issue), issue))
+        .collect();
+    let mut seen_worsened = HashSet::new();
+    let worsened_issues: Vec<_> = current
+        .issues
+        .iter()
+        .filter(|issue| {
+            let key = IssueKey::from(*issue);
+            baseline_by_key.get(&key).is_some_and(|old| {
+                issue.severity > old.severity
+                    || issue.balance_score + 1e-9 < old.balance_score
+                    || count_breadth(issue) > count_breadth(old)
+            }) && seen_worsened.insert(key)
+        })
+        .cloned()
+        .collect();
 
     let mut seen_new = HashSet::new();
     let new_issues = current
@@ -69,11 +91,26 @@ pub fn diff_reports(
     BaselineDiff {
         new_issues,
         resolved_issues,
-        unchanged: baseline_keys.intersection(&current_keys).count(),
+        unchanged: baseline_keys.intersection(&current_keys).count() - worsened_issues.len(),
+        worsened_issues,
         score_delta: current.average_score - baseline.average_score,
         baseline_grade: baseline.health_grade,
         current_grade: current.health_grade,
     }
+}
+
+fn count_breadth(issue: &CouplingIssue) -> usize {
+    use crate::IssueType;
+    let (value, unit) = match issue.issue_type {
+        IssueType::HighEfferentCoupling => (&issue.target, "dependencies"),
+        IssueType::HighAfferentCoupling => (&issue.source, "dependents"),
+        _ => return 0,
+    };
+    value
+        .split_once(' ')
+        .filter(|(_, suffix)| *suffix == unit)
+        .and_then(|(count, _)| count.parse().ok())
+        .unwrap_or(0)
 }
 
 /// Diff a baseline git-ref analysis against the current report.
@@ -239,6 +276,7 @@ mod tests {
                 ),
             ],
             resolved_issues: Vec::new(),
+            worsened_issues: Vec::new(),
             unchanged: 0,
             score_delta: 0.0,
             baseline_grade: HealthGrade::B,
@@ -292,7 +330,8 @@ mod tests {
 
         assert!(diff.new_issues.is_empty());
         assert!(diff.resolved_issues.is_empty());
-        assert_eq!(diff.unchanged, 2);
+        assert_eq!(diff.unchanged, 0);
+        assert_eq!(diff.worsened_issues.len(), 2);
     }
 
     #[test]
@@ -329,5 +368,22 @@ mod tests {
             diff.resolved_issues.iter().map(IssueKey::from).collect();
         assert_eq!(new_keys.len(), diff.new_issues.len());
         assert_eq!(resolved_keys.len(), diff.resolved_issues.len());
+    }
+
+    #[test]
+    fn existing_issue_escalation_fails_ratchet() {
+        let baseline = report(
+            vec![issue(IssueType::GodModule, Severity::Medium, "a", "large")],
+            0.7,
+            HealthGrade::B,
+        );
+        let current = report(
+            vec![issue(IssueType::GodModule, Severity::High, "a", "large")],
+            0.6,
+            HealthGrade::C,
+        );
+        let diff = diff_reports(&baseline, &current);
+        assert!(diff.new_issues.is_empty());
+        assert_eq!(diff.ratchet_failures(Severity::High).len(), 1);
     }
 }

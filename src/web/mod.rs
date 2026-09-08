@@ -8,6 +8,7 @@
 //! - Balance Score (0.0-1.0)
 //! - Connascence (Name, Type, Meaning, Position, Algorithm)
 
+mod design;
 pub mod graph;
 pub mod routes;
 pub mod server;

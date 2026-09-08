@@ -16,6 +16,14 @@ core = [
     "src/metrics/coupling.rs",
     "src/metrics/module.rs",
     "src/metrics/mod.rs",
+    # Design judgments and their input/result vocabulary evolve with the model.
+    "src/design/assessment.rs",
+    "src/design/context.rs",
+    "src/design/model.rs",
+    "src/design/mod.rs",
+    "src/design/organization.rs",
+    "src/design/planning.rs",
+    "src/design/structure.rs",
 ]
 
 # Supporting: analysis machinery and output around the model. Changes track the
@@ -29,6 +37,11 @@ supporting = [
     "src/metrics/dimensions.rs",
     "src/report.rs",
     "src/cli_output.rs",
+    "src/cli_output/**",
+    "src/design/changes.rs",
+    "src/design/graph.rs",
+    "src/design/output.rs",
+    "src/design/source.rs",
     "src/history.rs",
     "src/diff.rs",
     "src/external.rs",

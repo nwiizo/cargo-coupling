@@ -1,0 +1,52 @@
+# Demonstration inputs for this repository, not statements of team ownership.
+# Replace example owners, plans and estimates before using these as evidence.
+version = 1
+
+[[components]]
+name = "Analysis example"
+modules = ["*analyzer", "design::*"]
+owners = ["@example-analysis"]
+planned_changes = "Review shared analysis responsibilities"
+business_value = 2
+effort_days = 3
+build_unit = "cargo-coupling"
+test_unit = "cargo-test"
+release_unit = "cargo-coupling"
+
+[[components]]
+name = "Web example"
+modules = ["web::*"]
+owners = ["@example-ui"]
+planned_changes = "Review how evidence reaches the browser"
+business_value = 1
+effort_days = 2
+build_unit = "cargo-coupling"
+test_unit = "cargo-test"
+release_unit = "cargo-coupling"
+
+[[rules]]
+id = "shared-dimension-meaning"
+modules = ["design::assessment", "web::design"]
+description = "CLI and Web must interpret analysis dimensions consistently"
+
+[[relationships]]
+id = "snapshot-consistency-example"
+source = "web::design"
+target = "design::assessment"
+kind = "sequence"
+origin = "declared"
+evidence = "Example review requirement: verify snapshot freshness before comparing revisions"
+
+[[scenarios]]
+name = "Hide knowledge at the HTTP boundary"
+description = "Hypothesis only: the boundary can reduce integration-specific knowledge"
+[[scenarios.changes]]
+source = "*web::design"
+target = "*design::assessment"
+strength = 0.25
+
+[[decisions]]
+id = "retain-shared-assessment"
+modules = ["design::assessment", "web::design"]
+reason = "Use one assessment pipeline for both interfaces"
+review_on = ["planned-change", "cross-team", "changed", "worsened-issue"]

@@ -5,7 +5,7 @@
 import { state, setSelectedNode, setSelectedEdge, setCenterMode } from './state.js';
 import { t, tf } from './i18n.js';
 import { applyLayout, clearHighlights, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, analyzeCoupling, getHealthColor } from './coupling-graph-2d.js';
-import { refresh3dGraph, focusLink3d, focusNode3d } from './coupling-graph-3d.js';
+import { refresh3dGraph, focusLink3d, focusNode3d, fitActiveGraph } from './coupling-graph-3d.js';
 import { debounce, escapeHtml, estimateVolatility } from './utils.js';
 import { updateUrl } from './url-router.js';
 
@@ -277,11 +277,11 @@ export function setupFilters() {
         refresh3dGraph();
     });
 
-    document.getElementById('fit-graph')?.addEventListener('click', () => state.cy?.fit(undefined, 50));
+    document.getElementById('fit-graph')?.addEventListener('click', fitActiveGraph);
 
     setTimeout(() => {
         applyFilters();
-        state.cy?.fit(undefined, 50);
+        applyLayout(state.currentLayout);
     }, 100);
 }
 
@@ -360,7 +360,8 @@ function exportGraph(format) {
 
 export function setupKeyboardShortcuts(callbacks = {}) {
     document.addEventListener('keydown', (e) => {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+        if (document.querySelector('dialog[open]')) return;
+        if (['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName) || e.target.isContentEditable) return;
 
         switch (e.key) {
             case '/':
@@ -368,7 +369,7 @@ export function setupKeyboardShortcuts(callbacks = {}) {
                 document.getElementById('search-input')?.focus();
                 break;
             case 'f':
-                state.cy?.fit(undefined, 50);
+                fitActiveGraph();
                 break;
             case 'r':
                 applyLayout(state.currentLayout);

@@ -46,7 +46,7 @@
 //! ```
 
 use glob::Pattern;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -70,7 +70,7 @@ pub enum ConfigError {
 }
 
 /// Analysis configuration section
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct AnalysisConfig {
     /// Exclude test code from analysis (#[test], #[cfg(test)], mod tests)
     #[serde(default)]
@@ -87,7 +87,7 @@ pub struct AnalysisConfig {
 }
 
 /// Volatility configuration section
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct VolatilityConfig {
     /// Paths that should be considered high volatility
     #[serde(default)]
@@ -113,7 +113,7 @@ pub struct VolatilityConfig {
 /// - Core subdomains = High volatility (competitive advantage, constantly optimized)
 /// - Supporting subdomains = Low volatility (boring CRUD/ETL, rarely changes)
 /// - Generic subdomains = Low volatility (solved problems, stable implementations)
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SubdomainConfig {
     /// Core subdomain modules (high volatility - competitive advantage)
     #[serde(default)]
@@ -129,7 +129,7 @@ pub struct SubdomainConfig {
 }
 
 /// Threshold configuration section
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ThresholdsConfig {
     /// Maximum dependencies before flagging High Efferent Coupling
     #[serde(default = "default_max_dependencies")]
@@ -158,7 +158,7 @@ impl Default for ThresholdsConfig {
 }
 
 /// Root configuration structure
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct CouplingConfig {
     /// Analysis configuration (test exclusion, prelude modules, etc.)
     #[serde(default)]
@@ -227,6 +227,36 @@ pub struct DeadConfigPattern {
 }
 
 impl CompiledConfig {
+    /// Effective settings after file loading and CLI overrides, independent of
+    /// cache state and the particular filename used to supply configuration.
+    pub fn effective_settings(&self) -> CouplingConfig {
+        let patterns = |items: &[Pattern]| {
+            items
+                .iter()
+                .map(|pattern| pattern.as_str().to_string())
+                .collect()
+        };
+        CouplingConfig {
+            analysis: AnalysisConfig {
+                exclude_tests: self.exclude_tests,
+                prelude_modules: patterns(&self.prelude_patterns),
+                exclude: patterns(&self.exclude_patterns),
+            },
+            volatility: VolatilityConfig {
+                high: patterns(&self.high_patterns),
+                medium: patterns(&self.medium_patterns),
+                low: patterns(&self.low_patterns),
+                ignore: patterns(&self.ignore_patterns),
+            },
+            subdomains: SubdomainConfig {
+                core: patterns(&self.core_patterns),
+                supporting: patterns(&self.supporting_patterns),
+                generic: patterns(&self.generic_patterns),
+            },
+            thresholds: self.thresholds.clone(),
+        }
+    }
+
     /// Create a compiled config from raw config
     pub fn from_config(config: CouplingConfig) -> Result<Self, ConfigError> {
         Self::from_config_with_root(config, None)

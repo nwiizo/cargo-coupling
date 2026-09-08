@@ -2,6 +2,61 @@
 
 use crate::metrics::coupling::CouplingMetrics;
 
+/// Version of the numeric methodology, recorded with exported analyses.
+pub const SCORING_VERSION: &str = "khononov-compensation-v2";
+
+/// Compensation over normalized dimensions. Used for both observations and
+/// explicit what-if scenarios so their calculations cannot drift apart.
+pub(crate) fn normalized_balance(strength: f64, distance: f64, volatility: f64) -> f64 {
+    (strength - distance).abs().max(1.0 - volatility)
+}
+
+#[cfg(test)]
+mod compensation_tests {
+    use super::*;
+    use crate::{Distance, IntegrationStrength, Volatility};
+
+    #[test]
+    fn stability_compensates_for_every_strength_and_distance() {
+        for strength in [
+            IntegrationStrength::Intrusive,
+            IntegrationStrength::Functional,
+            IntegrationStrength::Model,
+            IntegrationStrength::Contract,
+        ] {
+            for distance in [
+                Distance::SameFunction,
+                Distance::SameModule,
+                Distance::DifferentModule,
+                Distance::DifferentCrate,
+            ] {
+                let coupling = CouplingMetrics::new(
+                    "consumer".into(),
+                    "provider".into(),
+                    strength,
+                    distance,
+                    Volatility::Low,
+                );
+                let score = BalanceScore::calculate(&coupling);
+                assert_eq!(score.score, 1.0, "{strength:?}, {distance:?}");
+                assert!(score.is_balanced());
+            }
+        }
+    }
+
+    #[test]
+    fn proximity_preserves_cohesion_when_implementation_is_volatile() {
+        let coupling = CouplingMetrics::new(
+            "a".into(),
+            "a".into(),
+            IntegrationStrength::Intrusive,
+            Distance::SameFunction,
+            Volatility::High,
+        );
+        assert_eq!(BalanceScore::calculate(&coupling).score, 1.0);
+    }
+}
+
 /// Balance score for a coupling relationship
 #[derive(Debug, Clone)]
 pub struct BalanceScore {
@@ -55,26 +110,18 @@ impl BalanceScore {
     ///
     /// Problematic patterns:
     /// - Strong (1.0) + Far (1.0) → Low alignment (global complexity)
-    /// - Any + High volatility → Reduced by volatility impact
+    /// - Instability removes compensation; it does not cancel good alignment.
     pub fn calculate(coupling: &CouplingMetrics) -> Self {
         let strength = coupling.strength_value();
         let distance = coupling.distance_value();
         let volatility = coupling.volatility_value();
 
-        // Alignment: how well strength and distance match the ideal patterns
-        // Ideal: (strong + close) OR (weak + far)
-        // XOR-like: difference between strength and distance
-        // If both high or both low = misaligned, if opposite = aligned
-        let alignment = 1.0 - (strength - (1.0 - distance)).abs();
-
-        // Volatility impact: high volatility with strong coupling is bad
-        // Only applies when there's actual coupling (strength > 0)
-        let volatility_penalty = volatility * strength;
-        let volatility_impact = 1.0 - volatility_penalty;
-
-        // Combined score: both alignment AND stability matter
-        // Using AND (multiplication) instead of OR (max) for stricter scoring
-        let score = alignment * volatility_impact;
+        // Chapter 10: XOR is distance between the two dimension values;
+        // OR is max. Stability can compensate for complexity, and volatility
+        // cannot erase modularity already achieved by proximity/encapsulation.
+        let alignment = (strength - distance).abs();
+        let volatility_impact = 1.0 - volatility;
+        let score = normalized_balance(strength, distance, volatility);
 
         // Determine interpretation based on score
         let interpretation = match score {

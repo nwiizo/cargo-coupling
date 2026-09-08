@@ -5,7 +5,7 @@
 import { CONFIG, state, setGraphData, setSelectedNode, setSelectedEdge, setShowItems, setCy, setGraphProjection, set3dMode, setActiveRevision } from './state.js';
 import { setupLanguageToggle, updateUILanguage } from './i18n.js';
 import { initCytoscape, buildElements, getCytoscapeStyle, getLayoutConfig, applyLayout, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, clearHighlights } from './coupling-graph-2d.js';
-import { initCouplingGraph3d, render3dMode, focusLink3d, focusNode3d, clear3dFocus } from './coupling-graph-3d.js';
+import { initCouplingGraph3d, render3dMode, focusLink3d, focusNode3d, clear3dFocus, resize3dGraph, refresh3dLanguage } from './coupling-graph-3d.js';
 import {
     updateHeaderStats,
     updateFooterStats,
@@ -50,6 +50,8 @@ import { graphQueue, runLayoutAsync, debounce } from './graph-queue.js';
 import { getInitialSelection, updateUrl, initUrlRouter } from './url-router.js';
 import { initTimeline } from './timeline.js';
 import { setupReportView, showReportView, hideReportView } from './report-view.js';
+import { setupDesignView, showDesignView, hideDesignView, refreshDesignLanguage } from './design-view.js';
+import { setupStructureView, showStructureView, hideStructureView, refreshStructureLanguage, renderStructure } from './structure-view.js';
 
 // =====================================================
 // State Management
@@ -85,15 +87,11 @@ async function init() {
         // Initialize URL router for browser navigation
         initUrlRouter(handleUrlNavigation);
 
-        // Show sidebar on load
-        const sidebar = document.getElementById('sidebar');
-        if (sidebar) {
-            sidebar.classList.add('visible');
-        }
-
         isInitialized = true;
 
         // Handle initial URL selection after everything is ready
+        const initial = getInitialSelection();
+        if (!initial.module && initial.view !== 'tree') document.getElementById('canvas-view-structure')?.click();
         handleInitialUrlSelection();
 
     } catch (error) {
@@ -203,14 +201,20 @@ function initGraph(data, options = {}) {
         // Options
         options
     );
-    initCouplingGraph3d(
-        data,
-        (nodeId) => {
+}
+
+function initialize3d() {
+    if (state.graph3d) return;
+    try {
+        initCouplingGraph3d(state.graphData, nodeId => {
             const node = state.cy?.getElementById(nodeId);
             if (node?.length) selectNode(node);
-        },
-        (edgeData) => selectEdgeFromGraphData(edgeData)
-    );
+        }, selectEdgeFromGraphData);
+    } catch (error) {
+        const message = document.createElement('p'); message.className = 'graph-error'; message.setAttribute('role', 'status');
+        message.textContent = state.currentLang === 'ja' ? 'この環境では3D表示を利用できません。「構造」または「2D Graph」で確認できます。' : '3D is unavailable in this browser. Structure and 2D Graph remain available.';
+        document.getElementById('graph-3d').replaceChildren(message);
+    }
 }
 
 /**
@@ -244,18 +248,38 @@ function setupItemToggle() {
         toggle.addEventListener('change', (e) => {
             setShowItems(e.target.checked);
             rebuildGraph();
+            render3dMode(state.graphData, state.current3dMode);
         });
     }
 }
 
 function initUI(data) {
+    const header = document.getElementById('header');
+    const toolbar = document.querySelector('.canvas-toolbar');
+    const inspector = document.getElementById('sidebar');
+    const resizeChrome = () => {
+        document.documentElement.style.setProperty('--header-height', `${header.offsetHeight}px`);
+        document.documentElement.style.setProperty('--toolbar-height', `${toolbar.offsetHeight}px`);
+        const width = inspector.classList.contains('visible') && !inspector.classList.contains('collapsed') && window.innerWidth > 780 ? inspector.offsetWidth : 0;
+        document.documentElement.style.setProperty('--inspector-width', `${width}px`);
+        state.cy?.resize();
+        resize3dGraph();
+    };
+    const observer = new ResizeObserver(resizeChrome);
+    observer.observe(header); observer.observe(toolbar); resizeChrome();
+    observer.observe(inspector);
+    new MutationObserver(resizeChrome).observe(inspector, { attributes: true, attributeFilter: ['class'] });
     setupLanguageToggle(() => {
         // Re-populate dynamic content on language change
         updateHeaderStats(state.graphData?.summary, state.graphData);
         clearDetails();
         populateCriticalIssues();
         populateTrustPanel();
+        refreshDesignLanguage();
+        refreshStructureLanguage();
+        refresh3dLanguage();
     });
+    updateUILanguage();
 
     updateHeaderStats(data.summary, data);
     updateFooterStats(data.summary);
@@ -282,6 +306,7 @@ function initUI(data) {
     setupViewToggle();
     setupProjectionToggle();
     setupReportView();
+    refreshDesignLanguage();
     setupLegendToggle();
     setupCenterModeToggle();
     setupItemToggle();
@@ -362,6 +387,7 @@ async function loadGraphRevision(commit) {
 
 async function replaceGraphData(data) {
     setGraphData(data);
+    renderStructure();
     setSelectedNode(null);
     setSelectedEdge(null);
 
@@ -574,6 +600,8 @@ function setupViewToggle() {
 
         currentView = 'graph';
         hideReportView();
+        hideDesignView();
+        hideStructureView();
         showActiveGraphProjection();
         syncCanvasProjectionButtons();
         document.getElementById('tree-view')?.style.setProperty('display', 'none');
@@ -596,8 +624,11 @@ function setupViewToggle() {
 
         currentView = 'tree';
         hideReportView();
+        hideDesignView();
+        hideStructureView();
         document.getElementById('cy').style.display = 'none';
         document.getElementById('graph-3d').style.display = 'none';
+        state.graph3d?.pauseAnimation();
         document.getElementById('dimension-space-labels').style.display = 'none';
         document.getElementById('canvas-view-report')?.classList.remove('active');
         const treeView = document.getElementById('tree-view');
@@ -626,6 +657,8 @@ function setupProjectionToggle() {
     const activateGraphCanvas = () => {
         currentView = 'graph';
         hideReportView();
+        hideDesignView();
+        hideStructureView();
         document.getElementById('tree-view')?.style.setProperty('display', 'none');
         document.getElementById('view-graph')?.classList.add('active');
         document.getElementById('view-tree')?.classList.remove('active');
@@ -657,6 +690,8 @@ function setupProjectionToggle() {
         spaceButton?.classList.remove('active');
         document.getElementById('graph-3d-mode-buttons').style.display = 'flex';
         showActiveGraphProjection();
+        initialize3d();
+        resize3dGraph();
         render3dMode(state.graphData, 'network');
     };
 
@@ -673,13 +708,18 @@ function setupProjectionToggle() {
         spaceButton?.classList.add('active');
         document.getElementById('graph-3d-mode-buttons').style.display = 'flex';
         showActiveGraphProjection();
+        initialize3d();
+        resize3dGraph();
         render3dMode(state.graphData, 'dimension-space');
     };
 
     const activateReport = () => {
         currentView = 'report';
+        hideDesignView();
+        hideStructureView();
         document.getElementById('cy').style.display = 'none';
         document.getElementById('graph-3d').style.display = 'none';
+        state.graph3d?.pauseAnimation();
         document.getElementById('tree-view')?.style.setProperty('display', 'none');
         document.getElementById('dimension-space-labels').style.display = 'none';
         document.getElementById('graph-3d-mode-buttons').style.display = 'none';
@@ -700,6 +740,40 @@ function setupProjectionToggle() {
     canvas3dButton?.addEventListener('click', activate3dNetwork);
     canvasSpaceButton?.addEventListener('click', activateDimensionSpace);
     canvasReportButton?.addEventListener('click', activateReport);
+    document.getElementById('canvas-view-design')?.addEventListener('click', () => {
+        activateReport();
+        hideReportView();
+        currentView = 'design';
+        canvasReportButton?.classList.remove('active');
+        showDesignView();
+    });
+    document.getElementById('canvas-view-structure')?.addEventListener('click', () => {
+        activateReport(); hideReportView();
+        currentView = 'structure'; canvasReportButton?.classList.remove('active'); showStructureView();
+    });
+    const focusStructure = path => {
+        activate2d();
+        if (!state.cy) return;
+        clearHighlights();
+        const nodes = state.cy.nodes().filter(node => path.some(name => node.id() === name || node.id().endsWith(`::${name}`)));
+        if (!nodes.length) return;
+        if (path.length === 1) { selectNode(nodes.first()); return; }
+        state.cy.elements().addClass('dimmed');
+        nodes.removeClass('dimmed').addClass('highlighted');
+        nodes.edgesWith(nodes).removeClass('dimmed').addClass('highlighted');
+        state.cy.resize(); state.cy.fit(nodes, 70);
+    };
+    setupStructureView(focusStructure, () => document.getElementById('canvas-view-design')?.click());
+    setupDesignView(async path => {
+        // Design evidence always refers to the current snapshot.
+        if (state.activeRevision) {
+            setActiveRevision(null);
+            await replaceGraphData(state.graphCache.get('current'));
+            const status = document.getElementById('timeline-graph-status');
+            if (status) status.textContent = 'Current working tree';
+        }
+        focusStructure(path);
+    });
 
     networkButton?.addEventListener('click', () => {
         set3dMode('network');
@@ -729,6 +803,9 @@ function showActiveGraphProjection() {
     const show3d = state.currentGraphProjection === '3d';
     cy.style.display = show3d ? 'none' : 'block';
     graph3d.style.display = show3d ? 'block' : 'none';
+    if (show3d) state.graph3d?.resumeAnimation();
+    else state.graph3d?.pauseAnimation();
+    if (show3d) resize3dGraph();
     if (dimensionLabels) {
         dimensionLabels.style.display = show3d && state.current3dMode === 'dimension-space' ? 'block' : 'none';
     }
@@ -1110,6 +1187,8 @@ function switchToGraphView() {
 
     currentView = 'graph';
     hideReportView();
+    hideDesignView();
+    hideStructureView();
     document.getElementById('canvas-view-report')?.classList.remove('active');
     document.getElementById('tree-view')?.style.setProperty('display', 'none');
     showActiveGraphProjection();

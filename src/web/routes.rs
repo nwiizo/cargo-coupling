@@ -4,7 +4,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use axum::{
@@ -85,6 +84,7 @@ pub fn api_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/graph", get(get_graph))
         .route("/api/report", get(get_report))
+        .merge(super::design::routes())
         .route("/api/history", get(get_history))
         .route("/api/config", get(get_config))
         .route("/api/health", get(health_check))
@@ -200,16 +200,17 @@ async fn get_source(
             .into_response();
     }
 
-    let canonical_path = match path.canonicalize() {
-        Ok(path) => path,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": format!("Invalid source path: {}", e)})),
-            )
-                .into_response();
-        }
-    };
+    let canonical_path =
+        match checked_source_path(&state.source_root, &path, query.git_ref.is_some()) {
+            Ok(path) => path,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": format!("Invalid source path: {}", e)})),
+                )
+                    .into_response();
+            }
+        };
     if !canonical_path.starts_with(&state.source_root) {
         return (
             StatusCode::FORBIDDEN,
@@ -239,7 +240,7 @@ async fn get_source(
 
     let (start_line, end_line) = if let Some(line) = highlight_line {
         let start = line.saturating_sub(context).max(1);
-        let end = (line + context).min(total_lines);
+        let end = line.saturating_add(context).min(total_lines);
         (start, end)
     } else {
         // Show first 30 lines if no specific line requested
@@ -282,6 +283,30 @@ async fn get_source(
     .into_response()
 }
 
+fn checked_source_path(root: &Path, path: &Path, historical: bool) -> std::io::Result<PathBuf> {
+    if !historical || path.exists() {
+        return path.canonicalize();
+    }
+    let relative = path.strip_prefix(root).map_err(std::io::Error::other)?;
+    if !relative
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)))
+    {
+        return Err(std::io::Error::other("Invalid historical source path"));
+    }
+    let ancestor = path
+        .ancestors()
+        .find(|ancestor| ancestor.exists())
+        .ok_or_else(|| std::io::Error::other("No existing source ancestor"))?;
+    let canonical = ancestor.canonicalize()?;
+    if !canonical.starts_with(root) {
+        return Err(std::io::Error::other(
+            "Source ancestor is outside the analyzed project",
+        ));
+    }
+    Ok(canonical.join(path.strip_prefix(ancestor).map_err(std::io::Error::other)?))
+}
+
 fn read_source_content(path: &Path, git_ref: Option<&str>) -> Result<String, String> {
     let Some(git_ref) = git_ref.filter(|value| !value.trim().is_empty()) else {
         return fs::read_to_string(path).map_err(|e| e.to_string());
@@ -294,34 +319,18 @@ fn read_source_content(path: &Path, git_ref: Option<&str>) -> Result<String, Str
         .to_string_lossy()
         .replace('\\', "/");
 
-    let object = format!("{}:{}", git_ref.trim(), relative);
-    let output = Command::new("git")
-        .args(["show", &object])
-        .current_dir(&repo_root)
-        .output()
+    let revision = crate::design::changes::resolve_ref(&repo_root, git_ref.trim())
         .map_err(|e| e.to_string())?;
-
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
+    crate::design::changes::git(&repo_root, &["show", &format!("{revision}:{relative}")])
+        .map_err(|e| e.to_string())
 }
 
 fn git_repo_root(path: &Path) -> Result<PathBuf, String> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(dir)
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-
-    let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
-    Ok(root.canonicalize().unwrap_or(root))
+    let dir = path
+        .ancestors()
+        .find(|ancestor| ancestor.is_dir())
+        .ok_or("No source directory")?;
+    crate::design::changes::git_root(dir).ok_or_else(|| "Source is not in a Git repository".into())
 }
 
 /// GET /api/module - Returns module details including items
@@ -382,5 +391,49 @@ async fn static_handler(
             .status(StatusCode::NOT_FOUND)
             .body(axum::body::Body::from(format!("File not found: {}", path)))
             .unwrap(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn historical_source_survives_deleted_directories_and_stays_inside_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let path = root.join("old/deleted.rs");
+        fs::create_dir(path.parent().unwrap()).unwrap();
+        fs::write(&path, "pub fn original() {}\n").unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-qm",
+                "baseline",
+            ],
+        ] {
+            crate::design::changes::git(&root, &args).unwrap();
+        }
+        fs::remove_dir_all(root.join("old")).unwrap();
+        let checked = checked_source_path(&root, &path, true).unwrap();
+        assert_eq!(
+            read_source_content(&checked, Some("HEAD")).unwrap(),
+            "pub fn original() {}\n"
+        );
+        assert!(checked_source_path(&root, &path, false).is_err());
+        assert!(checked_source_path(&root, &root.join("../outside.rs"), true).is_err());
+        assert!(read_source_content(&checked, Some("--help")).is_err());
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(outside.path(), root.join("escape")).unwrap();
+            assert!(checked_source_path(&root, &root.join("escape/missing.rs"), true).is_err());
+        }
     }
 }

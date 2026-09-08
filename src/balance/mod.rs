@@ -118,11 +118,11 @@ mod tests {
 
     #[test]
     fn test_balance_bad_global_complexity() {
-        // Strong coupling + far distance = bad (global complexity)
+        // Strong, distant, volatile coupling has no compensating dimension.
         let coupling = make_coupling(
             IntegrationStrength::Intrusive,
             Distance::DifferentCrate,
-            Volatility::Low,
+            Volatility::High,
         );
         let score = BalanceScore::calculate(&coupling);
         assert!(
@@ -133,8 +133,8 @@ mod tests {
     }
 
     #[test]
-    fn test_balance_bad_cascading() {
-        // Strong coupling + high volatility = bad
+    fn test_balance_volatile_cohesion() {
+        // Proximity contains the maintenance effort of volatile internals.
         let coupling = make_coupling(
             IntegrationStrength::Intrusive,
             Distance::SameModule,
@@ -142,8 +142,8 @@ mod tests {
         );
         let score = BalanceScore::calculate(&coupling);
         assert!(
-            !score.is_balanced(),
-            "Score: {}, should not be balanced due to volatility",
+            score.is_balanced(),
+            "Score: {}, proximity should preserve cohesion",
             score.score
         );
     }
@@ -499,7 +499,7 @@ mod tests {
 
         let report = analyze_project_balance(&metrics);
 
-        assert_eq!(report.average_score, 0.5);
+        assert_eq!(report.average_score, 1.0);
         assert!(
             !report
                 .issues
@@ -532,7 +532,7 @@ mod tests {
 
         let report = analyze_project_balance(&metrics);
 
-        assert_eq!(report.average_score, 0.0);
+        assert_eq!(report.average_score, 0.5);
         assert!(
             report
                 .issues
@@ -559,7 +559,7 @@ mod tests {
 
         let report = analyze_project_balance(&metrics);
 
-        assert_eq!(report.average_score, 0.0);
+        assert_eq!(report.average_score, 0.5);
         assert!(
             report
                 .issues
@@ -593,7 +593,7 @@ mod tests {
 
         let report = analyze_project_balance(&metrics);
 
-        assert_eq!(report.average_score, 0.0);
+        assert_eq!(report.average_score, 0.5);
         assert!(
             report
                 .issues
