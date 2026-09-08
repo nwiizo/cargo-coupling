@@ -32,7 +32,7 @@ reports distinguish observations, declarations, inferences, and unknowns.
 - [x] 23. Add Web views for inherited exposure, abstraction findings, hierarchy, ownership, and lifecycle/runtime relationships.
 - [x] 24. Compare scenarios and baseline regressions in the Web UI; display assumptions and accepted-decision review triggers.
 - [x] 25. Verify Web keyboard access, empty/error/loading states, Japanese/English labels, and browser rendering with screenshots.
-- [ ] 26. After every implementation and verification task passes, update version and release notes for v0.4.0, commit, tag, publish, and verify release automation and registry publication.
+- [x] 26. After every implementation and verification task passes, update version and release notes for v0.4.0, commit, tag, publish, and verify release automation and registry publication.
 - [x] 27. Resolve GitHub issue #86: retain the existing scope-selection changes and eight `scope_e2e` tests; rerun workspace/package/source/file/Cargo.toml/symlink/`#[path]`/config-scope regressions with the final release and verify the real similarity checkout stays at six selected files. Include in v0.4.0 release notes.
 - [x] 28. Rethink the initial Web presentation: start with readable source boundaries and progressive detail, provide a directed dependency matrix, avoid overlapping nodes/labels/controls, and verify real desktop/mobile layouts and keyboard navigation.
 - [x] 29. Show function, method and type names in both 2D and 3D; verify mouse rotation, zoom, pan and fit after switching views.
@@ -51,5 +51,6 @@ Each work item needs an observable regression test or an integration example.
 The [design guide](design-analysis.md) records inputs, outputs, implementation
 boundaries and limits. The [verification record](v0.4.0-verification.md) contains
 job acceptance, automated checks, before/after self-analysis and Web screenshots.
-All implementation and local verification items are complete; item 26 remains
-open until both the registry and GitHub release have been verified.
+All 30 items are complete. v0.4.0 was published to crates.io and GitHub Releases
+on 2026-09-08. Installing the published crate into an isolated directory and
+running its scope and design-report checks also passed.
