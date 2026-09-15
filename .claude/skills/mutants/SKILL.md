@@ -1,62 +1,37 @@
 ---
 name: mutants
-description: Run mutation testing with cargo-mutants to evaluate test quality. Identifies untested code paths.
-argument-hint: [--file FILE] [-F FUNCTION]
+description: Run cargo-mutants on selected Rust code and investigate gaps in tests revealed by surviving mutations.
+argument-hint: "[-f FILE] [-F FUNCTION]"
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob, Edit
 ---
 
 # Mutation Testing
 
-Run cargo-mutants, analyze missed mutants, write tests for new code, verify fixes.
-
-## Workflow
-
-1. **Run**: Scope to changed files or specified targets
-2. **Analyze**: Focus on new/changed code missed mutants (ignore pre-existing)
-3. **Fix**: Add tests for missed mutants in new code
-4. **Verify**: Re-run on fixed functions to confirm 0 missed
-
-## Commands
+Run the requested scope, or start with the changed files. A full-project run is
+appropriate when requested; mutation testing is not a default release requirement.
 
 ```bash
-# Scoped to specific files (recommended for incremental work)
-cargo mutants --no-shuffle -j4 -f src/config.rs -f src/volatility.rs
-
-# Scoped to specific functions
-cargo mutants --no-shuffle -j4 -F "function_name"
-
-# Full run (slow, 1000+ mutants)
-cargo mutants --no-shuffle -j4 -- --lib
-
-# Check results
-cat mutants.out/missed.txt | grep "target_file.rs"
-cat mutants.out/caught.txt | wc -l
+rtk proxy cargo mutants --no-shuffle -f src/config.rs
+rtk proxy cargo mutants --no-shuffle -F 'function_name'
 ```
 
-## Options
+Use `cargo mutants --help` for installed options and job limits. Inspect the actual
+run output and `mutants.out/missed.txt` to distinguish outcomes:
 
-| Option | Description |
-|--------|-------------|
-| `-f <FILE>` | Limit to specific source file |
-| `-F <PATTERN>` | Filter by function name pattern |
-| `-E <PATTERN>` | Exclude by function name |
-| `-j <N>` | Parallel jobs (default: auto) |
-| `--no-shuffle` | Deterministic ordering |
-| `-- --lib` | Only run library tests |
+| Result | Interpretation |
+|--------|----------------|
+| caught | Tests detected the mutation |
+| missed | Tests did not detect it; inspect reachability and observable behavior |
+| unviable | The mutated program did not compile |
+| timeout | Execution exceeded its limit; investigate before assigning a cause |
 
-## Result Interpretation
+Prioritize changed business behavior and actionable gaps. Existing misses may be
+relevant to the requested scope; do not dismiss CLI or output behavior solely by
+filename. Some surviving mutations preserve behavior or cannot be meaningfully
+exercised, so zero missed mutants is not a universal completion criterion.
 
-| Result | Meaning | Action |
-|--------|---------|--------|
-| **caught** | Test detected mutation | None (good) |
-| **missed** | Test didn't detect | Add/improve test |
-| **unviable** | Compile error from mutation | Ignore |
-| **timeout** | Test too slow | Optimize or skip |
-
-## Triage Strategy
-
-- Pre-existing missed mutants in `main.rs` (CLI entry point): low priority, hard to unit test
-- Output formatting functions (`report.rs`, `cli_output.rs`): low priority unless logic-heavy
-- Business logic (`config.rs`, `balance.rs`, `analyzer.rs`): high priority
-- New code: always fix missed mutants before release
+For diagnosis, report actionable misses and unresolved cases with evidence. When
+test improvements are requested, add assertions for observable behavior, run the
+affected tests, and rerun the relevant mutations. Complete with caught/missed/
+unviable/timeout results for the tested scope and explain remaining limitations.

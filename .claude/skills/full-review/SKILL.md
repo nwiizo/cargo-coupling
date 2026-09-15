@@ -1,60 +1,31 @@
-# Full Review Skill
+---
+name: full-review
+description: Perform a comprehensive Rust architecture review covering coupling, change risks, and idiomatic code.
+argument-hint: "[path]"
+---
 
-Comprehensive architecture review with expert perspectives.
+# Full Architecture Review
 
-## Execution Flow
+Review the requested scope (default `./src`) and produce evidence-backed priorities.
+Use [review](../review/SKILL.md) for coupling analysis, then inspect the relevant
+architecture boundaries and Rust implementation. Reuse current analysis results.
 
-### Phase 1: Automated Analysis
+Consider coupling balance, architectural change risks, and Rust idioms as review
+perspectives. Apply each where it can reveal a consequential problem; named personas,
+separate agents, numeric expert scores, and fixed schedules are not required.
+Delegate only when the user or applicable instructions request delegation, with a
+bounded subtask for each agent.
 
-```bash
-# Coupling analysis
-cargo run -- coupling ./src
-cargo run -- coupling --ai ./src
+Use history or a baseline when the question concerns trends or a PR. Run tests,
+lint, or structural diagnostics when needed to substantiate findings or required
+by repository policy. Report which checks actually ran and any missing coverage;
+do not run duplicate output modes or repeat unchanged passing checks as phases.
 
-# Optional trend and baseline context
-cargo run -- coupling --history ./src
-cargo run -- coupling --baseline main ./src
+Consolidate findings with source locations, impact, confidence, and concrete next
+actions. Separate automated signals from conclusions verified in code. Preserve
+good boundaries, stable hubs, and the analysis blind spots. Use the
+[report example](output-template.md) when a structured report helps, adapting it to
+the request and omitting unsupported scores or empty sections.
 
-# Lint check
-cargo clippy --all-targets --all-features -- -D warnings
-
-# Test
-cargo test --all-features
-```
-
-### Phase 2: Expert Review
-
-Three perspectives:
-
-1. **Balance Advisor (Vlad Khononov)**
-   - 3D analysis: Strength, Distance, Volatility
-   - Coupling balance evaluation
-
-2. **Architecture Critic**
-   - Architecture risk assessment
-   - Technical debt estimation
-
-3. **Rust Idiomatic Expert**
-   - Rust idiom evaluation
-   - Code quality review
-
-### Phase 3: Integrated Report
-
-- Prioritized improvement suggestions
-- Good design decisions to maintain
-- Action plan (immediate/weekly/long-term)
-
-## Output Sections
-
-1. Executive Summary
-2. Automated Analysis Results
-3. Expert Reviews
-4. Integrated Improvement Plan
-5. Next Steps
-
-## Time Estimate
-
-- Phase 1: 1-3 minutes
-- Phase 2: 5-10 minutes
-- Phase 3: 1-2 minutes
-- **Total**: ~10-15 minutes
+Complete the review with supported findings and limits. If fixes are also requested,
+apply and verify the agreed scope without treating the report as a mandatory pause.

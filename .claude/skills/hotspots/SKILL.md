@@ -1,59 +1,25 @@
 ---
 name: hotspots
-description: Identify high-priority refactoring targets using hotspot scoring. Ranks modules by issue severity and coupling count.
-argument-hint: [path]
+description: Rank a Rust project's refactoring candidates using cargo-coupling hotspot results.
+argument-hint: "[path] [--hotspots=N] [--verbose]"
 ---
 
-# Hotspots - Refactoring Priority
+# Refactoring Hotspots
 
-## Execution Steps
-
-1. Run `cargo run --release -- coupling --ai $ARGUMENTS` (default: `./src`)
-2. Calculate hotspot score for each module
-3. Display ranked list with recommendations
-
-## Commands
+Run the built-in ranking for the requested path (default `./src`). Use the
+requested limit; the CLI default is five:
 
 ```bash
-# Default (top 5)
-cargo run -- coupling --hotspots ./src
-
-# Top 10
-cargo run -- coupling --hotspots=10 ./src
-
-# With explanations
-cargo run -- coupling --hotspots --verbose ./src
+rtk proxy cargo run -- coupling --hotspots ./src
+rtk proxy cargo run -- coupling --hotspots=10 --verbose ./src
 ```
 
-## Scoring Formula
+Use the returned scores and issue lists. If the scoring needs explanation, inspect
+[hotspots.rs](../../../src/cli_output/hotspots.rs); do not maintain a separate
+formula or recompute scores from AI prose output.
 
-| Factor | Weight | Description |
-|--------|--------|-------------|
-| Issue count | x30 | Number of coupling issues |
-| Coupling count | x5 | In/out dependency count |
-| Health: Critical | +50 | Critical health status |
-| Health: Needs Review | +20 | Needs review status |
-| Circular dependency | +40 | Part of a cycle |
-
-## Output Format
-
-```markdown
-## Refactoring Hotspots
-
-### 1. [Module] (Score: XX)
-- **Issues**: [Types and count]
-- **Coupling**: In X / Out Y
-- **Recommended action**: [Specific improvement]
-```
-
-## Analysis Dimensions
-
-1. **Why problematic** — Issue types, coupling patterns
-2. **Priority** — Blast radius, difficulty, expected benefit
-3. **Refactoring proposals** — Interface separation, dependency inversion, module splitting, facade
-
-## Notes
-
-- Score 0 = no issues
-- Circular dependencies = highest priority
-- Focus on top 5 for actionable results
+Check the leading candidates in source and explain their likely change impact,
+business volatility, and a concrete next action. A high score or cycle is a signal
+to investigate, not automatic justification for an abstraction. Distinguish the
+CLI ranking from any adjusted recommendation and give the reason for it.
+Report scope and missing evidence; apply refactors when also requested.

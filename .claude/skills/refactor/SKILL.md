@@ -1,46 +1,30 @@
 ---
 name: refactor
-description: Generate concrete refactoring proposals with Before/After code based on coupling analysis results.
-argument-hint: [path] [issue-type: global-complexity|cascading-change|inappropriate-intimacy|high-efferent|high-afferent|all]
+description: Propose or implement Rust refactors for specific coupling findings, with behavior and analysis verification.
+argument-hint: "[path] [issue type or requested change]"
 ---
 
-# Refactor - Refactoring Proposals
+# Refactor Coupling
 
-## Execution Steps
+Use the user's finding or a current analysis to identify the change in scope.
+If analysis is needed, follow [analyze](../analyze/SKILL.md). Treat issue-type labels
+as review filters, not CLI arguments.
 
-1. Run `cargo run -- coupling $ARGUMENTS` to analyze
-2. Identify specified issue type (default: all)
-3. Propose refactoring steps with Before/After code examples
-4. Present priority table and phased migration plan
+Confirm the problem in the implementation and callers. Prefer the smallest change
+that reduces shared knowledge or change impact while preserving behavior. Existing
+entrypoints, re-export facades, and stable hubs may be appropriate. Use
+[patterns.md](patterns.md) only for a relevant example, not as a required design.
 
-## Issue Types
+For proposal requests, explain the problem, recommendation, and validation plan;
+include before/after code or migration steps when they help assess the change.
+For implementation requests, carry out the authorized change and verification
+without stopping after the proposal. Resolve only material unanswered choices.
 
-| Type | Description |
-|------|-------------|
-| `global-complexity` | Strong coupling to distant modules |
-| `cascading-change` | Coupling to volatile modules |
-| `inappropriate-intimacy` | Internal access across boundaries |
-| `high-efferent` | Too many outgoing dependencies |
-| `high-afferent` | Too many incoming dependencies |
-| `all` | All issue types (default) |
+Apply the repository's Rust structural-analysis guidance, including `similarity-rs`
+and `cargo-coupling`, and inspect tool findings before extracting abstractions.
+Compare the affected behavior and analysis with the same settings and Git history.
+Preserve input validation and error handling. Run relevant tests and required
+repository checks; repeat passing checks only after a relevant change or failure.
 
-## Verification
-
-```bash
-# Before refactoring
-cargo run -- coupling --summary ./src > before.txt
-
-# After refactoring
-cargo run -- coupling --summary ./src > after.txt
-
-# Compare
-diff before.txt after.txt
-```
-
-## Guidelines
-
-- Split large changes into small commits
-- Verify tests pass at each step
-- Document change intent for reviewers
-
-Code pattern examples: [patterns.md](patterns.md)
+Complete with the actual change, verification results, and remaining limitations.
+Commit or push when requested; a refactor request alone does not authorize either.

@@ -1,54 +1,25 @@
-# Analyze Output Template
+# Coupling Report Example
+
+Use this for a detailed report when helpful; adapt it to the request and omit
+empty sections. Copy metrics from the actual output rather than estimating them.
 
 ```markdown
-# Coupling Analysis Report
+# Coupling Analysis
 
 ## Summary
+- Scope and analysis settings:
+- Reported health grade and rationale:
+- Balance score and module/coupling counts:
 
-- **Total files**: XX
-- **Total modules**: XX
-- **Total couplings**: XX
-- **Balance score**: X.XX/1.00
-- **Health grade**: [A/B/C/D/F]
+## Findings
+### [Reported severity]: [Finding]
+- Evidence and source location:
+- Effect on changeability:
+- Recommendation and tradeoff:
 
-## Detected Issues
+## Analysis Limits
+[Manifest blind spots, unavailable Git history, parse failures, or skipped revisions]
 
-### Critical (Immediate action)
-[Issue list]
-
-### High (Fix soon)
-[Issue list]
-
-### Medium (Plan to fix)
-[Issue list]
-
-## Coupling Distribution
-
-### By Integration Strength
-
-| Strength | Count | Ratio |
-|----------|-------|-------|
-| Contract | XX | XX% |
-| Model | XX | XX% |
-| Functional | XX | XX% |
-| Intrusive | XX | XX% |
-
-### By Distance
-
-| Distance | Count | Ratio |
-|----------|-------|-------|
-| SameModule | XX | XX% |
-| DifferentModule | XX | XX% |
-| DifferentCrate | XX | XX% |
-
-## Improvement Proposals
-
-### Highest Priority
-1. [Concrete action]
-
-### Recommended
-1. [Concrete action]
-
-## Next Steps
-1. [Recommended next action]
+## Next Actions
+[Supported priorities; distinguish proposals from verified improvements]
 ```

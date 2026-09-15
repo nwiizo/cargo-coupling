@@ -1,115 +1,44 @@
 ---
 name: balanced-coupling
-description: Khononov's Balanced Coupling model reference. Auto-loaded when analyzing coupling patterns, reviewing architecture, or interpreting analysis results.
+description: Interpret cargo-coupling findings using Khononov's strength, distance, and volatility model.
 user-invocable: false
 ---
 
-# Balanced Coupling Model Reference
+# Balanced Coupling Model
 
-Based on Vlad Khononov's "Balancing Coupling in Software Design".
+Use the model to judge the cost of coordinated change. It is a conceptual lens;
+exact detection conditions and reported severities come from the current source.
 
-## The Balance Rule
-
-```
-MODULARITY = STRENGTH XOR DISTANCE
-COMPLEXITY = STRENGTH AND DISTANCE
+```text
 BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
 ```
 
-- **Modularity** emerges when strength and distance counterbalance
-- **Complexity** emerges when both are equal (both high or both low)
-- **Pragmatic**: unbalanced coupling is tolerable if volatility is low
+## Qualitative Severity Table
 
-## Three Dimensions
+| Pattern | Strength | Distance | Volatility | Interpretation |
+|---------|----------|----------|------------|----------------|
+| High Cohesion | Strong | Close | Any | Usually appropriate |
+| Loose Coupling | Weak | Far | Any | Usually appropriate |
+| Acceptable | Strong | Far | Low | Minor concern |
+| Global Complexity | Strong | Far | High | Prioritize investigation |
+| Local Complexity | Weak | Close | Any | Check whether indirection helps |
 
-### 1. Integration Strength (Knowledge Shared)
+## Recognition Rules
 
-From most to least intrusive:
+- Where configured, subdomain volatility represents essential, business-driven
+  change and governs scoring. Raw Git churn feeds accidental-volatility diagnostics;
+  it must not manufacture cascading-change risk for a low-essential-volatility target.
+- Binary entrypoints normally have high fan-out and co-change with wired modules.
+- Crate-root re-export facades provide a stable interface; their consumers do not
+  automatically depend on volatile implementation details.
+- High afferent coupling to a stable central abstraction can be good design.
+- Hidden Coupling is temporal co-change without an AST edge. Investigate shared
+  rules or assumptions before diagnosing a defect.
 
-| Level | Knowledge Type | Implicit/Explicit |
-|-------|---------------|-------------------|
-| **Intrusive** | Implementation details, private interfaces | Implicit, fragile |
-| **Functional** | Business rules, functional specifications | Often implicit |
-| **Model** | Domain/business model, data structures | Explicit but broad |
-| **Contract** | Integration contracts, facades | Most explicit, stable |
+Preserve these distinctions when reviewing or changing detectors. Keep history,
+thresholds, and subdomain settings comparable; never manipulate them to improve
+a grade. Include the analysis manifest when interpreting a clean report.
 
-Key insight: Intrusive and Functional coupling are often **implicit** — they exist
-without anyone realizing. Contract coupling is **explicit** by design.
-
-### 2. Distance (Cost of Change)
-
-Multiple dimensions contribute to distance:
-- **Code structure**: methods → objects → modules → crates → services
-- **Organizational**: same team vs different teams (Conway's Law)
-- **Runtime**: synchronous (tight) vs asynchronous (loose)
-- **Lifecycle**: shared deployments vs independent deployments
-
-Distance is **fractal**: the same rules apply at every abstraction level.
-
-### 3. Volatility (Probability of Change)
-
-Determined by **DDD subdomain classification**, not just git history:
-
-| Subdomain | Volatility | Reason |
-|-----------|------------|--------|
-| **Core** | High | Competitive advantage, constantly optimized |
-| **Supporting** | Low | Boring CRUD/ETL, rarely changes |
-| **Generic** | Low | Solved problems, stable implementations |
-
-Important: distinguish **essential** vs **accidental** volatility.
-Accidental volatility comes from poor design, not business needs.
-
-Configure this in `.coupling.toml`:
-
-```toml
-[subdomains]
-core = ["src/balance.rs", "src/metrics.rs"]
-supporting = ["src/analyzer.rs", "src/report.rs"]
-generic = ["src/config.rs", "src/web/**"]
-```
-
-## Issue Classification
-
-| Pattern | Strength | Distance | Volatility | Severity |
-|---------|----------|----------|------------|----------|
-| High Cohesion | Strong | Close | Any | Ideal |
-| Loose Coupling | Weak | Far | Any | Ideal |
-| Acceptable | Strong | Far | Low | Minor |
-| Global Complexity | Strong | Far | High | Critical |
-| Local Complexity | Weak | Close | Any | Review |
-| Hidden Coupling | Temporal co-change | No code edge | Medium/High | Medium/High |
-| Accidental Volatility | Any | Any | Supporting/Generic churn | Medium |
-
-Hidden Coupling indicates strong co-change without a direct AST dependency, often duplicated business logic or connascence of meaning/algorithm. Accidental Volatility indicates high churn where the subdomain classification says volatility should be low.
-
-## Recognition Rules (avoid false positives)
-
-The balance rule only condemns coupling when volatility is genuinely high. Apply these so the signal stays trustworthy:
-
-- **Essential vs accidental volatility**: subdomain (`.coupling.toml`) volatility is authoritative for scoring. Raw git churn from a development sprint is *accidental* — it feeds `AccidentalVolatility` only, and must not create Cascading Change Risk on a low-essential-volatility target.
-- **Severity by volatility**: Strong + Far + High = Global Complexity (act now); Strong + Far + Low = **Acceptable** (Minor — low volatility neutralizes the distance).
-- **Entrypoint** (`crate::main`): high efferent fan-out and co-change with wired modules are expected by design → not a defect / not hidden coupling.
-- **Re-export facade** (`crate::crate_name` = `lib.rs`): a stable Contract; coupling to it is not intrusive coupling to a volatile component.
-- **Stable central abstraction**: high afferent coupling is good design; only risky when the hub is itself volatile (scale severity by the hub's essential volatility).
-
-## Analysis Manifest
-
-`cargo-coupling` declares blind spots for static analysis. Text output can expand them with `--blind-spots`; `--json` and `--ai` include the full manifest. Use this when interpreting a clean report.
-
-## Connascence Refinement
-
-Within each strength level, connascence types provide finer granularity:
-
-**Static** (compile-time): Name → Type → Meaning → Position → Algorithm
-**Dynamic** (runtime): Execution → Timing → Values → Identity
-
-Stronger connascence = harder to change = higher coupling cost.
-
-## Pragmatic Balancing
-
-- Not all unbalanced coupling needs fixing — prioritize by volatility
-- Low volatility neutralizes unbalanced coupling
-- Focus refactoring on core subdomains (highest business value)
-- Distance increases lifecycle coupling (deployment constraints)
-
-For detailed reference: [model-reference.md](model-reference.md)
+Read [model-reference.md](model-reference.md) only for dimension definitions,
+subdomain reasoning, or connascence examples. For a particular detector, use
+[explain-issue](../explain-issue/SKILL.md) to locate the implementation.

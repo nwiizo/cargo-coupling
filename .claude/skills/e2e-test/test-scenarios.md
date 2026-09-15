@@ -1,88 +1,88 @@
-# E2E Test Scenarios - Detailed Setup
+# E2E Scenarios
 
-## Test Project Structure
-
-```
-/tmp/e2e-test-cargo-coupling/
-├── Cargo.toml
-├── .coupling.toml
-└── src/
-    ├── lib.rs
-    ├── level/
-    │   ├── mod.rs
-    │   ├── projectile.rs
-    │   └── enemy/
-    │       ├── mod.rs
-    │       └── spawner.rs
-```
-
-## Setup
+Use this fixture when an end-to-end CLI check is needed. Run commands from the
+cargo-coupling checkout. Create a unique directory and retain its path for this run:
 
 ```bash
-# 1. Create test project
-rm -rf /tmp/e2e-test-cargo-coupling
-mkdir -p /tmp/e2e-test-cargo-coupling/src/level/enemy
-
-# 2. Cargo.toml
-cat > /tmp/e2e-test-cargo-coupling/Cargo.toml << 'EOF'
-[package]
-name = "e2e-test-project"
-version = "0.1.0"
-edition = "2021"
-EOF
-
-# 3. Create source files
-# lib.rs, level/mod.rs, level/projectile.rs,
-# level/enemy/mod.rs, level/enemy/spawner.rs
-
-# 4. Run analysis
-cargo run -- coupling /tmp/e2e-test-cargo-coupling/src
-
-# 5. Verify results
+rtk proxy mktemp -d /tmp/cargo-coupling-e2e.XXXXXX
 ```
 
-## Config File Test
+Set `coupling_fixture` to that returned path in the current shell. Create the
+following files under it with the normal file-editing tools. This fixture has no
+Git history; the analysis manifest should disclose that limitation.
+
+## Minimal Project
+
+`Cargo.toml`:
 
 ```toml
-# .coupling.toml
-[analysis]
-exclude_tests = true
-prelude_modules = ["prelude", "ext"]
-exclude = ["generated/*"]
+[package]
+name = "coupling-fixture"
+version = "0.1.0"
+edition = "2024"
 ```
 
-## Test File Example (for test exclusion)
+`.coupling.toml`:
+
+```toml
+[analysis]
+exclude_tests = false
+```
+
+`src/lib.rs`:
 
 ```rust
-pub fn production_code() {}
-
-#[test]
-fn test_something() {}
+pub mod level;
 
 #[cfg(test)]
 mod tests {
-    fn helper() {}
+    #[test]
+    fn spawns() {
+        crate::level::enemy::spawner::spawn();
+    }
 }
 ```
 
-## Result Report Format
+The remaining files:
 
-```markdown
-# E2E Test Results
+| File | Content |
+|------|---------|
+| `src/level/mod.rs` | `pub mod enemy; pub mod projectile;` |
+| `src/level/projectile.rs` | `pub struct Projectile;` |
+| `src/level/enemy/mod.rs` | `pub mod spawner;` |
+| `src/level/enemy/spawner.rs` | `use crate::level::projectile::Projectile; pub fn spawn() -> Projectile { Projectile }` |
 
-## Summary
-- **Total tests**: X
-- **Passed**: X
-- **Failed**: X
+## Module Paths and Output
 
-## Details
-
-### Passed
-1. [Test name]: [Details]
-
-### Failed
-1. [Test name]: [Expected] vs [Actual]
-
-## Recommended Actions
-[Fix suggestions for failures]
+```bash
+rtk proxy cargo run -- coupling --json "$coupling_fixture/src" -o "$coupling_fixture/included.json"
+rtk proxy jq -e '.modules | any(.name == "level::enemy::spawner")' "$coupling_fixture/included.json"
+rtk proxy cargo run -- coupling --summary "$coupling_fixture/src"
 ```
+
+Check the command's exit status before its assertions. JSON parsing alone does
+not verify content. For this source-directory input, expect five modules with
+full nested paths and `lib` for the crate-root file. Summary output should include
+the reported grade, rationale, and analysis limits. Check default text or `--ai`
+when those modes are in scope.
+
+## Test Exclusion and Configuration
+
+```bash
+rtk proxy cargo run -- coupling --exclude-tests --json "$coupling_fixture/src" -o "$coupling_fixture/excluded.json"
+rtk proxy jq -e '.analysis_manifest.notes | any(contains("Test code was excluded"))' "$coupling_fixture/excluded.json"
+```
+
+This checks the exclusion declaration. To verify function-count behavior, extend
+the fixture so test functions put a module above the current `max_functions` limit
+in [score.rs](../../../src/balance/score.rs), then compare its God Module finding
+with and without exclusion. The declaration alone does not establish that count.
+
+For config loading, add `exclude = ["src/level/projectile.rs"]` to `[analysis]` and
+rerun JSON analysis. Assert that `level::projectile` is absent from `.modules`.
+This specifically checks that patterns are relative to the config directory even
+when the analysis target is `src`. Keep these fixture changes separate from any
+before/after comparison of the real project's grade.
+
+Report expected versus observed results and untested cases. Honor `--keep`;
+otherwise remove only the unique fixture created for this run.

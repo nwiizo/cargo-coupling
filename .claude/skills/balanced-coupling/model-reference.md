@@ -1,5 +1,9 @@
 # Balanced Coupling Model - Detailed Reference
 
+Use the relevant section for conceptual interpretation. Rust patterns below are
+clues to shared knowledge, not exact detector rules. Confirm classification and
+exceptions in the current source before claiming a defect.
+
 ## Integration Strength Deep Dive
 
 ### Intrusive Coupling (Strength = 1.0)
@@ -45,7 +49,8 @@ Integration through stable, well-defined contracts.
 - Trait implementations (`impl MyTrait for MyStruct`)
 - Published interfaces with semantic versioning
 
-**Best practice**: Reduce coupling strength by introducing trait-based contracts.
+Use a trait when it represents a useful stable boundary; lowering strength alone
+does not justify another abstraction.
 
 ## Distance Factors
 
@@ -78,24 +83,20 @@ Increasing distance often increases lifecycle coupling:
 **Essential volatility**: The business domain genuinely requires frequent changes.
 Core subdomains have high essential volatility — that's their nature.
 
-**Accidental volatility**: Frequent changes caused by poor design.
-If you see high git churn in supporting/generic subdomains, the design may be wrong.
+**Accidental volatility**: Change activity beyond what the business domain needs.
+High churn in supporting/generic subdomains warrants investigation; a temporary
+development sprint alone does not prove a design defect.
 
 **Accidental involatility**: Business wants change but cost is prohibitive.
 Tight coupling makes the system resistant to necessary evolution.
 
 ### Subdomain Classification (DDD)
 
-Configure in `.coupling.toml`:
-```toml
-[subdomains]
-core = ["src/analyzer.rs", "src/balance.rs"]
-supporting = ["src/report.rs", "src/cli_output.rs"]
-generic = ["src/web/*", "src/config.rs"]
-```
-
-This informs volatility assessment from business context, complementing git history.
-The repository's own `.coupling.toml` is the canonical local example.
+Use the target project's `.coupling.toml` to understand its classification.
+The repository's [.coupling.toml](../../../.coupling.toml) is a local example with
+business rationale. Where classified, essential volatility governs scoring;
+raw churn informs accidental-volatility diagnostics. Missing business context is
+uncertainty, not a reason to invent or change a classification.
 
 ## Temporal Coupling
 
@@ -138,9 +139,7 @@ Static analysis does not observe dynamic connascence, organizational/runtime dis
 
 ## Applying the Model
 
-1. **Map integrations**: Identify all coupling relationships
-2. **Classify dimensions**: Strength, Distance, Volatility for each
-3. **Apply balance rule**: Flag unbalanced + volatile couplings
-4. **Prioritize by volatility**: Focus on core subdomains first
-5. **Reduce strength**: Intrusive → Functional → Model → Contract
-6. **Adjust distance**: Move closely coupled code closer together
+Focus on the integrations relevant to the requested change. Explain what knowledge
+is shared, how far a change travels, and how likely that knowledge is to change.
+Choose a refactor only when it improves that situation while preserving behavior;
+strong nearby coupling and weak distant coupling can both be appropriate.

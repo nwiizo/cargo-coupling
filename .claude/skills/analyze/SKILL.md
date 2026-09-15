@@ -1,79 +1,30 @@
 ---
 name: analyze
-description: Run coupling analysis and interpret results. Use when analyzing Rust project coupling patterns and generating improvement proposals.
-argument-hint: [path] [--summary|--verbose|--no-git|--history|--baseline REF]
+description: Run cargo-coupling and interpret a Rust project's coupling report, history, or baseline diff.
+argument-hint: "[path] [analysis options]"
 ---
 
-# Analyze - Coupling Analysis
+# Coupling Analysis
 
-## Execution Steps
-
-1. Run `cargo run -- coupling $ARGUMENTS` (default: `./src`)
-2. Interpret results as Balance Advisor
-3. Present concrete improvement proposals
-
-## Commands
+Run the requested analysis from this repository, using `./src` when no target is
+specified. Choose the output mode that answers the request; one report is usually
+enough. For interpretation, AI output includes the analysis manifest:
 
 ```bash
-# Basic analysis (strict mode, hides Low severity)
-cargo run -- coupling ./src
-
-# Summary only
-cargo run -- coupling --summary ./src
-
-# Japanese output
-cargo run -- coupling --summary --japanese ./src
-
-# AI-friendly output
-cargo run -- coupling --ai ./src
-
-# Show all issues including Low
-cargo run -- coupling --all ./src
-
-# Show full Not Analyzed declaration
-cargo run -- coupling --blind-spots ./src
-
-# JSON output
-cargo run -- coupling --json ./src
-
-# History timeline
-cargo run -- coupling --history ./src
-cargo run -- coupling --history=8 --git-months=12 --json ./src
-
-# Baseline diff
-cargo run -- coupling --baseline main ./src
-
-# Hotspots
-cargo run -- coupling --hotspots ./src
-
-# Impact analysis
-cargo run -- coupling --impact <module> ./src
-
-# CI/CD quality gate
-cargo run -- coupling --check --min-grade=B ./src
-cargo run -- coupling --check --baseline main --fail-on=high ./src
+rtk proxy cargo run -- coupling --ai ./src
 ```
 
-## Options
+Use [command examples](../cargo-coupling/commands.md) for history, baseline,
+machine-readable output, or other requested modes. Read `coupling --help` for
+options not covered there; pass CLI arguments, not slash-command labels.
 
-| Option | Description |
-|--------|-------------|
-| `--summary, -s` | Summary only |
-| `--ai` | AI-friendly output |
-| `--json` | JSON format |
-| `--all` | Show all issues including Low |
-| `--blind-spots` | Show full structural blind-spot manifest in text output |
-| `--history[=N]` | Analyze coupling health over git history |
-| `--baseline REF` | Compare current issues with a baseline git ref |
-| `--fail-on SEVERITY` | Severity threshold for `--check` and baseline ratchet |
-| `--no-git` | Skip Git history analysis |
-| `--max-deps N` | Dependency count threshold |
-| `--max-dependents N` | Dependent count threshold |
-| `--verbose` | Detailed output |
+Explain the reported grade and its rationale, the consequential findings, and the
+analysis limits. Check relevant source and configuration before turning a signal
+into a refactoring recommendation. Preserve Git history, thresholds, and subdomain
+classification when comparing results; never change them to improve the grade.
 
-## Interpretation
-
-See `.claude/docs/khononov-framework.md` for grade meanings.
-See `.claude/docs/issue-types.md` for issue severity.
-
-Output template: [output-template.md](output-template.md)
+Use [the balance model](../balanced-coupling/SKILL.md) when a finding needs semantic
+interpretation. The [report example](output-template.md) is optional for a detailed
+report. A summary request needs only the result and material limits. Analysis is
+complete when the requested results and supporting evidence are explained;
+implement changes when the user also requests them.

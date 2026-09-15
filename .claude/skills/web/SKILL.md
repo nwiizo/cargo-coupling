@@ -1,85 +1,27 @@
 ---
 name: web
-description: Start interactive web UI for coupling analysis visualization. Graph exploration with filters, hotspots, and export.
-argument-hint: [path] [--port PORT] [--no-open]
+description: Launch cargo-coupling's interactive Web visualization for a specified Rust project.
+argument-hint: "[path] [--port PORT] [--no-open]"
 disable-model-invocation: true
 ---
 
-# Web - Visualization UI
+# Launch the Web Visualization
 
-## Start
+Run from this checkout with the requested target (default `./src`). `cargo run`
+builds as needed; a separate build is unnecessary for launch.
 
 ```bash
-cargo build --release
-cargo run --release -- coupling --web $ARGUMENTS  # default: ./src
-
-# Custom port
-cargo run --release -- coupling --web --port 8080 ./src
-
-# Don't auto-open browser
-cargo run --release -- coupling --web --no-open ./src
-
-# Web timeline uses the same history sampling model as --history
-cargo run -- coupling --history=8 --git-months=12 ./src
+rtk proxy cargo run -- coupling --web ./src
+rtk proxy cargo run -- coupling --web --port 8080 --no-open ./src
 ```
 
-## Keyboard Shortcuts
+Preserve the requested port and browser behavior. Use `--no-open` in a headless
+session. Keep track of the process started for this task and report its actual URL
+once it is serving. If startup fails, inspect the failure before changing ports or
+stopping processes. Stop only the server this task owns when cleanup is requested
+or when a temporary verification run ends.
 
-| Key | Action |
-|-----|--------|
-| `/` | Focus search |
-| `f` | Fit to screen |
-| `r` | Reset layout |
-| `e` | Export PNG |
-| `Esc` | Clear selection |
-| `?` | Show help |
-
-## Graph Interaction
-
-- **Click node**: Highlight neighbors, center view
-- **Click edge**: Show dependency direction
-- **Click background**: Clear selection
-
-## Panel Features
-
-### 2D / 3D Graphs
-Explore coupling relationships in 2D or 3D views.
-
-### Dimension-Space
-Inspect strength, distance, volatility, and balance score as separate trust dimensions.
-
-### Timeline
-Shows coupling health across git revisions with auto-play controls.
-
-### Trust
-Shows analysis confidence, run notes, and declared blind spots.
-
-### Hotspots
-Top refactoring targets ranked by severity. Click to jump.
-
-### Key Modules
-- Connections: Sort by dependency count
-- Issues: Sort by problem count
-- Health: Sort by health score
-
-### Analysis
-- Show Dependents: Modules depending on selected
-- Show Dependencies: Modules selected depends on
-- Full Impact: Complete blast radius
-
-### Filters
-- Strength: Intrusive / Functional / Model / Contract
-- Distance: SameFunction / SameModule / DifferentModule / DifferentCrate
-- Volatility: High / Medium / Low
-- Balance Score: Range filter
-- Show Issues Only / Show Cycles Only
-
-## Export
-
-- **PNG Image**: Save graph as image
-- **JSON Data**: Save analysis data as JSON
-
-## Notes
-
-- Ctrl+C to stop server
-- Large projects may take longer on initial load
+Read [ui-guide.md](ui-guide.md) only when the user needs help exploring the graph,
+filters, timeline, or export. For implementation changes, read
+[Web UI rules](../../rules/web-ui.md) and the relevant source; launching the UI does
+not require the full development documentation.

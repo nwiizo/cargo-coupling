@@ -1,60 +1,31 @@
 ---
 name: check-balance
-description: Quick health check for coupling balance score. Use for daily score verification and CI quality gates.
-argument-hint: [path]
+description: Check a Rust project's coupling health summary or run a requested CI quality gate.
+argument-hint: "[path] [gate options]"
 ---
 
-# Check Balance - Quick Health Check
+# Check Balance
 
-## Execution Steps
-
-1. Run `cargo run -- coupling --summary $ARGUMENTS` (default: `./src`)
-2. Check balance score and health grade
-3. Provide brief advice if issues detected
-
-## Commands
+For a quick check, run from this repository with the requested path (default
+`./src`) and report the grade, its rationale, and material analysis limits:
 
 ```bash
-# Summary check
-cargo run -- coupling --summary ./src
-
-# Japanese output
-cargo run -- coupling --summary --japanese ./src
-
-# CI/CD quality gate
-cargo run -- coupling --check --min-grade=C ./src
-
-# Ratchet gate against a baseline ref
-cargo run -- coupling --check --baseline main --fail-on=high ./src
-
-# Coupling health over git history
-cargo run -- coupling --history ./src
+rtk proxy cargo run -- coupling --summary ./src
 ```
 
-## Health Grades
+For a gate, use the user's threshold or baseline. Examples:
 
-| Score | Grade | Status | Action |
-|-------|-------|--------|--------|
-| 0.90-1.00 | A | Excellent | Maintain |
-| 0.80-0.89 | B | Good | Minor improvements |
-| 0.60-0.79 | C | Acceptable | Planned improvement |
-| 0.40-0.59 | D | Needs improvement | Act soon |
-| 0.00-0.39 | F | Critical | Immediate action |
+```bash
+rtk proxy cargo run -- coupling --check --min-grade=C ./src
+rtk proxy cargo run -- coupling --check --baseline main --fail-on=high ./src
+```
 
-## Issue Severity
+Capture the exit status and explain why the gate passed or failed. Baseline mode
+fails only on new issues at the selected severity or above; its default is High.
+Do not infer a grade from the average balance score: the current implementation
+uses issue density and data sufficiency. `S` is an over-optimization warning.
 
-| Severity | Action |
-|----------|--------|
-| Critical | Fix immediately |
-| High | Fix within 1 week |
-| Medium | Plan to fix |
-| Low | Monitor |
-
-## Ratchet Mode
-
-`cargo run -- coupling --check --baseline <ref> ./src` compares current issues against the baseline ref and fails only on new issues at `--fail-on` severity or higher. The default ratchet threshold is High/Critical.
-
-## Next Steps
-
-- Low score: Run `/analyze` for details
-- Critical issues: Run `/full-review` for comprehensive analysis
+Inspect [grade.rs](../../../src/balance/grade.rs) or
+[gate handling](../../../src/cli_output.rs) only when the result needs explanation.
+A low grade alone does not require a full review or code changes. If the user asks
+for diagnosis, follow [analyze](../analyze/SKILL.md) for the relevant findings.

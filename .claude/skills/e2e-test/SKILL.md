@@ -1,69 +1,34 @@
-# E2E Test - End-to-End テスト (project)
+---
+name: e2e-test
+description: Verify cargo-coupling CLI behavior end to end using disposable Rust fixtures.
+argument-hint: "[--quick] [--verbose] [--keep] [--web] [scenario]"
+---
 
-Run comprehensive E2E tests for cargo-coupling functionality.
+# End-to-End Verification
 
-## Test Execution
+Exercise the requested CLI behavior with observable assertions. Use existing
+regression tests when they cover the request; use
+[test-scenarios.md](test-scenarios.md) for a minimal external project and checks for
+module paths, test exclusion, and config loading. Run this package's `cargo run`
+from its checkout, passing the fixture path as the analysis target.
 
-```bash
-# Create test project
-rm -rf /tmp/e2e-test-cargo-coupling
-mkdir -p /tmp/e2e-test-cargo-coupling/src/level/enemy
+Create a unique fixture with `mktemp -d`; never remove or reuse a fixed `/tmp` path.
+Local fixtures are disposable and have no production access. Continue their setup,
+execution, and checks without repeated approval. Remove only resources created by
+this run, retaining them when requested with `--keep`.
 
-# Create Cargo.toml
-cat > /tmp/e2e-test-cargo-coupling/Cargo.toml << 'EOF'
-[package]
-name = "e2e-test-project"
-version = "0.1.0"
-edition = "2021"
-EOF
+Select coverage from the request:
 
-# Create test files (lib.rs, level/mod.rs, level/projectile.rs, etc.)
-# Then run tests
-```
+- `--quick`: nested modules, valid JSON, and summary output.
+- Default: also verify test exclusion, configuration, and requested output modes.
+- `--verbose`: include commands, assertions, and observed values in the report.
+- `--web`: add server/API checks using the
+  [Web UI rules](../../rules/web-ui.md); stop only the server started for this run.
 
-## Test Cases
+These are skill options, not flags to forward to cargo-coupling. Run repository
+checks when required by the task; a smoke test does not establish full E2E coverage.
+Fix and recheck failures caused by an implementation the user asked you to make.
+For a test-only request, report failures with reproduction details.
 
-### 1. Nested Module Paths (Issue #14)
-```bash
-cargo run -- coupling /tmp/e2e-test-cargo-coupling/src 2>&1 | grep -E "level::enemy::spawner"
-# Expected: Module name shows full path, not just "spawner"
-```
-
-### 2. --exclude-tests (Issue #13)
-```bash
-cargo run -- coupling --exclude-tests /tmp/e2e-test-cargo-coupling/src
-# Expected: Test functions excluded from counts
-```
-
-### 3. JSON Output
-```bash
-cargo run -- coupling --json /tmp/e2e-test-cargo-coupling/src | jq .
-# Expected: Valid JSON output
-```
-
-### 4. Summary Mode
-```bash
-cargo run -- coupling --summary /tmp/e2e-test-cargo-coupling/src
-# Expected: Compact summary output
-```
-
-## Verification Checklist
-
-| Test | Expected | Status |
-|------|----------|--------|
-| Nested module paths | `level::enemy::spawner` | |
-| lib.rs module name | `lib` or empty | |
-| mod.rs module name | Parent directory name | |
-| --exclude-tests | Test functions excluded | |
-| JSON output | Valid JSON | |
-| --summary | Summary only | |
-
-## Quick Test
-
-```bash
-# Run all unit tests first
-cargo test --all-features
-
-# Then run E2E
-cargo run -- coupling ./src
-```
+Finish with actual results, skipped scenarios, exit statuses, and retained fixture
+paths. Do not report checks as passed merely because a command produced output.

@@ -1,111 +1,45 @@
-# Refactoring Patterns
+# Refactoring Choices
 
-## Global Complexity Fix
+Use an example only after confirming the underlying change problem. Preserve
+behavior and compare callers and analysis with the same settings; no pattern
+promises a particular score improvement.
 
-```rust
-// Before: Direct dependency on distant module
-use crate::deep::nested::module::InternalType;
+| Observed problem | Candidate change | Check before choosing it |
+|------------------|------------------|--------------------------|
+| Distant modules share implementation details | Move related responsibilities closer or narrow the interface | Does the boundary reflect independent reasons to change? |
+| A module wires many dependencies | Split distinct responsibilities if present | Is it an entrypoint whose fan-out is expected? |
+| Callers depend on mutable representation | Expose the operation callers need | Does it preserve validation and error handling? |
+| Many callers share a changing dependency | Stabilize the operation they depend on | Is the hub actually volatile? |
+| Similar logic occurs in two modules | Share the rule when its meaning and ownership align | Are differences intentional or likely to evolve independently? |
 
-impl Handler {
-    fn process(&self) {
-        let internal = InternalType::new();
-    }
-}
+## Encapsulating a Mutation
 
-// After: Trait abstraction
-use crate::traits::Processable;
-
-impl Handler {
-    fn process(&self, processor: &impl Processable) {
-        processor.process();
-    }
-}
-```
-
-## High Efferent Coupling Fix
+Before, callers choose how to mutate the representation:
 
 ```rust
-// Before: Too many dependencies
-use crate::a::A;
-use crate::b::B;
-use crate::c::C;
-// ... 15+ imports
+pub struct Queue {
+    pub entries: Vec<String>,
+}
 
-// After: Facade pattern
-use crate::facade::ServiceFacade;
-
-impl Handler {
-    fn new(facade: ServiceFacade) -> Self { ... }
+pub fn enqueue(queue: &mut Queue, value: String) {
+    queue.entries.push(value);
 }
 ```
 
-## Inappropriate Intimacy Fix
+An operation can keep that choice local:
 
 ```rust
-// Before: Direct access to other module's internals
-mod other {
-    pub struct Config {
-        pub internal_state: Vec<String>,
-    }
+pub struct Queue {
+    entries: Vec<String>,
 }
 
-fn process(config: &other::Config) {
-    config.internal_state.push("data".into());
-}
-
-// After: Encapsulated access
-mod other {
-    pub struct Config {
-        internal_state: Vec<String>,
-    }
-    impl Config {
-        pub fn add_data(&mut self, data: &str) {
-            self.internal_state.push(data.into());
-        }
+impl Queue {
+    pub fn enqueue(&mut self, value: String) {
+        self.entries.push(value);
     }
 }
 ```
 
-## Cascading Change Risk Fix
-
-```rust
-// Before: Direct dependency on volatile module
-use crate::volatile_module::FrequentlyChangingType;
-
-// After: Stable interface layer
-use crate::stable_api::StableInterface;
-// volatile_module implements StableInterface
-```
-
-## Report Template
-
-```markdown
-# Refactoring Proposal Report
-
-## Target Issue
-**Type**: [type] | **Count**: XX
-
-## Refactoring Plan
-
-### 1. [Module] improvement
-- **Current state**: / **Problem**: / **Impact**:
-
-#### Step 1: [Action]
-Before: [code]
-After: [code]
-Reason: [why]
-
-#### Expected Effect
-- Balance score: X.XX -> X.XX
-- Dependency count: XX -> XX
-
-## Priority
-
-| Rank | Target | Effort | Impact | ROI |
-|------|--------|--------|--------|-----|
-
-## Phased Migration
-### Phase 1 (No breaking changes)
-### Phase 2 (After adding tests)
-### Phase 3 (Large-scale refactoring)
-```
+This is a design sketch. Check construction, existing external callers, and any
+invariants before narrowing visibility. A trait or facade is useful only when it
+expresses a meaningful boundary; it is not required for this example.
