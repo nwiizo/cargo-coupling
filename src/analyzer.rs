@@ -592,7 +592,7 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
             .unwrap_or_else(|| "Self".into());
         for item in &node.items {
             if let syn::ImplItem::Fn(method) = item {
-                let name = if let Some((_, path, _)) = &node.trait_ {
+                let name = if let Some((path, _)) = &node.trait_ {
                     let trait_name = path
                         .segments
                         .iter()
@@ -611,7 +611,7 @@ impl<'ast> Visit<'ast> for CouplingAnalyzer {
                     .insert(name, convert_visibility(&method.vis));
             }
         }
-        if let Some((_, trait_path, _)) = &node.trait_ {
+        if let Some((trait_path, _)) = &node.trait_ {
             // Trait implementation = Contract coupling
             self.metrics.trait_impl_count += 1;
 
@@ -1932,6 +1932,41 @@ mod tests {
         let result = analyzer.analyze_file(code);
         assert!(result.is_ok());
         assert!(analyzer.metrics.trait_impl_count >= 1);
+    }
+
+    #[test]
+    fn test_trait_and_inherent_methods_remain_distinct() {
+        let mut analyzer =
+            CouplingAnalyzer::new("test".to_string(), std::path::PathBuf::from("test.rs"));
+        let code = "\
+struct Document;
+impl crate::printing::Printable for Document {
+    fn print(&self) {}
+}
+impl Document {
+    pub fn print(&self) {}
+}
+";
+
+        analyzer.analyze_file(code).unwrap();
+
+        assert_eq!(analyzer.metrics.trait_impl_count, 1);
+        assert_eq!(analyzer.metrics.inherent_impl_count, 1);
+        assert_eq!(analyzer.metrics.method_definitions.len(), 2);
+        assert_eq!(
+            analyzer.metrics.item_locations["<Document as crate::printing::Printable>::print"],
+            3
+        );
+        assert_eq!(analyzer.metrics.item_locations["Document::print"], 6);
+        assert_eq!(
+            analyzer.metrics.method_definitions["Document::print"],
+            Visibility::Public
+        );
+        assert!(analyzer.dependencies.iter().any(|dependency| {
+            dependency.path == "crate::printing::Printable"
+                && dependency.kind == DependencyKind::TraitImpl
+                && dependency.usage == UsageContext::TraitBound
+        }));
     }
 
     #[test]
