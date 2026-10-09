@@ -8,6 +8,7 @@ repository = "https://github.com/nwiizo/cargo-coupling"
 keywords = ["coupling", "analysis", "architecture", "metrics", "cargo-subcommand"]
 categories = ["development-tools", "command-line-utilities"]
 exclude = [
+    "/.agents/**",
     "/.claude/**",
     "/.github/**",
     "/.coupling.toml",

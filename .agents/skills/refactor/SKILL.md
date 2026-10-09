@@ -20,10 +20,15 @@ include before/after code or migration steps when they help assess the change.
 For implementation requests, carry out the authorized change and verification
 without stopping after the proposal. Resolve only material unanswered choices.
 
-Apply the repository's Rust structural-analysis guidance, including `similarity-rs`
-and `cargo-coupling`, and inspect tool findings before extracting abstractions.
+Apply the repository's Rust structural-analysis guidance, using
+[similarity](../similarity/SKILL.md) for duplicate candidates and `cargo-coupling`
+for boundary effects. Inspect findings before extracting abstractions; retain
+similar code when the responsibilities or reasons to change differ.
 Compare the affected behavior and analysis with the same settings and Git history.
-Preserve input validation and error handling. Run relevant tests and required
+Preserve input validation and error handling. Characterize uncovered behavior
+before a behavior-preserving refactor; such a test should pass on the old code.
+For a bug fix, first demonstrate the bug with a failing regression test when a
+practical test seam exists. Run relevant tests and required
 repository checks; repeat passing checks only after a relevant change or failure.
 
 Complete with the actual change, verification results, and remaining limitations.

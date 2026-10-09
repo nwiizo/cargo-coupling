@@ -41,6 +41,14 @@ not portable instructions: the shared body carries the task's authorization and
 verification requirements. `release` distinguishes preparation from publication;
 loading the skill alone does not authorize publishing.
 
+Claude-specific review agents live in [`.claude/agents/`](../.claude/agents/).
+They use required `name` and `description` frontmatter and read-only tools,
+following the [Claude Code subagent format](https://code.claude.com/docs/en/sub-agents).
+Use them when delegation is explicitly requested by the user or applicable
+instructions. Codex can use the shared review skills; these Claude agent files
+do not register Codex agents. Keep review procedures in the shared skills and
+agent files focused on their assigned perspective.
+
 The discovery and invocation behavior follows the
 [Codex skills documentation](https://learn.chatgpt.com/docs/build-skills) and
 [Claude Code skills documentation](https://code.claude.com/docs/en/skills).
@@ -60,12 +68,17 @@ Retain existing invocation policies when editing a skill. Do not add blanket
 restricting the skill to a tool list. Both hosts should use their normal
 permission settings.
 
+Repository workflows are excluded from the published crate through `Cargo.toml`.
+When moving agent directories, check `rtk proxy cargo package --locked --list --allow-dirty`
+so local instructions do not accidentally enter the package.
+
 For a change to discovery, names, or references, validate the YAML, check local
 links, and inspect each host's discovered skill list. Example local checks:
 
 ```bash
 rtk proxy yq --front-matter=extract eval '.' .agents/skills/analyze/SKILL.md
 rtk proxy lychee --offline --hidden --no-progress '.agents/**/*.md'
+rtk proxy claude plugin validate .claude/agents
 rtk git diff --check
 ```
 

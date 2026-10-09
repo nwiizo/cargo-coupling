@@ -1,22 +1,16 @@
-# Issue Types
+# Coupling Findings
 
-## Severity Levels
+Use [explain-issue](../../.agents/skills/explain-issue/SKILL.md) for the issue names,
+descriptions, and detector entrypoints. That guide links to the current Rust
+implementation instead of maintaining a second severity table here.
 
-| Issue | Severity | Description |
-|-------|----------|-------------|
-| CircularDependency | Critical | Modules depend on each other |
-| GlobalComplexity | High | Too many strong external dependencies |
-| CascadingChangeRisk | High | Changes likely to cascade |
-| GodModule | Medium | Too many functions/types/impls |
-| HighEfferentCoupling | Medium | Too many outgoing dependencies |
-| HighAfferentCoupling | Medium | Too many incoming dependencies |
-| InappropriateIntimacy | Medium | Internal details exposed |
-| PublicFieldExposure | Low | Public fields (use getters) |
-| PrimitiveObsession | Low | Too many primitive params (use newtype) |
+A finding's severity depends on its evidence, thresholds, configuration, and
+detector exceptions. Use the reported severity; an issue name alone does not
+establish urgency or require a particular refactoring. In particular, a cycle is
+a review signal, public fields are not automatically an encapsulation defect,
+and primitive parameters do not automatically need newtypes.
 
-## Priority Guidelines
-
-- **Critical**: Must fix immediately - blocks refactoring
-- **High**: Architectural problems - address in next sprint
-- **Medium**: Maintenance burden - plan for improvement
-- **Low**: Improvement opportunities - nice to have
+For prioritization, relate the finding to a concrete change and the knowledge
+that would spread across boundaries. Read the
+[balance model](../../.agents/skills/balanced-coupling/SKILL.md) for interpretation
+and the analysis manifest for missing evidence.

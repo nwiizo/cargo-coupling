@@ -10,8 +10,9 @@ The product's value is a *trustable* coupling signal. These rules protect it.
 ## MUST
 - Improve a grade only by (a) genuine, behavior-preserving structural change, or (b) fixing a *real*
   false positive that is correct for ALL projects (not just this repo).
-- When adding/adjusting an issue, follow `.agents/skills/balanced-coupling/SKILL.md` severity table:
-  Strong+Far+**High** = Global Complexity (act); Strong+Far+**Low** = Acceptable (Minor).
+- When adding/adjusting an issue, use the [balance model](../../.agents/skills/balanced-coupling/SKILL.md)
+  for conceptual tradeoffs and the current detector for exact conditions and severity. The model's
+  qualitative table does not define CLI severity levels; confirm changes with regression cases.
 - Use **essential** (subdomain) volatility for scoring when classified; route raw git churn to the
   `AccidentalVolatility` diagnostic, not to severity.
 - Exempt expected-by-design patterns from defect flags: binary entrypoints (high fan-out / co-change),
@@ -19,5 +20,6 @@ The product's value is a *trustable* coupling signal. These rules protect it.
 - Keep CLI and Web grades consistent (same metrics + thresholds path).
 
 ## Verify
-- After scoring/issue changes: run `cargo coupling ./src` (dogfood) and confirm the grade moved for a
-  *real* reason; ensure no regression for a project without `.coupling.toml`.
+- After scoring/issue changes: run `rtk proxy cargo run -- coupling --summary ./src` on this checkout
+  and explain any grade change from the evidence; ensure no regression for a project without
+  `.coupling.toml`.

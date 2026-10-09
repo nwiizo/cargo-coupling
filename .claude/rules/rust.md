@@ -4,9 +4,9 @@
 
 Always run:
 ```bash
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
+rtk cargo fmt --all -- --check
+rtk cargo clippy --locked --all-targets --all-features -- -D warnings
+rtk cargo test --locked --all-features
 ```
 
 ## Key Source Files
@@ -23,9 +23,18 @@ cargo test --all-features
 | `src/cli_output.rs` | CLI output (hotspots, impact, check) |
 | `src/web/` | Web visualization server |
 
-## Rust-Specific Patterns
+## Structural Changes
 
-- Detect newtypes: `struct UserId(u64)` = good design
-- Detect serde derives: `#[derive(Serialize, Deserialize)]` = DTO
-- Flag public field exposure across modules
-- Consider visibility: `pub(crate)` vs `pub` vs private
+Use [similarity](../../.agents/skills/similarity/SKILL.md) to inspect duplicate-code
+candidates and [refactor](../../.agents/skills/refactor/SKILL.md) for implementation
+and verification. Similar syntax, a high similarity score, or fewer reported
+findings does not establish that two responsibilities belong together.
+
+Treat newtypes, serde derives, and public fields as signals to inspect. A newtype
+helps when it expresses a distinction or protects an invariant; serialization
+alone does not prove a DTO boundary, and public fields can be intentional data.
+Check callers before narrowing visibility or introducing an abstraction.
+
+For output refactors, preserve localization, ordering, whitespace, and I/O error
+propagation. Characterize uncovered output cases before changing the renderer;
+reuse existing tests where they already establish the behavior.

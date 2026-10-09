@@ -1,69 +1,35 @@
 # Development Guide
 
-## Common Tasks
+Use [AGENTS.md](../../AGENTS.md) for the source map and required checks. Read the
+current implementation before editing; the following are entrypoints, not an
+exhaustive file list.
 
-### Adding a New Issue Type
+## Adding or Changing a Finding
 
-1. Add variant to `IssueType` enum in `balance.rs`
-2. Implement detection in `identify_coupling_issues()`
-3. Add description in `IssueType::description()`
-4. Add suggested action in `suggest_refactoring()`
+1. Check [IssueType](../../src/balance/issue_type.rs) and
+   [explain-issue](../../.agents/skills/explain-issue/SKILL.md) for the relevant detector.
+2. Update detection and its regression cases, preserving expected entrypoint,
+   stable-hub, and re-export behavior.
+3. Keep English/Japanese descriptions, suggested actions, CLI/Web output, and
+   any exhaustive matches aligned. Search references to the affected variant.
+4. Verify the [signal integrity rules](../rules/grading-integrity.md), including
+   behavior with and without subdomain configuration.
 
-### Adding a CLI Option
+## CLI and Analysis Changes
 
-1. Add field to `Args` struct in `main.rs`
-2. Use the value in `run()` function
-3. Update README.md CLI section
+- CLI options: start with `Args` and `run_coupling` in
+  [main.rs](../../src/main.rs), then update README examples and affected CLI tests.
+- AST usage and strength: inspect `UsageContext`, its `to_strength` mapping, and
+  visitors in [analyzer.rs](../../src/analyzer.rs), together with target resolution
+  in [classification.rs](../../src/classification.rs).
+- Source discovery: use [discovery.rs](../../src/discovery.rs) and
+  [workspace.rs](../../src/workspace.rs); preserve package boundaries and scope tests.
+- Structural refactoring: use [refactor](../../.agents/skills/refactor/SKILL.md)
+  and inspect similarity candidates before sharing code.
 
-### Modifying Strength Detection
+## Performance
 
-1. Update `UsageContext` enum in `analyzer.rs`
-2. Add/modify visitor in `CouplingAnalyzer` impl
-3. Update `UsageContext::to_strength()` mapping
-
-## False Positive Filtering
-
-The analyzer filters out:
-- `Self::Self` patterns
-- Short lowercase names (likely local variables)
-- Duplicate patterns like `foo::foo`
-- Common local variable names
-- Primitive and std types (Option, Result, Vec, etc.)
-
-## Performance Optimization
-
-### Git Analysis (`volatility.rs`)
-
-```rust
-Command::new("git")
-    .args([
-        "log", "--pretty=format:", "--name-only",
-        "--diff-filter=AMRC",  // Skip deleted files
-        &format!("--since={} months ago", months),
-        "--", "*.rs",  // Filter at Git level
-    ])
-```
-
-Techniques:
-1. Git-level path filtering (`-- "*.rs"`)
-2. Skip deleted files (`--diff-filter=AMRC`)
-3. 64KB buffer for streaming
-4. `spawn()` for immediate processing
-
-### Parallel Processing
-
-```rust
-file_paths.par_iter()
-    .filter_map(|path| analyze_rust_file_full(path).ok())
-    .collect()
-```
-
-Control with `-j N` option.
-
-## Benchmarks
-
-| Project | Files | With Git | Without Git |
-|---------|-------|----------|-------------|
-| tokio | 488 | 655ms | 234ms |
-| alacritty | 83 | 298ms | 161ms |
-| ripgrep | 59 | 181ms | - |
+When changing analyzer performance, run `rtk cargo bench --bench analysis_benchmark`.
+Compare the same inputs, Git window, configuration, thread count, and build profile.
+Record measurements from the actual run; historical timings without a reproducible
+environment are not a baseline.
