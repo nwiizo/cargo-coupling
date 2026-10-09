@@ -382,7 +382,13 @@ pub fn generate_summary_with_options<W: Write>(
         )?;
     }
 
-    write_manifest_summary_section(manifest, jp, show_structural_blind_spots, writer)?;
+    write_manifest_section(
+        manifest,
+        jp,
+        show_structural_blind_spots,
+        ManifestFormat::Summary,
+        writer,
+    )?;
 
     Ok(())
 }
@@ -548,7 +554,13 @@ pub fn generate_report_with_options<W: Write>(
     write_best_practices(writer)?;
 
     // Declared analysis blind spots
-    write_manifest_markdown_section(manifest, options.show_structural_blind_spots, jp, writer)?;
+    write_manifest_section(
+        manifest,
+        jp,
+        options.show_structural_blind_spots,
+        ManifestFormat::Markdown,
+        writer,
+    )?;
 
     Ok(())
 }
@@ -1614,7 +1626,7 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
         writeln!(writer, "```")?;
     }
 
-    write_manifest_summary_section(manifest, false, true, writer)?;
+    write_manifest_section(manifest, false, true, ManifestFormat::Summary, writer)?;
 
     Ok(())
 }
@@ -1630,78 +1642,31 @@ fn default_manifest() -> AnalysisManifest {
     })
 }
 
-fn write_manifest_markdown_section<W: Write>(
-    manifest: &AnalysisManifest,
-    show_structural_blind_spots: bool,
-    japanese: bool,
-    writer: &mut W,
-) -> io::Result<()> {
-    if japanese {
-        writeln!(writer, "## 未分析範囲\n")?;
-    } else {
-        writeln!(writer, "## Not Analyzed (blind spots)\n")?;
-    }
-
-    if show_structural_blind_spots {
-        for blind_spot in &manifest.blind_spots {
-            let description = if japanese {
-                blind_spot.description_ja
-            } else {
-                blind_spot.description
-            };
-            writeln!(writer, "- **{}**: {}", blind_spot.area, description)?;
-        }
-    }
-
-    let notes = manifest.localized_notes(japanese);
-    if !notes.is_empty() {
-        if show_structural_blind_spots {
-            writeln!(writer)?;
-        }
-        if japanese {
-            writeln!(writer, "実行時の注意:")?;
-        } else {
-            writeln!(writer, "Run-specific notes:")?;
-        }
-        for note in notes {
-            writeln!(writer, "- {}", note)?;
-        }
-    }
-
-    if !show_structural_blind_spots {
-        if !notes.is_empty() {
-            writeln!(writer)?;
-        }
-        if japanese {
-            writeln!(
-                writer,
-                "ℹ {} 件の構造的な未分析範囲があります。詳細は --blind-spots (または --json) で確認できます。",
-                manifest.blind_spots.len()
-            )?;
-        } else {
-            writeln!(
-                writer,
-                "ℹ {} structural blind spots not analyzed — see --blind-spots (or --json).",
-                manifest.blind_spots.len()
-            )?;
-        }
-    }
-
-    writeln!(writer)?;
-    Ok(())
+enum ManifestFormat {
+    Markdown,
+    Summary,
 }
 
-fn write_manifest_summary_section<W: Write>(
+fn write_manifest_section<W: Write>(
     manifest: &AnalysisManifest,
     japanese: bool,
     show_structural_blind_spots: bool,
+    format: ManifestFormat,
     writer: &mut W,
 ) -> io::Result<()> {
-    if japanese {
-        writeln!(writer, "未分析範囲:")?;
+    let heading = if japanese {
+        "未分析範囲"
     } else {
-        writeln!(writer, "Not Analyzed (blind spots):")?;
-    }
+        "Not Analyzed (blind spots)"
+    };
+    let markdown = matches!(format, ManifestFormat::Markdown);
+    let (bullet, emphasis) = if markdown {
+        writeln!(writer, "## {heading}\n")?;
+        ("- ", "**")
+    } else {
+        writeln!(writer, "{heading}:")?;
+        ("  - ", "")
+    };
 
     if show_structural_blind_spots {
         for blind_spot in &manifest.blind_spots {
@@ -1710,23 +1675,33 @@ fn write_manifest_summary_section<W: Write>(
             } else {
                 blind_spot.description
             };
-            writeln!(writer, "  - {}: {}", blind_spot.area, description)?;
+            writeln!(
+                writer,
+                "{bullet}{emphasis}{}{emphasis}: {description}",
+                blind_spot.area
+            )?;
         }
     }
 
     let notes = manifest.localized_notes(japanese);
     if !notes.is_empty() {
+        if markdown && show_structural_blind_spots {
+            writeln!(writer)?;
+        }
         if japanese {
             writeln!(writer, "実行時の注意:")?;
         } else {
             writeln!(writer, "Run-specific notes:")?;
         }
         for note in notes {
-            writeln!(writer, "  - {}", note)?;
+            writeln!(writer, "{bullet}{note}")?;
         }
     }
 
     if !show_structural_blind_spots {
+        if markdown && !notes.is_empty() {
+            writeln!(writer)?;
+        }
         if japanese {
             writeln!(
                 writer,
@@ -1751,6 +1726,101 @@ mod tests {
     use super::*;
     use crate::manifest::{ManifestContext, build_manifest};
     use std::path::PathBuf;
+
+    #[test]
+    fn test_manifest_section_localization_and_formatting() {
+        let manifest = AnalysisManifest {
+            blind_spots: vec![crate::manifest::BlindSpot {
+                area: "example",
+                description: "Not observed.",
+                description_ja: "未分析です。",
+            }],
+            notes: vec!["Run note.".into()],
+            notes_ja: vec!["実行時の注意事項。".into()],
+        };
+        let cases = [
+            (
+                false,
+                false,
+                concat!(
+                    "## Not Analyzed (blind spots)\n\n",
+                    "Run-specific notes:\n- Run note.\n\n",
+                    "ℹ 1 structural blind spots not analyzed — see --blind-spots (or --json).\n\n",
+                ),
+                concat!(
+                    "Not Analyzed (blind spots):\n",
+                    "Run-specific notes:\n  - Run note.\n",
+                    "ℹ 1 structural blind spots not analyzed — see --blind-spots (or --json).\n\n",
+                ),
+            ),
+            (
+                false,
+                true,
+                concat!(
+                    "## Not Analyzed (blind spots)\n\n",
+                    "- **example**: Not observed.\n\n",
+                    "Run-specific notes:\n- Run note.\n\n",
+                ),
+                concat!(
+                    "Not Analyzed (blind spots):\n",
+                    "  - example: Not observed.\n",
+                    "Run-specific notes:\n  - Run note.\n\n",
+                ),
+            ),
+            (
+                true,
+                false,
+                concat!(
+                    "## 未分析範囲\n\n",
+                    "実行時の注意:\n- 実行時の注意事項。\n\n",
+                    "ℹ 1 件の構造的な未分析範囲があります。詳細は --blind-spots (または --json) で確認できます。\n\n",
+                ),
+                concat!(
+                    "未分析範囲:\n",
+                    "実行時の注意:\n  - 実行時の注意事項。\n",
+                    "ℹ 1 件の構造的な未分析範囲があります。詳細は --blind-spots (または --json) で確認できます。\n\n",
+                ),
+            ),
+            (
+                true,
+                true,
+                concat!(
+                    "## 未分析範囲\n\n",
+                    "- **example**: 未分析です。\n\n",
+                    "実行時の注意:\n- 実行時の注意事項。\n\n",
+                ),
+                concat!(
+                    "未分析範囲:\n",
+                    "  - example: 未分析です。\n",
+                    "実行時の注意:\n  - 実行時の注意事項。\n\n",
+                ),
+            ),
+        ];
+
+        for (japanese, detailed, expected_markdown, expected_summary) in cases {
+            let mut markdown = Vec::new();
+            write_manifest_section(
+                &manifest,
+                japanese,
+                detailed,
+                ManifestFormat::Markdown,
+                &mut markdown,
+            )
+            .unwrap();
+            assert_eq!(String::from_utf8(markdown).unwrap(), expected_markdown);
+
+            let mut summary = Vec::new();
+            write_manifest_section(
+                &manifest,
+                japanese,
+                detailed,
+                ManifestFormat::Summary,
+                &mut summary,
+            )
+            .unwrap();
+            assert_eq!(String::from_utf8(summary).unwrap(), expected_summary);
+        }
+    }
 
     #[test]
     fn test_generate_summary() {
