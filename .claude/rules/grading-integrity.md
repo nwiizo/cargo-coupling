@@ -10,7 +10,7 @@ The product's value is a *trustable* coupling signal. These rules protect it.
 ## MUST
 - Improve a grade only by (a) genuine, behavior-preserving structural change, or (b) fixing a *real*
   false positive that is correct for ALL projects (not just this repo).
-- When adding/adjusting an issue, follow `.claude/skills/balanced-coupling/SKILL.md` severity table:
+- When adding/adjusting an issue, follow `.agents/skills/balanced-coupling/SKILL.md` severity table:
   Strong+Far+**High** = Global Complexity (act); Strong+Far+**Low** = Acceptable (Minor).
 - Use **essential** (subdomain) volatility for scoring when classified; route raw git churn to the
   `AccidentalVolatility` diagnostic, not to severity.

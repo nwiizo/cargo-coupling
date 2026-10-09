@@ -62,7 +62,8 @@ docker push ghcr.io/nwiizo/cargo-coupling:latest
 
 - `.claude/docs/` - Khononov framework, issue types, learnings
 - `.claude/rules/` - Rust, Web UI rules
-- `.claude/skills/` - All slash commands and references (analyze, balanced-coupling, check-balance, e2e-test, explain-issue, full-review, hotspots, mutants, refactor, release, review, similarity, web)
+- `.agents/skills/` - Shared skills and references; `.claude/skills` links here for Claude Code discovery.
+- [Shared skill guide](.agents/README.md) - Usage, host differences, and maintenance. Use `/coupling-review` or `/coupling-full-review` for Rust reviews; `/review` and `/full-review` may refer to personal prose skills.
 
 ## Design Principles (observe & trust)
 
