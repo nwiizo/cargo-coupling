@@ -54,6 +54,89 @@ pub enum VolatilityError {
     NotGitRepo,
 }
 
+#[derive(Default)]
+struct GitChanges {
+    file_changes: HashMap<String, usize>,
+    pair_counts: HashMap<(String, String), usize>,
+}
+
+impl GitChanges {
+    fn read(reader: impl BufRead, count_pairs: bool) -> Result<Self, VolatilityError> {
+        const MAX_FILES_PER_COMMIT: usize = 50;
+        let mut history = Self::default();
+        let mut files = Vec::new();
+        let mut first_path = false;
+        for record in reader.split(0) {
+            let record = record?;
+            if record == b"COMMIT" {
+                history.count_pairs(&files, MAX_FILES_PER_COMMIT);
+                files.clear();
+                first_path = true;
+            } else if !record.is_empty() {
+                // Git separates the pretty header and its first pathname with a newline.
+                let mut file = String::from_utf8(record)?;
+                if first_path && file.starts_with('\n') {
+                    file.remove(0);
+                }
+                first_path = false;
+                if file.ends_with(".rs") {
+                    if count_pairs && files.len() <= MAX_FILES_PER_COMMIT {
+                        files.push(file.clone());
+                    }
+                    *history.file_changes.entry(file).or_default() += 1;
+                }
+            }
+        }
+        history.count_pairs(&files, MAX_FILES_PER_COMMIT);
+        Ok(history)
+    }
+
+    fn count_pairs(&mut self, files: &[String], limit: usize) {
+        if files.len() > limit {
+            return;
+        }
+        for (i, left) in files.iter().enumerate() {
+            for right in &files[i + 1..] {
+                let pair = (left.min(right).clone(), left.max(right).clone());
+                *self.pair_counts.entry(pair).or_default() += 1;
+            }
+        }
+    }
+
+    fn co_changes(&self, file_changes: &HashMap<String, usize>) -> Vec<TemporalCoupling> {
+        // Filter to significant co-changes (3+ times together)
+        let mut result: Vec<TemporalCoupling> = self
+            .pair_counts
+            .iter()
+            .filter(|(_, count)| **count >= 3)
+            .map(|((file_a, file_b), &count)| {
+                let total_a = file_changes.get(file_a).copied().unwrap_or(1);
+                let total_b = file_changes.get(file_b).copied().unwrap_or(1);
+                let coupling_ratio = count as f64 / total_a.min(total_b).max(1) as f64;
+                TemporalCoupling {
+                    file_a: file_a.clone(),
+                    file_b: file_b.clone(),
+                    co_change_count: count,
+                    coupling_ratio: coupling_ratio.min(1.0),
+                }
+            })
+            .collect();
+
+        result.sort_by(|a, b| {
+            b.co_change_count
+                .cmp(&a.co_change_count)
+                .then_with(|| {
+                    b.coupling_ratio
+                        .partial_cmp(&a.coupling_ratio)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| a.file_a.cmp(&b.file_a))
+                .then_with(|| a.file_b.cmp(&b.file_b))
+        });
+        result
+    }
+}
+
 /// Volatility analyzer using git history
 #[derive(Debug, Default)]
 pub struct VolatilityAnalyzer {
@@ -72,62 +155,65 @@ impl VolatilityAnalyzer {
         }
     }
 
-    /// Analyze git history for a repository (optimized version)
-    ///
-    /// Optimizations applied:
-    /// 1. Use `-- "*.rs"` to filter .rs files at git level
-    /// 2. Use streaming with BufReader instead of loading all into memory
-    /// 3. Use `--diff-filter=AMRC` to skip deleted files
+    /// Refresh counts from the selected Git history, replacing any previous snapshot.
     pub fn analyze(&mut self, repo_path: &Path) -> Result<(), VolatilityError> {
-        // Check if it's a git repo
-        let git_check = Command::new("git")
-            .args(["rev-parse", "--git-dir"])
-            .current_dir(repo_path)
-            .stderr(Stdio::null())
-            .output()?;
+        self.file_changes = self.read_history(repo_path, false)?.file_changes;
+        Ok(())
+    }
 
-        if !git_check.status.success() {
+    /// Read change counts and co-changes from the same streaming Git log.
+    pub fn analyze_with_temporal_coupling(
+        &mut self,
+        path: &Path,
+    ) -> Result<Vec<TemporalCoupling>, VolatilityError> {
+        let history = self.read_history(path, true)?;
+        let temporal = history.co_changes(&history.file_changes);
+        self.file_changes = history.file_changes;
+        Ok(temporal)
+    }
+
+    fn read_history(&self, path: &Path, count_pairs: bool) -> Result<GitChanges, VolatilityError> {
+        let directory = crate::paths::containing_directory(path);
+        if !Command::new("git")
+            .args(["rev-parse", "--git-dir"])
+            .current_dir(directory)
+            .output()?
+            .status
+            .success()
+        {
             return Err(VolatilityError::NotGitRepo);
         }
-
-        // Optimized: use --diff-filter and path spec to reduce output
-        // --diff-filter=AMRC: Added, Modified, Renamed, Copied (skip Deleted)
-        let mut child = Command::new("git")
+        let mut command = Command::new("git");
+        command
+            .current_dir(directory)
             .args([
                 "log",
-                "--pretty=format:",
+                "--pretty=tformat:COMMIT",
                 "--name-only",
+                "-z",
                 "--diff-filter=AMRC",
-                &format!("--since={} months ago", self.period_months),
-                "--",
-                "*.rs",
             ])
-            .current_dir(repo_path)
+            .arg(format!("--since={} months ago", self.period_months))
+            .arg("--");
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+            let mut spec = std::ffi::OsString::from(":(literal)");
+            spec.push(path.file_name().expect("source file has a name"));
+            command.arg(spec);
+        } else {
+            command.arg("*.rs");
+        }
+        let mut child = command
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()?;
-
-        // Stream processing with BufReader
-        if let Some(stdout) = child.stdout.take() {
-            let reader = BufReader::with_capacity(64 * 1024, stdout); // 64KB buffer
-
-            for line in reader.lines() {
-                let line = match line {
-                    Ok(l) => l,
-                    Err(_) => continue,
-                };
-
-                let line = line.trim();
-                if !line.is_empty() && line.ends_with(".rs") {
-                    *self.file_changes.entry(line.to_string()).or_insert(0) += 1;
-                }
-            }
+        let stdout = child.stdout.take().expect("piped Git output");
+        let parsed = GitChanges::read(BufReader::with_capacity(64 * 1024, stdout), count_pairs);
+        let status = child.wait()?;
+        let history = parsed?;
+        if !status.success() {
+            return Err(std::io::Error::other(format!("git log exited with {status}")).into());
         }
-
-        // Wait for git to finish
-        let _ = child.wait();
-
-        Ok(())
+        Ok(history)
     }
 
     /// Get volatility level for a file
@@ -160,108 +246,9 @@ impl VolatilityAnalyzer {
         &self,
         repo_path: &Path,
     ) -> Result<Vec<TemporalCoupling>, VolatilityError> {
-        // Get commit-grouped file changes
-        let mut child = Command::new("git")
-            .args([
-                "log",
-                "--pretty=format:__COMMIT__",
-                "--name-only",
-                "--diff-filter=AMRC",
-                &format!("--since={} months ago", self.period_months),
-                "--",
-                "*.rs",
-            ])
-            .current_dir(repo_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
-
-        let mut commits: Vec<Vec<String>> = Vec::new();
-        let mut current_files: Vec<String> = Vec::new();
-
-        if let Some(stdout) = child.stdout.take() {
-            let reader = BufReader::with_capacity(64 * 1024, stdout);
-            for line in reader.lines() {
-                let line = match line {
-                    Ok(l) => l,
-                    Err(_) => continue,
-                };
-                let trimmed = line.trim();
-                if trimmed == "__COMMIT__" {
-                    if current_files.len() >= 2 {
-                        commits.push(std::mem::take(&mut current_files));
-                    } else {
-                        current_files.clear();
-                    }
-                } else if !trimmed.is_empty() && trimmed.ends_with(".rs") {
-                    current_files.push(trimmed.to_string());
-                }
-            }
-            // Don't forget the last commit
-            if current_files.len() >= 2 {
-                commits.push(current_files);
-            }
-        }
-
-        let _ = child.wait();
-
-        // Count co-change frequency for each file pair
-        // Skip commits with too many files (e.g., formatter runs, merge commits)
-        // as they produce O(n²) noise rather than meaningful coupling signal
-        const MAX_FILES_PER_COMMIT: usize = 50;
-        let mut pair_counts: HashMap<(String, String), usize> = HashMap::new();
-        for changed_files in &commits {
-            if changed_files.len() > MAX_FILES_PER_COMMIT {
-                continue;
-            }
-            for left_index in 0..changed_files.len() {
-                for right_index in (left_index + 1)..changed_files.len() {
-                    let (first_file, second_file) =
-                        if changed_files[left_index] < changed_files[right_index] {
-                            (
-                                changed_files[left_index].clone(),
-                                changed_files[right_index].clone(),
-                            )
-                        } else {
-                            (
-                                changed_files[right_index].clone(),
-                                changed_files[left_index].clone(),
-                            )
-                        };
-                    *pair_counts.entry((first_file, second_file)).or_default() += 1;
-                }
-            }
-        }
-
-        // Filter to significant co-changes (3+ times together)
-        let mut result: Vec<TemporalCoupling> = pair_counts
-            .into_iter()
-            .filter(|(_, count)| *count >= 3)
-            .map(|((file_a, file_b), count)| {
-                let total_a = self.file_changes.get(&file_a).copied().unwrap_or(1);
-                let total_b = self.file_changes.get(&file_b).copied().unwrap_or(1);
-                let coupling_ratio = count as f64 / total_a.min(total_b).max(1) as f64;
-                TemporalCoupling {
-                    file_a,
-                    file_b,
-                    co_change_count: count,
-                    coupling_ratio: coupling_ratio.min(1.0),
-                }
-            })
-            .collect();
-
-        result.sort_by(|a, b| {
-            b.co_change_count
-                .cmp(&a.co_change_count)
-                .then_with(|| {
-                    b.coupling_ratio
-                        .partial_cmp(&a.coupling_ratio)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .then_with(|| a.file_a.cmp(&b.file_a))
-                .then_with(|| a.file_b.cmp(&b.file_b))
-        });
-        Ok(result)
+        Ok(self
+            .read_history(repo_path, true)?
+            .co_changes(&self.file_changes))
     }
 
     /// Get volatility statistics

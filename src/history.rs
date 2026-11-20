@@ -207,7 +207,7 @@ pub fn analyze_ref(
 fn repo_root(path: &Path) -> Result<PathBuf, HistoryError> {
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
-        .current_dir(path)
+        .current_dir(crate::paths::containing_directory(path))
         .output()?;
 
     if !output.status.success() {
@@ -354,13 +354,11 @@ fn analyze_ref_in_repo(
 
     if params.use_git {
         let mut volatility = VolatilityAnalyzer::new(params.months);
-        if volatility.analyze(&analysis_path).is_ok() {
-            if let Ok(temporal) = volatility.analyze_temporal_coupling(&analysis_path) {
-                metrics.temporal_couplings = temporal;
-            }
-            metrics.file_changes = volatility.file_changes;
-            metrics.update_volatility_from_git();
-        }
+        metrics.temporal_couplings = volatility
+            .analyze_with_temporal_coupling(&analysis_path)
+            .map_err(|err| HistoryError::Git(err.to_string()))?;
+        metrics.file_changes = volatility.file_changes;
+        metrics.update_volatility_from_git();
     }
 
     if config.has_volatility_overrides() || config.has_subdomain_config() {

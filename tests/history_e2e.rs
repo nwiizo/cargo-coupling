@@ -38,6 +38,41 @@ fn write(path: &Path, content: &str) {
 }
 
 #[test]
+fn history_accepts_file_scopes_and_refreshes_change_counts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let source = root.join("lib.rs");
+    write(&source, "pub fn example() {}");
+    git(root, &["init", "-q"]);
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "initial"]);
+    let mut analyzer = VolatilityAnalyzer::new(6);
+    analyzer.analyze(root).unwrap();
+    analyzer.analyze(root).unwrap();
+    assert_eq!(analyzer.get_change_count("lib.rs"), 1);
+    analyzer.analyze(&source).unwrap();
+    assert_eq!(analyzer.get_change_count("lib.rs"), 1);
+    let history = analyze_history(
+        &source,
+        &CompiledConfig::empty(),
+        &IssueThresholds::default(),
+        6,
+        2,
+    )
+    .unwrap();
+    assert_eq!(history.points.len(), 1);
+}
+
+#[test]
+fn failed_git_log_is_not_a_successful_empty_observation() {
+    let tmp = tempfile::tempdir().unwrap();
+    git(tmp.path(), &["init", "-q"]);
+    let mut analyzer = VolatilityAnalyzer::new(6);
+    assert!(analyzer.analyze(tmp.path()).is_err());
+    assert!(analyzer.analyze_temporal_coupling(tmp.path()).is_err());
+}
+
+#[test]
 fn history_builds_timeline_from_a_real_git_repo() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();

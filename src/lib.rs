@@ -48,6 +48,7 @@ pub mod external;
 pub mod history;
 pub mod manifest;
 pub mod metrics;
+mod paths;
 pub mod report;
 pub mod volatility;
 pub mod web;

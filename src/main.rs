@@ -346,8 +346,8 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         }
 
         let mut volatility = VolatilityAnalyzer::new(args.git_months);
-        match volatility.analyze(&args.path) {
-            Ok(()) => {
+        match volatility.analyze_with_temporal_coupling(&args.path) {
+            Ok(temporal) => {
                 git_used = true;
                 if args.verbose {
                     let stats = volatility.statistics();
@@ -357,23 +357,13 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
                     );
                 }
 
-                // Analyze temporal coupling (co-change patterns)
-                match volatility.analyze_temporal_coupling(&args.path) {
-                    Ok(temporal) => {
-                        if args.verbose && !temporal.is_empty() {
-                            eprintln!(
-                                "Temporal coupling: {} co-changing file pairs detected",
-                                temporal.len()
-                            );
-                        }
-                        metrics.temporal_couplings = temporal;
-                    }
-                    Err(e) => {
-                        if args.verbose {
-                            eprintln!("Warning: Temporal coupling analysis failed: {}", e);
-                        }
-                    }
+                if args.verbose && !temporal.is_empty() {
+                    eprintln!(
+                        "Temporal coupling: {} co-changing file pairs detected",
+                        temporal.len()
+                    );
                 }
+                metrics.temporal_couplings = temporal;
 
                 // Copy file changes to project metrics (must be after statistics())
                 metrics.file_changes = volatility.file_changes;

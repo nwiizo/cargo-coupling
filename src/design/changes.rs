@@ -52,7 +52,7 @@ pub struct Provenance {
 }
 
 pub fn git_root(path: &Path) -> Option<PathBuf> {
-    let start = if path.is_file() { path.parent()? } else { path };
+    let start = crate::paths::containing_directory(path);
     let output = git(start, &["rev-parse", "--show-toplevel"]).ok()?;
     Some(PathBuf::from(output.trim()))
 }
