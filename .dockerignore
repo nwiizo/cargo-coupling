@@ -16,6 +16,7 @@ target/
 *.md
 docs/
 PROPOSAL.md
+.litho/
 
 # CI/CD
 .github/

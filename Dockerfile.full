@@ -3,13 +3,11 @@
 
 ARG APP_NAME=cargo-coupling
 
-# Build stage with nightly Rust
+# Build with the current stable Rust image
 FROM rust:slim-bookworm AS chef
 WORKDIR /app
 
-# Install nightly and cargo-chef
-RUN rustup default nightly && \
-    cargo install cargo-chef --locked
+RUN cargo install cargo-chef --locked
 
 FROM chef AS planner
 COPY . .

@@ -1,7 +1,8 @@
 [package]
 name = "cargo-coupling"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
+rust-version = "1.99"
 description = "A coupling analysis tool for Rust projects - measuring the 'right distance' in your code"
 license = "MIT"
 repository = "https://github.com/nwiizo/cargo-coupling"
@@ -34,12 +35,11 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rayon = "1.12"
 glob = "0.3"
-toml = "1.1"
-regex-lite = "0.1"
+toml = "1.2"
 
 # Web UI
 axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 rust-embed = "8"
 mime_guess = "2"
 open = "5"
