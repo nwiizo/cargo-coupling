@@ -1,3 +1,12 @@
+---
+paths:
+  - "src/**/*.rs"
+  - "tests/**/*.rs"
+  - "benches/**/*.rs"
+  - "Cargo.toml"
+  - "Cargo.lock"
+---
+
 # Rust Development Rules
 
 ## Before Commit
@@ -38,3 +47,19 @@ Check callers before narrowing visibility or introducing an abstraction.
 For output refactors, preserve localization, ordering, whitespace, and I/O error
 propagation. Characterize uncovered output cases before changing the renderer;
 reuse existing tests where they already establish the behavior.
+
+## Types and Ownership
+
+- Represent unchecked evidence separately from a checked empty result. Prefer
+  `Option<&T>` over a result plus a Boolean that can contradict it.
+- Borrow analysis data when reading it; clone only the fields needed for an
+  independently owned merged snapshot. Do not clone to silence borrow errors.
+- Keep internal changes behind the existing public API and serialized shape.
+  Confirm output compatibility with fixed inputs when refactoring reports.
+- Propagate recoverable input errors with `Result`; keep test assertions and
+  documented invariant checks distinct from production error handling.
+
+These choices apply the [idiomatic Rust guidance](https://github.com/nwiizo/rust-best-practices/blob/5c94dc7af1f25783ad2a637a06f1fc08b65c4cf4/docs/idiomatic-rust.md)
+and [type-design guidance](https://github.com/nwiizo/rust-best-practices/blob/5c94dc7af1f25783ad2a637a06f1fc08b65c4cf4/docs/type-design.md)
+reviewed from the requested local checkout. Adopt recommendations where their
+preconditions hold; preserve intentional data types and avoid blanket API churn.

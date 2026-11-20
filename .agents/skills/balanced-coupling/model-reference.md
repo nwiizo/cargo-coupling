@@ -11,10 +11,9 @@ exceptions in the current source before claiming a defect.
 Access to implementation details that aren't part of the public API.
 
 **Rust detection patterns**:
-- Direct field access (`obj.field`)
-- Struct literal construction (`Struct { field: value }`)
+- Field access or construction exposes representation; a deliberately published
+  model is not automatically private knowledge.
 - Accessing `pub(crate)` or `pub(super)` items from outside scope
-- Inherent impl blocks on external types
 
 **Why dangerous**: Changes to internals cascade to all dependents without warning.
 
@@ -30,6 +29,8 @@ Shared business requirements or functional specifications.
 
 **Key insight**: Can be implicit — duplicated business logic across modules
 is functional coupling even without explicit code dependencies.
+Calls and signatures alone do not prove shared business requirements. Trace the
+rule that forces both sides to change; declared rules retain that evidence.
 
 ### Model Coupling (Strength = 0.50)
 
@@ -38,7 +39,8 @@ Shared domain/business model or data structures.
 **Rust detection patterns**:
 - Type imports (`use crate::types::UserId`)
 - Type parameters in generics
-- Shared DTOs (types with `#[derive(Serialize, Deserialize)]`)
+- Shared data structures; serde derives alone do not distinguish domain models
+  from integration-specific contracts.
 
 ### Contract Coupling (Strength = 0.25)
 
@@ -50,7 +52,8 @@ Integration through stable, well-defined contracts.
 - Published interfaces with semantic versioning
 
 Use a trait when it represents a useful stable boundary; lowering strength alone
-does not justify another abstraction.
+does not justify another abstraction. A trait exposing an internal model still
+shares that model; inspect its types, semantics and change requirements.
 
 ## Distance Factors
 
@@ -59,6 +62,11 @@ does not justify another abstraction.
 SameFunction (0.0) → SameModule (0.25) → DifferentModule (0.5) → DifferentCrate (1.0)
 ```
 
+These are this tool's structural categories, not universal costs. State the level
+being reviewed (items, Rust modules, packages or services). Selecting a smaller
+path does not renormalize scores; hierarchy summaries do not independently score
+each level. A module boundary can be the widest relevant boundary in one service.
+
 ### Organizational Distance
 - Same developer: minimal coordination cost
 - Same team: low coordination cost
@@ -66,15 +74,18 @@ SameFunction (0.0) → SameModule (0.25) → DifferentModule (0.5) → Different
 - Different organization: maximum coordination cost
 
 ### Runtime Coupling
-- Synchronous calls: tighter coupling (caller blocks)
-- Asynchronous messages: looser coupling (temporal decoupling)
-- Event-driven: loosest coupling (no direct knowledge)
+- Synchronous calls can propagate availability and timing dependencies.
+- Asynchronous messages can reduce runtime dependence while increasing coordination
+  distance. They still share schemas, ordering, identity and business meaning.
+- Assess runtime requirements separately from integration strength. Transport
+  choice alone cannot establish low knowledge sharing.
 
 ### Lifecycle Coupling Trade-off
-Increasing distance often increases lifecycle coupling:
-- Same binary: always deployed together
-- Separate services: independent deployment but coordination needed
-- This creates a fundamental tension in architecture design
+Decreasing distance generally makes coordinated changes easier but binds build,
+test and release lifecycles more closely. Increasing distance can permit separate
+lifecycles, while making necessary joint changes more expensive. Separate services
+do not establish independent delivery when schemas or runtime invariants require
+coordination.
 
 ## Volatility Assessment
 
@@ -98,11 +109,17 @@ business rationale. Where classified, essential volatility governs scoring;
 raw churn informs accidental-volatility diagnostics. Missing business context is
 uncertainty, not a reason to invent or change a classification.
 
+Generic means low expected change in the solved function, not a guarantee that
+its provider or implementation will stay fixed. Record likely provider changes
+or the reason for deferring change in design context. Use explicit what-if
+scenarios for changed assumptions; do not silently rewrite essential volatility.
+
 ## Temporal Coupling
 
-Files that frequently change together in git commits indicate **implicit coupling**
-that AST analysis cannot detect. The `VolatilityAnalyzer::analyze_temporal_coupling()`
-method detects these co-change patterns.
+Files that frequently change together are investigation candidates. The
+`VolatilityAnalyzer::analyze_temporal_coupling()` method detects co-change, not
+shared requirements. Formatting, generated code and coordinated feature work can
+also explain the observation.
 
 High temporal coupling between files without explicit code dependencies suggests:
 - Shared business logic (functional coupling)
@@ -123,10 +140,10 @@ Static analysis does not observe dynamic connascence, organizational/runtime dis
 | Type | Example | Refactoring |
 |------|---------|-------------|
 | **Name** | Referencing specific function name | Rename affects all callers |
-| **Type** | Sharing concrete types | Extract trait |
-| **Meaning** | Magic numbers/strings shared | Extract constants |
+| **Type** | Sharing concrete types | Check whether an integration-specific type or interface hides knowledge |
+| **Meaning** | Magic numbers/strings shared | Name the rule and its owner before sharing a constant |
 | **Position** | Parameter ordering matters | Use named parameters/builder |
-| **Algorithm** | Duplicated algorithm | Extract to shared function |
+| **Algorithm** | Duplicated algorithm | Share only when the implementations have the same reason to change |
 
 ### Dynamic Connascence (runtime)
 
@@ -143,3 +160,6 @@ Focus on the integrations relevant to the requested change. Explain what knowled
 is shared, how far a change travels, and how likely that knowledge is to change.
 Choose a refactor only when it improves that situation while preserving behavior;
 strong nearby coupling and weak distant coupling can both be appropriate.
+
+See [model conformance](../../../docs/modularity-conformance.md) for the maintained
+concept-to-code and job verification map.

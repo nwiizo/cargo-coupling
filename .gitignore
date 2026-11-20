@@ -21,6 +21,13 @@ coverage/
 *.bak
 *.tmp
 
+# Local Rust learning notes
+/docs/rust-mentor-design-review.md
+/docs/rust-learning-review/
+
 # Mutation testing output
 mutants.out/
 mutants.out.old/
+
+# Litho caches and intermediate model responses
+/.litho/

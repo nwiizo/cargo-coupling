@@ -86,3 +86,24 @@ When workflow behavior changes, try a representative request and an adjacent
 request that should choose another skill, then inspect the commands and result.
 Discovery and link checks alone do not verify model behavior. Keep those trials
 within the requested scope and isolate generated artifacts and account state.
+
+Use [the fixed modularity cases](skill-evaluation.md) when changing the coupling
+skills. Record observed results separately from expected behavior; successful
+parsing or a deterministic CLI test does not establish LLM instruction adherence.
+
+## Instruction Placement
+
+Keep repository-wide invariants and commands in `AGENTS.md` / `CLAUDE.md`,
+task procedures in skills, and longer model explanations in linked references.
+Scope Rust and Web rules with Claude's `paths` frontmatter so unrelated tasks do
+not load them. Codex does not use that frontmatter as a loader: `AGENTS.md` routes
+it to the relevant files explicitly. Signal-integrity rules apply project-wide.
+
+This division follows [OpenAI's skill guidance](https://developers.openai.com/codex/skills),
+[Codex instruction discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md),
+[Claude's supporting-file guidance](https://code.claude.com/docs/en/skills#add-supporting-files)
+and [path-specific rules](https://code.claude.com/docs/en/memory#path-specific-rules),
+checked on 2026-11-11. Keep inputs, expected results and exceptions explicit;
+put mechanically enforceable behavior in code/tests rather than promising that
+prompt wording makes model output deterministic. Preserve host invocation and
+permission settings when applying these recommendations.

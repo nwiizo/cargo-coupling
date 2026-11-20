@@ -60,10 +60,18 @@ docker push ghcr.io/nwiizo/cargo-coupling:latest
 
 ## Docs & Rules
 
+- Exclude `docs/rust-mentor-design-review.md` and `docs/rust-learning-review/` (including indexes)
+  from routine implementation, review, search, summaries, and context loading. Read only for explicitly
+  requested learning work or document maintenance. Exclude the paths explicitly in tools that ignore
+  ignore-files; do not automatically copy their contents into memory, rules, summaries, or product docs.
+- C4 documentation: `docs/c4doc/` (English), `docs/c4doc-ja/` (Japanese). Use the shared
+  `c4-rust-docs` skill; edit the corresponding `docs/c4doc-model*.json`, then regenerate.
+  Follow [the update workflow](docs/c4doc-review.md#regeneration-and-verification).
 - `.claude/docs/` - Khononov framework, issue types, learnings
 - `.claude/rules/` - Rust, Web UI rules
 - `.agents/skills/` - Shared skills and references; `.claude/skills` links here for Claude Code discovery.
 - [Shared skill guide](.agents/README.md) - Usage, host differences, and maintenance. Use `/coupling-review` or `/coupling-full-review` for Rust reviews; `/review` and `/full-review` may refer to personal prose skills.
+- [Model and job checks](docs/modularity-conformance.md) - Concept mapping, deterministic regressions and limits; consult when changing analysis or planning behavior.
 
 ## Design Principles (observe & trust)
 
@@ -88,8 +96,8 @@ This tool exists for a review paradigm shift: from "read and understand the code
 ## Notes
 
 **Edition 2024**:
-- `if let` chains require nightly (< Rust 1.85)
-- nightly toolchainが壊れた場合: `rustup update nightly` で更新してからリトライ
+- Minimum supported Rust is 1.99; CI checks this toolchain and current stable.
+- `if let` chains are stable on this project's supported toolchains; nightly is unnecessary.
 
 **Docker**:
 - cargo-chef: dependency cache for 5-10x faster builds

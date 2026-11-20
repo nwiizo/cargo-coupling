@@ -25,6 +25,10 @@ Apply the repository's Rust structural-analysis guidance, using
 for boundary effects. Inspect findings before extracting abstractions; retain
 similar code when the responsibilities or reasons to change differ.
 Compare the affected behavior and analysis with the same settings and Git history.
+Check ownership and state representation at the changed boundary: borrow data
+that is only read, and represent unavailable evidence separately from a checked
+empty result. Preserve public signatures and serialized output during internal
+refactors; compare fixed-input output where ordering or reporting matters.
 Preserve input validation and error handling. Characterize uncovered behavior
 before a behavior-preserving refactor; such a test should pass on the old code.
 For a bug fix, first demonstrate the bug with a failing regression test when a

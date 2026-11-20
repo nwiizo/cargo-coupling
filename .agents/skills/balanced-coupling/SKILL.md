@@ -1,6 +1,6 @@
 ---
 name: balanced-coupling
-description: Interpret coupling tradeoffs using Khononov's strength, distance, and volatility model. Use for conceptual reasoning behind cargo-coupling findings.
+description: Interpret coupling tradeoffs using Khononov's strength, distance, and volatility model. Use for conceptual questions; use analyze to run reports and coupling-review to inspect module boundaries.
 user-invocable: false
 ---
 
@@ -8,6 +8,8 @@ user-invocable: false
 
 Use the model to judge the cost of coordinated change. It is a conceptual lens;
 exact detection conditions and reported severities come from the current source.
+Use the supplied relationship or finding as input. Explain the shared knowledge,
+the three dimensions, the tradeoff and any evidence missing for that judgment.
 
 ```text
 BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
@@ -25,6 +27,10 @@ BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
 
 ## Recognition Rules
 
+- State the abstraction level and the concrete knowledge that must evolve together.
+  Numeric categories are deterministic heuristics; syntax is not a semantic proof.
+- A generic function can be stable while its provider changes. Ask about plausible
+  implementation changes or deliberately deferred work when it affects the decision.
 - Where configured, subdomain volatility represents essential, business-driven
   change and governs scoring. Raw Git churn feeds accidental-volatility diagnostics;
   it must not manufacture cascading-change risk for a low-essential-volatility target.
@@ -34,6 +40,8 @@ BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
 - High afferent coupling to a stable central abstraction can be good design.
 - Hidden Coupling is temporal co-change without an AST edge. Investigate shared
   rules or assumptions before diagnosing a defect.
+- Async transport does not establish weak shared knowledge. Compare coordinated
+  change cost with build/test/release independence before moving boundaries.
 
 Preserve these distinctions when reviewing or changing detectors. Keep history,
 thresholds, and subdomain settings comparable; never manipulate them to improve

@@ -11,10 +11,12 @@ Based on "Balancing Coupling in Software Design" by Vlad Khononov.
 | **Intrusive** | 1.0 | Implementation details, private interfaces | Implicit, fragile |
 | **Functional** | 0.75 | Business rules, functional specs | Often implicit |
 | **Model** | 0.50 | Domain model, data structures | Explicit but broad |
-| **Contract** | 0.25 | Integration contracts, traits | Most explicit, stable |
+| **Contract** | 0.25 | Integration-specific contracts | Most explicit, stable |
 
 Key: Intrusive and Functional coupling are often **implicit** — they exist
 without anyone realizing. Contract coupling is **explicit** by design.
+Rust calls, public fields, traits and serde derives are clues; their syntax alone
+does not establish which knowledge is shared or hidden.
 
 ### 2. Distance (Cost of Change)
 
@@ -27,6 +29,9 @@ without anyone realizing. Contract coupling is **explicit** by design.
 
 Distance is **fractal**: same rules apply at every abstraction level.
 Multiple factors contribute: code structure, team boundaries, runtime coupling, deployment lifecycle.
+State the abstraction level under review. This tool's numeric categories remain
+fixed when selecting a scope; item/package summaries do not rescore those levels.
+Organizational and runtime declarations inform constraints, not invented numeric costs.
 
 ### 3. Volatility (Probability of Change)
 
@@ -40,6 +45,9 @@ Volatility should be assessed from **business domain**, not just git history.
 Configure in `.coupling.toml` via `[subdomains]` section.
 
 Distinguish **essential** (business-driven) vs **accidental** (poor design) volatility.
+Low churn can also mean change is being deferred because it is difficult. Generic
+functionality may be stable while its provider or technology changes; preserve
+that distinction in planned changes and explicit scenarios.
 
 ## Balance Formula
 
@@ -69,14 +77,16 @@ BALANCE = (STRENGTH XOR DISTANCE) OR NOT VOLATILITY
 
 | Grade | Description |
 |-------|-------------|
-| **S** | Over-optimized! Stop refactoring! (WARNING) |
+| **S** | Legacy input only; no longer generated |
 | **A** | Well-balanced - coupling is appropriate (TARGET) |
 | **B** | Healthy - minor issues, manageable |
 | **C** | Room for improvement - some structural issues |
 | **D** | Attention needed - significant issues |
 | **F** | Immediate action required - critical issues |
 
-**Note**: S grade is a WARNING, not a reward. Aim for A.
+Sparse findings cannot establish over-engineering. Grades summarize detected
+findings, not safe replaceability; use evidence, future changes, and behavioral
+verification to decide whether to refactor.
 
 ## Connascence Refinement
 
@@ -97,4 +107,11 @@ beyond what AST analysis detects. Detected via `analyze_temporal_coupling()`.
 - Low volatility neutralizes unbalanced coupling
 - Focus refactoring on core subdomains (highest business value)
 - Not all coupling is bad — cohesion requires strong coupling
-- Distance increases lifecycle coupling (deployment trade-off)
+- Proximity makes co-evolution cheaper but binds build/test/release lifecycles.
+  Separation can permit independent lifecycles while increasing coordination cost.
+- Async transport does not remove shared schemas, business rules or runtime constraints.
+
+The upstream [modularity skills](https://github.com/vladikk/modularity/tree/bcdca9a595764b9aa88d5d8d6020f52e7f5f1f52)
+were re-examined on 2026-11-11 as a conceptual reference. The maintained
+[conformance and job checks](../../docs/modularity-conformance.md) distinguish
+deterministic observations, declared context, and conclusions requiring further evidence.

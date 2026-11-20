@@ -16,6 +16,8 @@ Unit tests are colocated with implementation in `#[cfg(test)] mod tests`; CLI in
 Follow the Conventional Commit style already used in history: `feat(analysis): ...`, `fix(test): ...`, `deps: ...`, `ci: ...`. Keep commit subjects imperative and scoped. PRs should summarize user-visible changes, note new flags or config keys, link related issues when available, and include screenshots for CLI/Web UI output changes. Before pushing, ensure fmt, clippy, tests, and the release build all pass.
 
 ## Agent-Specific Notes
+Exclude `docs/rust-mentor-design-review.md` and `docs/rust-learning-review/` (including indexes) from routine implementation, review, search, summaries, and context loading. Read them only for explicitly requested learning work or document maintenance. For tools that ignore ignore-files, exclude these paths explicitly; do not automatically copy their contents into agent memory, rules, summaries, or product docs.
+
 Start with `CLAUDE.md`, then read the relevant `.claude/docs/*`, `.claude/rules/*.md`, and `.agents/skills/*/SKILL.md` files for the task. For modularity work, consult `.claude/docs/khononov-framework.md`, `.claude/docs/issue-types.md`, and `.agents/skills/coupling-review/SKILL.md`. For Web UI tasks, use `.claude/rules/web-ui.md` and `.agents/skills/web/SKILL.md`. Treat the current source tree as the source of truth and use the agent documents as workflow guidance, because some older file maps no longer exactly match `src/`.
 
 ## Shared Skills

@@ -1,3 +1,10 @@
+---
+paths:
+  - "web-assets/**"
+  - "src/web/**"
+  - "tests/web_structure.test.mjs"
+---
+
 # Web UI Development Rules
 
 ## File Locations
@@ -27,6 +34,7 @@
 - **Animation conflicts**: Use graph-queue.js for sequential operations
 - **3D assets**: Use CDN-loaded browser globals only; do not add npm, bundlers, or generated assets
 - **Model fidelity**: Strength, distance, and volatility must remain independent visual dimensions; dimension-space plots use x=strength, y=distance, z=volatility
+- **Unknown evidence**: Co-change edges have no measured model dimensions. Show their history in network views, omit them from dimension-space plots, and render missing values as unknown. Reuse backend findings and balance results; do not add browser-only judgments or prescribed refactors.
 - **Trust signals**: Keep `/api/graph` issue lists, hidden temporal coupling, subdomains, and Not Analyzed manifest visible in the UI when available
 - **Health first**: Keep the persistent health header visible. It must show grade, short rationale, and clickable Critical/High/Medium counts that focus the graph on the related modules and dependency edges.
 - **Inspector first**: The sidebar's primary job is the context-sensitive inspector. Default shows project overview; node selection shows module dimensions/issues/source; edge selection shows coupling dimensions/classification/connascence/source location.
@@ -47,6 +55,7 @@
 ## Testing
 
 ```bash
-cargo run -- coupling --web ./src
+rtk proxy node --test tests/web_structure.test.mjs
+rtk proxy cargo run -- coupling --web --no-open ./src
 # Open http://localhost:3000
 ```
