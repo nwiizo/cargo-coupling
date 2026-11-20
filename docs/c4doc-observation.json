@@ -1,0 +1,357 @@
+{
+  "recorded_on": "2026-09-14",
+  "c4doc_version": "0.1.0",
+  "schema_version": 1,
+  "complete": true,
+  "diagnostics": [],
+  "counts": {
+    "production_targets": 2,
+    "target_modules": 54,
+    "unique_rust_files": 54,
+    "items": 681,
+    "imports": 313
+  },
+  "packages": [
+    {
+      "name": "cargo-coupling",
+      "manifest": "Cargo.toml",
+      "edition": "2024",
+      "targets": [
+        {
+          "name": "cargo_coupling",
+          "kind": [
+            "lib"
+          ],
+          "source": "src/lib.rs"
+        },
+        {
+          "name": "cargo-coupling",
+          "kind": [
+            "bin"
+          ],
+          "source": "src/main.rs"
+        }
+      ]
+    }
+  ],
+  "source_files": [
+    {
+      "path": "src/analyzer.rs",
+      "sha256": "51c7445ce2bcdb7aadc089195705f53156bfd7e9384115ebb407b27882bae736"
+    },
+    {
+      "path": "src/balance/action.rs",
+      "sha256": "d33bebb7d91d1f14ebe4cd7a1f7fa657604fb617a3ebfd92ebba16bc3791f4dd"
+    },
+    {
+      "path": "src/balance/coupling.rs",
+      "sha256": "5224a5a3151c133cf097ecd160fda1403c5644d4c0760b2eb92b1194f5cdbda1"
+    },
+    {
+      "path": "src/balance/external_crates.rs",
+      "sha256": "6a473a2d57499dc8ab55646664a20ac2eded90f2c3d3fb214927181011771450"
+    },
+    {
+      "path": "src/balance/grade.rs",
+      "sha256": "0c74ca6fba2641792bff4e76630f96c242a04533b90d3c6eed8d4d68f0e83310"
+    },
+    {
+      "path": "src/balance/issue.rs",
+      "sha256": "c28af6ffd113a7874dda07a04cf624da2e476f755b3d062b93952d2a1fe5fc60"
+    },
+    {
+      "path": "src/balance/issue_type.rs",
+      "sha256": "861e9ad215541c2f336d84ede4d0f3a67140ee41027f6a69d0436dd62694b8d0"
+    },
+    {
+      "path": "src/balance/issues.rs",
+      "sha256": "fb4f15cc318cf2d33c24f6616d963b163e1ee5425bfd205e4dafc79549ffd0ef"
+    },
+    {
+      "path": "src/balance/labels.rs",
+      "sha256": "1f3408929e1660498a962fbf045bdd90d847309f8cd11f0b6276591a5bee41eb"
+    },
+    {
+      "path": "src/balance/mod.rs",
+      "sha256": "e70844c88158acb99e40e4c1698871249e3ef43abd94de5ce37750b7fb316f2c"
+    },
+    {
+      "path": "src/balance/patterns.rs",
+      "sha256": "7063b60c992234421a3a9ddf262570a5cfca562b3f342afb7b99047b502d3a1e"
+    },
+    {
+      "path": "src/balance/project.rs",
+      "sha256": "006dc696b734ce76c7241fc84ad896626ed57fce18e2f5c375e2fd5427204ce9"
+    },
+    {
+      "path": "src/balance/rationale.rs",
+      "sha256": "3c0e36251e6352470a80afcb3f102397fb732419cb5f397ae14194dfef63e709"
+    },
+    {
+      "path": "src/balance/score.rs",
+      "sha256": "b33fa0fa24d7fcb20a48160258d387232bcefc72b7e655a5c6a864e26837bb06"
+    },
+    {
+      "path": "src/balance/severity.rs",
+      "sha256": "9b33a62ccf2718ca43ac0d94eae111bf4c08c407dadfa549a94b2b73bb1a9512"
+    },
+    {
+      "path": "src/balance/signals.rs",
+      "sha256": "0090690f401f660a69312bd09c9df48edaf24bcb8083d74b08c50c627c4ed492"
+    },
+    {
+      "path": "src/balance/subdomain.rs",
+      "sha256": "f0e29fb7062fab62626f2abb9941ddb84351c91a068d043cec52dc9dd4935af7"
+    },
+    {
+      "path": "src/classification.rs",
+      "sha256": "e2df476a8feb20e47252416ae5f211061e2feab51c0635b0eda0d11f54847850"
+    },
+    {
+      "path": "src/cli_output.rs",
+      "sha256": "98e44d94e9093ad6c1c7b49b6792c965af70cdb01a988ba0b3ba725e5475a9fe"
+    },
+    {
+      "path": "src/cli_output/hotspots.rs",
+      "sha256": "02e5ff3f1aab5171d35003189d1f3d4c16805ff21c5f8cb65e33134424646127"
+    },
+    {
+      "path": "src/cli_output/impact.rs",
+      "sha256": "3329f599778c4296b35749e820fcfc72599627e1150a2e12c6445fdeeab8ffe9"
+    },
+    {
+      "path": "src/cli_output/json.rs",
+      "sha256": "37b3d35d008c4ff2da9386487d7ddda1967eafa5683887e68a6a3ea7faf7b9dd"
+    },
+    {
+      "path": "src/config.rs",
+      "sha256": "fdcb7e1bd0340af6694f09edd1c20cd276041a63b3f97c98a04a9243e752e114"
+    },
+    {
+      "path": "src/design/assessment.rs",
+      "sha256": "2867b6e70e865895480db44a01acae76bee1b3af5c6e0f44ce48232df724ed1d"
+    },
+    {
+      "path": "src/design/changes.rs",
+      "sha256": "6d6016e40f787986df9dad85493509024381d330e048f1aed8aa083d83123427"
+    },
+    {
+      "path": "src/design/context.rs",
+      "sha256": "e9b0485425538227c07c117a27d3bab6bc0a35d577ea54a6f20b0fd05d1b9106"
+    },
+    {
+      "path": "src/design/graph.rs",
+      "sha256": "b2bb0eeacd4bbd6ef32718693966d433b4a4fbd0ec7999d7c111f8382a5d5d31"
+    },
+    {
+      "path": "src/design/mod.rs",
+      "sha256": "a23068ba395c3856688856afec2e0c4d9fb07c480b0d4cfaf64c3e4eccc06c15"
+    },
+    {
+      "path": "src/design/model.rs",
+      "sha256": "cd37baa4f7867fe18eb6c157fefe1b6b27162c82e41f15635ca61b29bded06ac"
+    },
+    {
+      "path": "src/design/organization.rs",
+      "sha256": "2db8b6c36c0597a3aea879595fa93df97938448c76a70d561b279420628135c0"
+    },
+    {
+      "path": "src/design/output.rs",
+      "sha256": "d86dbdde595e05c644cab1b30e44cebdcba9f6c473d7b8e7efd3ea49a7e22cd3"
+    },
+    {
+      "path": "src/design/planning.rs",
+      "sha256": "af4068fe555d9a9755190d8986de5b8429e64ac4c6254b80094146942d24fdbb"
+    },
+    {
+      "path": "src/design/source.rs",
+      "sha256": "592901badd9134578f776a8a103beb934a8916c2a5d9c3a463bc72d48fb763aa"
+    },
+    {
+      "path": "src/design/structure.rs",
+      "sha256": "07bb3f41b613e24103042c7f2b7a52973eb195df1028c657e5d842421e9983b4"
+    },
+    {
+      "path": "src/diff.rs",
+      "sha256": "b74d63d180a027210c66abbeddff2e94dbdff3c6a8c175e44da3978abc124466"
+    },
+    {
+      "path": "src/discovery.rs",
+      "sha256": "9d5e5aa5136819246cecf32857b28d8a599a6e4052a52cb7ad9b1f9f737bdb44"
+    },
+    {
+      "path": "src/external.rs",
+      "sha256": "cf9644862cfab2db0adca40f22fa23dd63511e476151863493b07744ccd989b3"
+    },
+    {
+      "path": "src/history.rs",
+      "sha256": "0ebc44205f6ca228983b4c40344d6e89051c726d45ffdda1058bb385af155b87"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "adf8453fb7145a58f07632973335de65c4266b3614fd51c535a361e6f1fec898"
+    },
+    {
+      "path": "src/main.rs",
+      "sha256": "4610516c4e5be057a9b4c33522a1fd7ad82dc3d44d0c35b5fdd312804cb1a0c1"
+    },
+    {
+      "path": "src/manifest.rs",
+      "sha256": "1d257abb7c220f584587c0768dba462a17dd8ca320e5df949ee582f82f41539e"
+    },
+    {
+      "path": "src/metrics/coupling.rs",
+      "sha256": "6bf59cae3ad3751eca28067d49de6130e2e28e47e9030853a5b0fd16610074d1"
+    },
+    {
+      "path": "src/metrics/dimensions.rs",
+      "sha256": "89cece31b26bb8da5deeeb318ece638d9ffd91f7567bd46b976088031e72ded2"
+    },
+    {
+      "path": "src/metrics/mod.rs",
+      "sha256": "5e654ad57849074f3526e80c850e23c7d261c19b8096dce39e657981b3c82afb"
+    },
+    {
+      "path": "src/metrics/module.rs",
+      "sha256": "2cf76f47d5c0d60a2d8aff9a008ccca23429c6701acff0c0406ae80ae662bf1b"
+    },
+    {
+      "path": "src/metrics/project.rs",
+      "sha256": "65e71657f8ce67981ebca40ca180cd96ef964e3c84b2c438bfeed7421156c35a"
+    },
+    {
+      "path": "src/report.rs",
+      "sha256": "ac7469acadd1351cc0439cb00d388bf0a5abd967588569fe9c06cebe73eff627"
+    },
+    {
+      "path": "src/volatility.rs",
+      "sha256": "90c7bd6c309c48f567fe166ac9183c927319cf573b84348f8f3ca70ba326f8cb"
+    },
+    {
+      "path": "src/web/design.rs",
+      "sha256": "938b7bc52dd5e7cbe583c14a6b2b37f1184a0d80c0f5c138af86406fe57ebf9e"
+    },
+    {
+      "path": "src/web/graph.rs",
+      "sha256": "1c7da791b844e891deef3a85e940e1cd115179d64cbf99702d8c899280d23133"
+    },
+    {
+      "path": "src/web/mod.rs",
+      "sha256": "3fdd67188b9f394d2d1e521d9b3bb343885e19dbc2f4ebac059ea344c02b13b5"
+    },
+    {
+      "path": "src/web/routes.rs",
+      "sha256": "1cf13dbe1bdbfc759c93de96be17156175fd35a53152f59459c0589d1d434847"
+    },
+    {
+      "path": "src/web/server.rs",
+      "sha256": "5666e121d584535a5dfcb07e0a4842ade63d806263e37d6cdfd50b1e768c3f12"
+    },
+    {
+      "path": "src/workspace.rs",
+      "sha256": "2d80bedd481061bbf03452531a882d8d48ddc56166eb098d03e042c3fd244579"
+    }
+  ],
+  "unlinked_rust_files": [
+    "benches/analysis_benchmark.rs",
+    "tests/baseline_e2e.rs",
+    "tests/design_e2e.rs",
+    "tests/history_e2e.rs",
+    "tests/layout_e2e.rs",
+    "tests/scope_e2e.rs",
+    "tests/subdomain_e2e.rs"
+  ],
+  "limitations": [
+    "Static Rust syntax observations, not compiler-resolved symbols, runtime call graphs, or C4 boundaries.",
+    "Cargo metadata --no-deps --offline --locked supplies production targets and declared dependencies; transitive dependency resolution is omitted.",
+    "#[cfg(test)] modules and #[test]/#[tokio::test]/#[async_std::test] items are skipped; other cfg predicates are retained without evaluation.",
+    "Public means the written visibility, not reachability through re-exports or private parent modules.",
+    "Call expressions preserve syntax; aliases, method dispatch, trait resolution, function pointers, and macro expansion need agent review.",
+    "Unlinked files may be tests, examples, build inputs, or conditionally/generated modules; do not assume they are dead code."
+  ],
+  "coupling_observation": {
+    "provenance": {
+      "analyzer_version": "0.4.0",
+      "config_fingerprint": "fnv1a64:393116ab35eeb809",
+      "context_fingerprint": "fnv1a64:50e1286062ca8c10",
+      "dirty": true,
+      "effective_settings": {
+        "analysis": {
+          "exclude": [
+            "**/tests/**"
+          ],
+          "exclude_tests": true,
+          "prelude_modules": []
+        },
+        "subdomains": {
+          "core": [
+            "src/balance/**",
+            "src/metrics/project.rs",
+            "src/metrics/coupling.rs",
+            "src/metrics/module.rs",
+            "src/metrics/mod.rs",
+            "src/design/assessment.rs",
+            "src/design/context.rs",
+            "src/design/model.rs",
+            "src/design/mod.rs",
+            "src/design/organization.rs",
+            "src/design/planning.rs",
+            "src/design/structure.rs"
+          ],
+          "generic": [
+            "src/config.rs",
+            "src/workspace.rs",
+            "src/web/**"
+          ],
+          "supporting": [
+            "src/analyzer.rs",
+            "src/classification.rs",
+            "src/discovery.rs",
+            "src/metrics/dimensions.rs",
+            "src/report.rs",
+            "src/cli_output.rs",
+            "src/cli_output/**",
+            "src/design/changes.rs",
+            "src/design/graph.rs",
+            "src/design/output.rs",
+            "src/design/source.rs",
+            "src/history.rs",
+            "src/diff.rs",
+            "src/external.rs",
+            "src/manifest.rs",
+            "src/volatility.rs"
+          ]
+        },
+        "thresholds": {
+          "max_dependencies": 15,
+          "max_dependents": 20
+        },
+        "volatility": {
+          "high": [],
+          "ignore": [],
+          "low": [],
+          "medium": []
+        }
+      },
+      "git_months": 6,
+      "git_used": true,
+      "max_depth": null,
+      "revision": "5b019b2642f7dd7275d742d308b898b9047d2e6c",
+      "scoring_version": "khononov-compensation-v2",
+      "source_fingerprint": "fnv1a64:b59a1c2e580b78b7",
+      "tests_excluded": true,
+      "thresholds": {
+        "max_dependencies": 15,
+        "max_dependents": 20
+      }
+    },
+    "coverage": [
+      "No design context: future plans, lifecycle units, business rules and runtime relationships are unknown.",
+      "Rust syntax and dependency reachability are observations; inferred integration strength is not proof of shared business meaning. Macros, inactive cfg selection and full Rust type resolution are not covered.",
+      "Runtime coverage is limited to supplied declarations/observations. Git co-change measures editing history, not runtime ordering.",
+      "0 source parse failure(s); 0 unresolved graph endpoint(s).",
+      "Test code was excluded; test candidates are incomplete.",
+      "No CODEOWNERS file; ownership is known only where declared in the design context."
+    ]
+  }
+}

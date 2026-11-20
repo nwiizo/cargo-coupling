@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "title": "Inside cargo-coupling",
+  "description": "A terminal report and an interactive graph start with the same Rust analysis. Follow a project from Cargo and Git into design assessment, then trace a browser request that compares a revision. These four views are for Rust developers who want to use the tool or change how it works.",
+  "elements": [
+    {
+      "id": "developer", "kind": "person", "name": "Rust developer",
+      "description": "Investigates coupling and plans code changes",
+      "evidence": {"status": "observed", "sources": [{"path": "README.md", "start_line": 7, "end_line": 21, "sha256": "ca8ad4fd15ffb22ce027674a280b3c48f39b839a6ca5cca20b971de4a11016d8"}]}
+    },
+    {
+      "id": "coupling", "kind": "system", "name": "cargo-coupling",
+      "description": "Evaluates Rust coupling to support design decisions",
+      "evidence": {"status": "observed", "sources": [{"path": "README.md", "start_line": 1, "end_line": 9, "sha256": "ca8ad4fd15ffb22ce027674a280b3c48f39b839a6ca5cca20b971de4a11016d8"}]}
+    },
+    {
+      "id": "cdn", "kind": "system", "name": "unpkg.com",
+      "description": "Serves JavaScript libraries used by the UI",
+      "evidence": {"status": "observed", "sources": [{"path": "web-assets/index.html", "start_line": 10, "end_line": 13, "sha256": "41ef013fc72ce8c6205ec9b663d0a872d84e0d87f78d4e00755f8d1b63d01585"}]}
+    },
+    {
+      "id": "cargo", "kind": "system", "name": "Cargo",
+      "description": "Provides package and dependency metadata",
+      "evidence": {"status": "observed", "sources": [{"path": "src/workspace.rs", "start_line": 65, "end_line": 75, "sha256": "079c2b2f1f59fabc7579f92753b88d631daa97254ff37197bd6de7629b862a14"}]}
+    },
+    {
+      "id": "git", "kind": "system", "name": "Git",
+      "description": "Provides history and checks out past revisions",
+      "evidence": {"status": "observed", "sources": [
+        {"path": "src/volatility.rs", "start_line": 174, "end_line": 217, "sha256": "bce8387e4f82408f06daceb0593ba97dd49317b594edc9794deba9533b051a22"},
+        {"path": "src/history.rs", "start_line": 418, "end_line": 461, "sha256": "828ecefec2d3c3191d7ca10120f4a95d4604e8198b5e19f5c2b25fa09393130f"}
+      ]}
+    },
+    {
+      "id": "native", "kind": "container", "parent": "coupling", "name": "CLI and embedded server",
+      "description": "Exposes analysis through the terminal or HTTP", "technology": "Rust / Axum / Tokio",
+      "evidence": {"status": "observed", "sources": [{"path": "src/main.rs", "start_line": 335, "end_line": 442, "sha256": "b9a537d80fde6d8d4eabdd91c950b18fce6fac44a79b469080329ed5be04da42"}]}
+    },
+    {
+      "id": "browser_app", "kind": "container", "parent": "coupling", "name": "Browser application",
+      "description": "Explores analysis results and revision comparisons", "technology": "HTML / CSS / JavaScript",
+      "evidence": {"status": "observed", "sources": [{"path": "web-assets/js/design-view.js", "start_line": 124, "end_line": 146, "sha256": "02642391b0375dfad845f3dfe318c92b1671268ed3db17cedd1d6887d323d4c7"}]}
+    },
+    {
+      "id": "cli", "kind": "component", "parent": "native", "name": "CLI execution and output",
+      "description": "Starts analysis and selects output or server mode", "technology": "Rust / clap",
+      "evidence": {"status": "observed", "sources": [{"path": "src/main.rs", "start_line": 335, "end_line": 517, "sha256": "b9a537d80fde6d8d4eabdd91c950b18fce6fac44a79b469080329ed5be04da42"}]}
+    },
+    {
+      "id": "analysis", "kind": "component", "parent": "native", "name": "Structural analysis",
+      "description": "Parses selected sources into shared metrics", "technology": "Rust / syn / Cargo metadata",
+      "evidence": {"status": "observed", "sources": [{"path": "src/analyzer.rs", "start_line": 1284, "end_line": 1305, "sha256": "2c38f8e746794c59b0b7faffccbac00206b53423901e7909a26a9c156dba7016"}]}
+    },
+    {
+      "id": "history", "kind": "component", "parent": "native", "name": "History and baseline analysis",
+      "description": "Reevaluates past sources under the same settings", "technology": "Rust / Git subprocess",
+      "evidence": {"status": "observed", "sources": [{"path": "src/history.rs", "start_line": 325, "end_line": 374, "sha256": "828ecefec2d3c3191d7ca10120f4a95d4604e8198b5e19f5c2b25fa09393130f"}]}
+    },
+    {
+      "id": "balance", "kind": "component", "parent": "native", "name": "Coupling evaluation",
+      "description": "Derives scores and issues from shared metrics", "technology": "Rust",
+      "evidence": {"status": "observed", "sources": [{"path": "src/balance/project.rs", "start_line": 19, "end_line": 57, "sha256": "2b9c604d7432ae521e5c097d470ed24c1be1c45da4346f52f70e828b36d581a4"}]}
+    },
+    {
+      "id": "design", "kind": "component", "parent": "native", "name": "Design assessment",
+      "description": "Combines structure, history, and declared context", "technology": "Rust",
+      "evidence": {"status": "observed", "sources": [{"path": "src/design/assessment.rs", "start_line": 34, "end_line": 139, "sha256": "e24bf404888e4ba7e2ce03978c4a4dc8a21bc681e293b710922bf25c34cbc622"}]}
+    },
+    {
+      "id": "http", "kind": "component", "parent": "native", "name": "HTTP adapter",
+      "description": "Serves the UI and exposes shared assessment", "technology": "Rust / Axum / RustEmbed",
+      "evidence": {"status": "observed", "sources": [
+        {"path": "src/web/routes.rs", "start_line": 27, "end_line": 100, "sha256": "c895f2022df5ebc7a801104219181c6a000103788bfb24cee17b4f0141bdcc65"},
+        {"path": "src/web/design.rs", "start_line": 19, "end_line": 74, "sha256": "88cab7eb311a176cf4d446965718d107d11668f439a583e3f9a57556698aac90"}
+      ]}
+    }
+  ],
+  "relationships": [
+    {
+      "id": "user_uses_system", "from": "developer", "to": "coupling", "description": "Obtains coupling analysis for change decisions",
+      "evidence": {"status": "observed", "sources": [{"path": "README.md", "start_line": 7, "end_line": 21, "sha256": "ca8ad4fd15ffb22ce027674a280b3c48f39b839a6ca5cca20b971de4a11016d8"}]}
+    },
+    {
+      "id": "system_uses_cdn", "from": "coupling", "to": "cdn", "description": "Retrieves libraries for the Web UI",
+      "evidence": {"status": "observed", "sources": [{"path": "web-assets/index.html", "start_line": 10, "end_line": 13, "sha256": "41ef013fc72ce8c6205ec9b663d0a872d84e0d87f78d4e00755f8d1b63d01585"}]}
+    },
+    {
+      "id": "user_runs_cli", "from": "developer", "to": "native", "description": "Selects the analysis target and options", "technology": "CLI / argv",
+      "evidence": {"status": "observed", "sources": [{"path": "README.md", "start_line": 40, "end_line": 55, "sha256": "ca8ad4fd15ffb22ce027674a280b3c48f39b839a6ca5cca20b971de4a11016d8"}]}
+    },
+    {
+      "id": "user_uses_browser", "from": "developer", "to": "browser_app", "description": "Explores revision comparisons", "technology": "Browser UI",
+      "evidence": {"status": "observed", "sources": [{"path": "web-assets/js/design-view.js", "start_line": 130, "end_line": 146, "sha256": "02642391b0375dfad845f3dfe318c92b1671268ed3db17cedd1d6887d323d4c7"}]}
+    },
+    {
+      "id": "browser_calls_native", "from": "browser_app", "to": "native", "description": "Requests UI assets and analysis data", "technology": "HTTP / HTML, JavaScript, JSON",
+      "evidence": {"status": "observed", "sources": [{"path": "src/web/routes.rs", "start_line": 83, "end_line": 100, "sha256": "c895f2022df5ebc7a801104219181c6a000103788bfb24cee17b4f0141bdcc65"}]}
+    },
+    {
+      "id": "browser_loads_cdn", "from": "browser_app", "to": "cdn", "description": "Loads visualization libraries", "technology": "HTTPS / JavaScript",
+      "evidence": {"status": "observed", "sources": [{"path": "web-assets/index.html", "start_line": 10, "end_line": 13, "sha256": "41ef013fc72ce8c6205ec9b663d0a872d84e0d87f78d4e00755f8d1b63d01585"}]}
+    },
+    {
+      "id": "native_calls_cargo", "from": "native", "to": "cargo", "description": "Queries workspace and dependencies", "technology": "cargo metadata / JSON",
+      "evidence": {"status": "observed", "sources": [{"path": "src/workspace.rs", "start_line": 65, "end_line": 75, "sha256": "079c2b2f1f59fabc7579f92753b88d631daa97254ff37197bd6de7629b862a14"}]}
+    },
+    {
+      "id": "native_calls_git", "from": "native", "to": "git", "description": "Reads history and checks out revisions", "technology": "Git CLI / subprocess",
+      "evidence": {"status": "observed", "sources": [
+        {"path": "src/volatility.rs", "start_line": 174, "end_line": 217, "sha256": "bce8387e4f82408f06daceb0593ba97dd49317b594edc9794deba9533b051a22"},
+        {"path": "src/history.rs", "start_line": 418, "end_line": 461, "sha256": "828ecefec2d3c3191d7ca10120f4a95d4604e8198b5e19f5c2b25fa09393130f"}
+      ]}
+    },
+    {
+      "id": "cli_analyzes", "from": "cli", "to": "analysis", "description": "Requests shared metrics", "technology": "Rust call / ProjectMetrics",
+      "evidence": {"status": "observed", "sources": [{"path": "src/main.rs", "start_line": 335, "end_line": 339, "sha256": "b9a537d80fde6d8d4eabdd91c950b18fce6fac44a79b469080329ed5be04da42"}]}
+    },
+    {
+      "id": "cli_starts_http", "from": "cli", "to": "http", "description": "Starts Web mode", "technology": "Rust call / Tokio",
+      "evidence": {"status": "observed", "sources": [{"path": "src/main.rs", "start_line": 414, "end_line": 442, "sha256": "b9a537d80fde6d8d4eabdd91c950b18fce6fac44a79b469080329ed5be04da42"}]}
+    },
+    {
+      "id": "cli_assesses", "from": "cli", "to": "design", "description": "Requests design assessment", "technology": "Rust call / assess",
+      "evidence": {"status": "observed", "sources": [{"path": "src/main.rs", "start_line": 485, "end_line": 505, "sha256": "b9a537d80fde6d8d4eabdd91c950b18fce6fac44a79b469080329ed5be04da42"}]}
+    },
+    {
+      "id": "browser_requests_design", "from": "browser_app", "to": "http", "description": "Requests assessment or comparison", "technology": "GET /api/design / JSON over HTTP",
+      "evidence": {"status": "observed", "sources": [
+        {"path": "web-assets/js/design-view.js", "start_line": 124, "end_line": 142, "sha256": "02642391b0375dfad845f3dfe318c92b1671268ed3db17cedd1d6887d323d4c7"},
+        {"path": "src/web/design.rs", "start_line": 19, "end_line": 74, "sha256": "88cab7eb311a176cf4d446965718d107d11668f439a583e3f9a57556698aac90"}
+      ]}
+    },
+    {
+      "id": "http_analyzes", "from": "http", "to": "analysis", "description": "Checks source freshness before comparison", "technology": "Rust call / spawn_blocking",
+      "evidence": {"status": "observed", "sources": [{"path": "src/web/design.rs", "start_line": 49, "end_line": 59, "sha256": "88cab7eb311a176cf4d446965718d107d11668f439a583e3f9a57556698aac90"}]}
+    },
+    {
+      "id": "http_assesses", "from": "http", "to": "design", "description": "Calls shared assessment", "technology": "Rust call / assess",
+      "evidence": {"status": "observed", "sources": [
+        {"path": "src/web/server.rs", "start_line": 87, "end_line": 109, "sha256": "af951907c6c0a48a0bae76e14e20b4dc1b24f2681508daa71e9ea379cb0a8729"},
+        {"path": "src/web/design.rs", "start_line": 60, "end_line": 74, "sha256": "88cab7eb311a176cf4d446965718d107d11668f439a583e3f9a57556698aac90"}
+      ]}
+    },
+    {
+      "id": "design_scores", "from": "design", "to": "balance", "description": "Evaluates current coupling", "technology": "Rust call / ProjectBalanceReport",
+      "evidence": {"status": "observed", "sources": [{"path": "src/design/assessment.rs", "start_line": 114, "end_line": 117, "sha256": "e24bf404888e4ba7e2ce03978c4a4dc8a21bc681e293b710922bf25c34cbc622"}]}
+    },
+    {
+      "id": "design_compares", "from": "design", "to": "history", "description": "Evaluates the reference revision", "technology": "Rust call / analyze_ref",
+      "evidence": {"status": "observed", "sources": [{"path": "src/design/assessment.rs", "start_line": 117, "end_line": 133, "sha256": "e24bf404888e4ba7e2ce03978c4a4dc8a21bc681e293b710922bf25c34cbc622"}]}
+    },
+    {
+      "id": "history_analyzes", "from": "history", "to": "analysis", "description": "Requests metrics for past sources", "technology": "Rust call / ProjectMetrics",
+      "evidence": {"status": "observed", "sources": [{"path": "src/history.rs", "start_line": 325, "end_line": 343, "sha256": "828ecefec2d3c3191d7ca10120f4a95d4604e8198b5e19f5c2b25fa09393130f"}]}
+    },
+    {
+      "id": "history_scores", "from": "history", "to": "balance", "description": "Evaluates past coupling with current settings", "technology": "Rust call / ProjectBalanceReport",
+      "evidence": {"status": "observed", "sources": [{"path": "src/history.rs", "start_line": 364, "end_line": 369, "sha256": "828ecefec2d3c3191d7ca10120f4a95d4604e8198b5e19f5c2b25fa09393130f"}]}
+    }
+  ],
+  "views": [
+    {
+      "id": "context", "kind": "context", "scope": "coupling", "title": "What can I learn about my code?",
+      "description": "cargo-coupling helps you inspect structural coupling and change history when deciding where to refactor. Use the CLI for reports or open the Web UI to explore the results.",
+      "notes": [
+        "Start with the Rust developer and follow the request to cargo-coupling. The tool combines source analysis with Git history to help you investigate which parts of a project are connected and how they change.",
+        "The CDN arrow represents a request for Web visualization libraries from unpkg.com. It does not represent an upload of analysis results. The next view separates the browser from the Rust application and shows Cargo and Git.",
+        "This guide covers local CLI and Web use in 0.4.0 at revision 5b019b2642f7dd7275d742d308b898b9047d2e6c. CI and third-party library embedding are outside this view. The explanations come from inspected source and documentation; the Web paths were not exercised as runtime tests. Comparison conditions and detailed mappings are recorded in docs/c4doc-review.md."
+      ],
+      "elements": ["developer", "coupling", "cdn"], "relationships": ["user_uses_system", "system_uses_cdn"]
+    },
+    {
+      "id": "containers", "kind": "container", "scope": "coupling", "title": "Where does the analysis run?",
+      "description": "Rust analyzes the project in the native application; the browser displays its results over HTTP. Switching to --web starts the embedded server in that same application.",
+      "notes": [
+        "Follow the native application's outgoing arrows: Cargo supplies workspace metadata, and Git supplies history and revision checkout operations. Follow the browser separately: it requests analysis results from the HTTP API and visualization libraries from unpkg.com.",
+        "The two Containers are applications with different execution environments: the native Rust application and the browser application. Container is a C4 term here; it does not mean Docker. The CLI and server are modes of one native application, with its Rust library linked into it.",
+        "This view helps developers investigate startup and communication. It assumes the default API destination. Source files, TOML, Git history, reports, and temporary worktrees are described in the I/O table in docs/c4doc-review.md rather than drawn as separate services."
+      ],
+      "elements": ["developer", "native", "browser_app", "cdn", "cargo", "git"],
+      "relationships": ["user_runs_cli", "user_uses_browser", "browser_calls_native", "browser_loads_cdn", "native_calls_cargo", "native_calls_git"]
+    },
+    {
+      "id": "components", "kind": "component", "scope": "native", "title": "What do the CLI and Web UI share?",
+      "description": "Both entry points call the same design assessment. That shared responsibility coordinates coupling evaluation and revision comparison, so developers can begin there when changing assessment behavior.",
+      "notes": [
+        "Find Design assessment and follow its incoming arrows from CLI execution and output and from the HTTP adapter. Then follow its outgoing arrows to Coupling evaluation and History and baseline analysis. This is where the two user experiences meet.",
+        "For a change to assessment behavior, start at src/design/assessment.rs. For an HTTP response change, start at src/web/design.rs. For terminal output, start at src/main.rs. The element and relationship tables below provide the inspected source ranges; docs/c4doc-review.md contains the full responsibility-to-code mapping.",
+        "Arrows show selected calls, not every import or data-flow edge. Ordinary reporting, history listing, and Git volatility collection are omitted. ProjectMetrics is a data type and AppState holds state; neither is a separate Component."
+      ],
+      "elements": ["cli", "analysis", "http", "design", "history", "balance", "browser_app"],
+      "relationships": ["cli_analyzes", "cli_starts_http", "cli_assesses", "browser_requests_design", "http_analyzes", "http_assesses", "design_scores", "design_compares", "history_analyzes", "history_scores"]
+    },
+    {
+      "id": "compare_request", "kind": "dynamic", "scope": "native", "title": "What happens when I compare against HEAD?",
+      "description": "For a successful Web comparison, the server first checks that the source still matches its startup snapshot. It then passes startup metrics and HEAD to the shared assessment and returns JSON for the browser to display.",
+      "notes": [
+        "Trace GET /api/design?changed_since=HEAD from the browser. The return from Structural analysis is a checkpoint: the HTTP adapter compares the current source fingerprint with the startup fingerprint before requesting design assessment. Freshly collected metrics support this check; the assessment receives the startup metrics.",
+        "A request without a revision, focus or depth returns the cached startup assessment. A new assessment returns HTTP 409 if the source or design context changed after startup, HTTP 503 if another assessment is running, or HTTP 400 for invalid assessment parameters.",
+        "For developers tracing the Web comparison path: ordering was reconstructed from src/web/design.rs:31-62, not captured from a running request. spawn_blocking runs in the same process. Revision-baseline analysis inside design assessment is omitted from this sequence."
+      ],
+      "elements": ["browser_app", "http", "analysis", "design"],
+      "steps": [
+        {"relationship": "browser_requests_design", "description": "GET /api/design?changed_since=HEAD"},
+        {"relationship": "http_analyzes", "description": "Reanalyze current sources"},
+        {"relationship": "http_analyzes", "description": "Return metrics; HTTP adapter checks the startup fingerprint", "response": true},
+        {"relationship": "http_assesses", "description": "Pass startup metrics and the reference to assess"},
+        {"relationship": "http_assesses", "description": "Return design assessment", "response": true},
+        {"relationship": "browser_requests_design", "description": "Receive JSON and update the UI", "response": true}
+      ]
+    }
+  ],
+  "questions": []
+}

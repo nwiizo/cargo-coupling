@@ -1,0 +1,28 @@
+---
+title: "Component: CLI and embedded server — What do the CLI and Web UI share?"
+---
+flowchart TB
+    accTitle: Component: CLI and embedded server — What do the CLI and Web UI share#63;
+    n_browser_app["Browser application #91;Container#93; / HTML / CSS / JavaScript — Explores analysis results and revision comparisons"]:::observed
+    subgraph b_native["CLI and embedded server [Container]"]
+    n_cli["CLI execution and output #91;Component#93; / Rust / clap — Starts analysis and selects output or server mode"]:::observed
+    n_analysis["Structural analysis #91;Component#93; / Rust / syn / Cargo metadata — Parses selected sources into shared metrics"]:::observed
+    n_http["HTTP adapter #91;Component#93; / Rust / Axum / RustEmbed — Serves the UI and exposes shared assessment"]:::observed
+    n_design["Design assessment #91;Component#93; / Rust — Combines structure#44; history#44; and declared context"]:::observed
+    n_history["History and baseline analysis #91;Component#93; / Rust / Git subprocess — Reevaluates past sources under the same settings"]:::observed
+    n_balance["Coupling evaluation #91;Component#93; / Rust — Derives scores and issues from shared metrics"]:::observed
+    end
+    n_cli -->|"Requests shared metrics #91;Rust call / ProjectMetrics#93;"| n_analysis
+    n_cli -->|"Starts Web mode #91;Rust call / Tokio#93;"| n_http
+    n_cli -->|"Requests design assessment #91;Rust call / assess#93;"| n_design
+    n_browser_app -->|"Requests assessment or comparison #91;GET /api/design / JSON over HTTP#93;"| n_http
+    n_http -->|"Checks source freshness before comparison #91;Rust call / spawn_blocking#93;"| n_analysis
+    n_http -->|"Calls shared assessment #91;Rust call / assess#93;"| n_design
+    n_design -->|"Evaluates current coupling #91;Rust call / ProjectBalanceReport#93;"| n_balance
+    n_design -->|"Evaluates the reference revision #91;Rust call / analyze_ref#93;"| n_history
+    n_history -->|"Requests metrics for past sources #91;Rust call / ProjectMetrics#93;"| n_analysis
+    n_history -->|"Evaluates past coupling with current settings #91;Rust call / ProjectBalanceReport#93;"| n_balance
+    classDef observed fill:#e8f1fa,stroke:#28577c,color:#132f46
+    classDef inferred fill:#fff4de,stroke:#8a5100,color:#573300,stroke-dasharray:5 5
+    c4doc_legend["Legend (not a model element)<br/>Blue solid boxes: Observed<br/>Orange dashed boxes: Inferred<br/>Solid arrows: Observed<br/>Dotted arrows: Inferred<br/>Observed: cited source, not semantic proof<br/>Inferred: assumption requiring review<br/>Boundary labels name their C4 type<br/>Deployment nesting shows hosting"]
+    style c4doc_legend fill:#fff,stroke:#666,color:#222

@@ -1,0 +1,17 @@
+---
+title: "Dynamic: CLI and embedded server — What happens when I compare against HEAD?"
+---
+sequenceDiagram
+    accTitle: Dynamic: CLI and embedded server — What happens when I compare against HEAD#63;
+    autonumber
+    participant n_browser_app as Browser application [Container / Observed]
+    participant n_http as HTTP adapter [Component / Observed]
+    participant n_analysis as Structural analysis [Component / Observed]
+    participant n_design as Design assessment [Component / Observed]
+    Note over n_browser_app,n_design: Legend: Solid arrows: interactions<br/>Dashed arrows: responses<br/>Observed: cited source, not semantic proof<br/>Inferred: assumption requiring review<br/>Relationship evidence does not prove execution order
+    n_browser_app->>n_http: GET /api/design#63;changed_since#61;HEAD [Relationship evidence: Observed]
+    n_http->>n_analysis: Reanalyze current sources [Relationship evidence: Observed]
+    n_analysis-->>n_http: Return metrics#59; HTTP adapter checks the startup fingerprint [Relationship evidence: Observed]
+    n_http->>n_design: Pass startup metrics and the reference to assess [Relationship evidence: Observed]
+    n_design-->>n_http: Return design assessment [Relationship evidence: Observed]
+    n_http-->>n_browser_app: Receive JSON and update the UI [Relationship evidence: Observed]

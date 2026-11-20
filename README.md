@@ -25,6 +25,8 @@
 
 ### 1. Install
 
+Building from source requires Rust 1.99 or later (Edition 2024).
+
 ```bash
 cargo install cargo-coupling
 ```
@@ -225,8 +227,8 @@ Example `--hotspots --verbose` output:
       • Testing requires many mocks/stubs
       • Hard to understand in isolation
 
-   🔧 How to fix:
-      Split into smaller modules with clear responsibilities
+   🔧 Before changing:
+      Check for unrelated responsibilities before splitting; orchestration can legitimately have high fan-out
       e.g., Split main.rs into cli.rs, config.rs, runner.rs
 ```
 
@@ -303,7 +305,7 @@ max_dependents = 20
 
 `[subdomains]` classifies modules as DDD core/supporting/generic. Core modules are expected to change as the product model evolves; supporting and generic modules should usually be stable. High churn in supporting/generic modules is reported as **Accidental Volatility** because Khononov's model distinguishes essential business volatility from churn caused by design or implementation friction. This repository's own [.coupling.toml](.coupling.toml) is a concrete example.
 
-Use `--config <PATH>` when you want to load a specific config file instead of relying on auto-discovery.
+Use `--config <PATH>` to read a specific file. Relative patterns use that file’s directory. A missing explicit file or an invalid configuration makes the command fail.
 
 ## Khononov's Coupling Balance
 
@@ -508,6 +510,19 @@ Coupling balance is not about "eliminating coupling" but about "placing the righ
 
 ## Plan a Change and Review Design Decisions
 
+For coding agents, use a focused, bounded handoff with explicit unknowns and
+verification status:
+
+```bash
+cargo coupling --agent --focus analyzer ./src
+cargo coupling --agent --changed-since main ./src
+```
+
+See [Change review for humans and coding agents](docs/agent-review.md) for the
+JSON format, shared-rule impact paths, retained decision evidence, and the
+read → change → verify workflow. A successful analysis is not a passing test or
+permission to refactor.
+
 ```bash
 cargo coupling --design .
 cargo coupling --changed-since main --impact-depth 4 --json .
@@ -569,6 +584,8 @@ Web Visualization:
 
 Job-Focused Commands:
       --design                  Review change plans, design options and evidence
+      --agent                   Emit bounded review JSON for coding agents
+      --focus <MODULE>          Focus design review on a module and its consumers
       --context <PATH>          Load versioned design context from TOML
       --changed-since <GIT_REF> Inspect changed items, impact and test candidates
       --hotspots[=<N>]          Show top N refactoring targets [default: 5]
@@ -609,14 +626,13 @@ Health grades are calculated based on internal couplings only (external crate de
 
 | Grade | Description | Criteria |
 |-------|-------------|----------|
-| **S (Over-optimized!)** | Stop refactoring! | Medium density <= 5% with >= 20 couplings |
-| **A (Well-balanced)** | Coupling is appropriate | Medium density 5-10%, no high issues |
+| **A (Well-balanced)** | Low detected issue density | Medium density <= 10%, no high/critical issues, >= 10 internal couplings |
 | **B (Healthy)** | Minor issues, manageable | Medium density > 10%, no critical issues |
 | **C (Room for improvement)** | Some structural issues | Any high issues OR medium density > 25% |
 | **D (Attention needed)** | Significant issues | Any critical issues OR high density > 5% |
 | **F (Immediate action required)** | Critical issues | More than 3 critical issues |
 
-**Note**: S is a WARNING, not a reward. It means you might be over-engineering. Aim for A.
+Grades summarize detected findings, not behavioral correctness or safe replaceability. Sparse findings do not establish over-engineering. Legacy `S` remains accepted where grades are parsed, but is no longer generated. Scoring methodology `khononov-compensation-v4` counts distinct internal module dependencies for fan-in and fan-out. Repeated references to a provider count once, and references within the same module are excluded.
 
 ### Severity Classification
 
@@ -867,7 +883,7 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # Full history for volatility analysis
 
@@ -887,7 +903,7 @@ jobs:
         run: cargo coupling -o coupling-report.md ./src
 
       - name: Upload report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coupling-report
           path: coupling-report.md
@@ -1003,6 +1019,29 @@ Please keep the following limitations in mind:
 ## References
 
 - [Vlad Khononov - "Balancing Coupling in Software Design"](https://www.amazon.com/dp/B0FVDYKJYQ)
+
+## Architecture Documentation
+
+For the design-review behavior in v0.4.1, see the
+[model and regression cases](docs/modularity-conformance.md).
+
+Follow a project from Rust source and Git history to a terminal report or an interactive graph.
+The four-page C4 guide shows where analysis runs, how CLI and Web share design assessment,
+and what happens when the browser asks to compare against HEAD.
+
+| Edition | Read | Edit the model |
+| --- | --- | --- |
+| English | [Inside cargo-coupling](docs/c4doc/README.md) | [English model](docs/c4doc-model.json) |
+| Japanese | [cargo-coupling のしくみをたどる](docs/c4doc-ja/README.md) | [Japanese model](docs/c4doc-model.ja.json) |
+
+Use the `c4-rust-docs` skill with the separate `cargo-c4doc` CLI to update these documents.
+English output uses `docs/c4doc`; requested Japanese output uses `docs/c4doc-ja` and preserves
+the English edition. Both models share element IDs and source evidence. Built-in headings and
+legends currently remain English in the Japanese edition.
+
+See the [generation workflow and comparison with Litho and The C4 Model](docs/c4doc-review.md#regeneration-and-verification)
+for commands, source-update checks, and limitations. The [existing Litho documentation](docs/deepwiki/README.md)
+provides broader feature explanations in Japanese.
 
 ## Contributing
 

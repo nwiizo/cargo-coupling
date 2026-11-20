@@ -1,0 +1,28 @@
+---
+title: "Component: CLI と組み込みサーバー — CLI と Web UI は、何を共有している？"
+---
+flowchart TB
+    accTitle: Component: CLI と組み込みサーバー — CLI と Web UI は、何を共有している？
+    n_browser_app["ブラウザアプリケーション #91;Container#93; / HTML / CSS / JavaScript — 解析結果とリビジョン間の比較を表示する"]:::observed
+    subgraph b_native["CLI と組み込みサーバー [Container]"]
+    n_cli["CLI 実行・出力 #91;Component#93; / Rust / clap — 解析を開始し、結果の出力かサーバー起動を選ぶ"]:::observed
+    n_analysis["構造解析 #91;Component#93; / Rust / syn / Cargo metadata — 対象ソースを解析し、各機能が使うメトリクスを生成する"]:::observed
+    n_http["HTTP アダプター #91;Component#93; / Rust / Axum / RustEmbed — UI を配信し、共通の設計評価処理を公開する"]:::observed
+    n_design["設計評価 #91;Component#93; / Rust — 構造、履歴、設定された設計上の背景を組み合わせる"]:::observed
+    n_history["履歴・比較基準の解析 #91;Component#93; / Rust / Git subprocess — 同じ設定で過去のソースを再評価する"]:::observed
+    n_balance["結合度評価 #91;Component#93; / Rust — 共通のメトリクスからスコアと指摘事項を求める"]:::observed
+    end
+    n_cli -->|"各機能が使うメトリクスを要求する #91;Rust call / ProjectMetrics#93;"| n_analysis
+    n_cli -->|"Web モードを起動する #91;Rust call / Tokio#93;"| n_http
+    n_cli -->|"設計評価を要求する #91;Rust call / assess#93;"| n_design
+    n_browser_app -->|"設計評価または比較を要求する #91;GET /api/design / JSON over HTTP#93;"| n_http
+    n_http -->|"比較の前にソースの変更有無を確認する #91;Rust call / spawn_blocking#93;"| n_analysis
+    n_http -->|"共通の設計評価処理を呼び出す #91;Rust call / assess#93;"| n_design
+    n_design -->|"現在の結合度を評価する #91;Rust call / ProjectBalanceReport#93;"| n_balance
+    n_design -->|"比較基準のリビジョンを評価する #91;Rust call / analyze_ref#93;"| n_history
+    n_history -->|"過去のソースのメトリクスを要求する #91;Rust call / ProjectMetrics#93;"| n_analysis
+    n_history -->|"現在の設定で過去の結合度を評価する #91;Rust call / ProjectBalanceReport#93;"| n_balance
+    classDef observed fill:#e8f1fa,stroke:#28577c,color:#132f46
+    classDef inferred fill:#fff4de,stroke:#8a5100,color:#573300,stroke-dasharray:5 5
+    c4doc_legend["Legend (not a model element)<br/>Blue solid boxes: Observed<br/>Orange dashed boxes: Inferred<br/>Solid arrows: Observed<br/>Dotted arrows: Inferred<br/>Observed: cited source, not semantic proof<br/>Inferred: assumption requiring review<br/>Boundary labels name their C4 type<br/>Deployment nesting shows hosting"]
+    style c4doc_legend fill:#fff,stroke:#666,color:#222

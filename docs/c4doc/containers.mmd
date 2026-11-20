@@ -1,0 +1,23 @@
+---
+title: "Container: cargo-coupling — Where does the analysis run?"
+---
+flowchart TB
+    accTitle: Container: cargo-coupling — Where does the analysis run#63;
+    n_developer["Rust developer #91;Person#93; — Investigates coupling and plans code changes"]:::observed
+    n_cdn["unpkg.com #91;Software system#93; — Serves JavaScript libraries used by the UI"]:::observed
+    n_cargo["Cargo #91;Software system#93; — Provides package and dependency metadata"]:::observed
+    n_git["Git #91;Software system#93; — Provides history and checks out past revisions"]:::observed
+    subgraph b_coupling["cargo-coupling [Software system]"]
+    n_native["CLI and embedded server #91;Container#93; / Rust / Axum / Tokio — Exposes analysis through the terminal or HTTP"]:::observed
+    n_browser_app["Browser application #91;Container#93; / HTML / CSS / JavaScript — Explores analysis results and revision comparisons"]:::observed
+    end
+    n_developer -->|"Selects the analysis target and options #91;CLI / argv#93;"| n_native
+    n_developer -->|"Explores revision comparisons #91;Browser UI#93;"| n_browser_app
+    n_browser_app -->|"Requests UI assets and analysis data #91;HTTP / HTML#44; JavaScript#44; JSON#93;"| n_native
+    n_browser_app -->|"Loads visualization libraries #91;HTTPS / JavaScript#93;"| n_cdn
+    n_native -->|"Queries workspace and dependencies #91;cargo metadata / JSON#93;"| n_cargo
+    n_native -->|"Reads history and checks out revisions #91;Git CLI / subprocess#93;"| n_git
+    classDef observed fill:#e8f1fa,stroke:#28577c,color:#132f46
+    classDef inferred fill:#fff4de,stroke:#8a5100,color:#573300,stroke-dasharray:5 5
+    c4doc_legend["Legend (not a model element)<br/>Blue solid boxes: Observed<br/>Orange dashed boxes: Inferred<br/>Solid arrows: Observed<br/>Dotted arrows: Inferred<br/>Observed: cited source, not semantic proof<br/>Inferred: assumption requiring review<br/>Boundary labels name their C4 type<br/>Deployment nesting shows hosting"]
+    style c4doc_legend fill:#fff,stroke:#666,color:#222

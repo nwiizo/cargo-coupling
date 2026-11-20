@@ -1,0 +1,17 @@
+---
+title: "Dynamic: CLI と組み込みサーバー — HEAD との比較を頼むと、何が起きる？"
+---
+sequenceDiagram
+    accTitle: Dynamic: CLI と組み込みサーバー — HEAD との比較を頼むと、何が起きる？
+    autonumber
+    participant n_browser_app as ブラウザアプリケーション [Container / Observed]
+    participant n_http as HTTP アダプター [Component / Observed]
+    participant n_analysis as 構造解析 [Component / Observed]
+    participant n_design as 設計評価 [Component / Observed]
+    Note over n_browser_app,n_design: Legend: Solid arrows: interactions<br/>Dashed arrows: responses<br/>Observed: cited source, not semantic proof<br/>Inferred: assumption requiring review<br/>Relationship evidence does not prove execution order
+    n_browser_app->>n_http: GET /api/design#63;changed_since#61;HEAD [Relationship evidence: Observed]
+    n_http->>n_analysis: 現在のソースを再解析する [Relationship evidence: Observed]
+    n_analysis-->>n_http: メトリクスを返し、HTTP アダプターが起動時のフィンガープリントと照合する [Relationship evidence: Observed]
+    n_http->>n_design: 起動時のメトリクスと比較基準を assess に渡す [Relationship evidence: Observed]
+    n_design-->>n_http: 設計評価を返す [Relationship evidence: Observed]
+    n_http-->>n_browser_app: JSON を受け取り UI を更新する [Relationship evidence: Observed]
