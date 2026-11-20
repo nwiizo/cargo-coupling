@@ -6,7 +6,7 @@ import { state, setGraph3d, set3dMode } from './state.js';
 import { t } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { setup3dLabels, update3dLabels } from './graph-labels-3d.js';
-import { buildElements } from './coupling-graph-2d.js';
+import { buildElements, hiddenCouplingDetails } from './coupling-graph-2d.js';
 import { arrangeNetwork } from './network-layout.js';
 
 const COLORS = {
@@ -216,7 +216,6 @@ function buildNetworkData(data) {
 }
 
 function buildDimensionSpaceData(data) {
-    const showHidden = document.getElementById('show-hidden-coupling')?.checked ?? true;
     const nodes = [
         axisNode('axis-origin', 'Origin', 0, 0, 0),
         axisNode('axis-x', 'Strength', 180, 0, 0, COLORS.axisX),
@@ -229,14 +228,13 @@ function buildDimensionSpaceData(data) {
         axisLink('axis-link-z', 'axis-origin', 'axis-z', COLORS.axisZ)
     ];
 
-    const couplingEdges = [...(data.edges || [])];
-    if (showHidden) couplingEdges.push(...(data.hidden_couplings || []));
-
-    couplingEdges.forEach((edge, index) => {
+    // Git co-change has no coordinates in the three model dimensions.
+    (data.edges || []).forEach((edge, index) => {
         const dims = edge.dimensions || {};
-        const strength = dims.strength?.value ?? 0.5;
-        const distance = dims.distance?.value ?? 0.5;
-        const volatility = dims.volatility?.value ?? 0.5;
+        const strength = dims.strength?.value;
+        const distance = dims.distance?.value;
+        const volatility = dims.volatility?.value;
+        if (![strength, distance, volatility].every(Number.isFinite)) return;
         const id = `space-${edge.id || index}`;
         nodes.push({
             id,
@@ -260,6 +258,7 @@ function buildDimensionSpaceData(data) {
 }
 
 function edgeToLink(edge, hidden) {
+    if (hidden) return { ...hiddenCouplingDetails(edge), hidden: true, distance: null, edgeData: edge, tooltip: edgeTooltip(edge, true) };
     const dims = edge.dimensions || {};
     return {
         id: edge.id,
@@ -339,8 +338,7 @@ function touchesNode(link, nodeId) {
 
 function isGlobalComplexity(link) {
     return link.classification === 'Global Complexity'
-        || link.classification === 'Needs Refactoring'
-        || (link.strength >= 0.75 && link.distance >= 0.5 && link.volatility === 'High');
+        || link.classification === 'Needs Refactoring';
 }
 
 function classificationColor(classification) {
@@ -385,6 +383,7 @@ function nodeTooltip(node) {
 }
 
 function edgeTooltip(edge, hidden) {
+    if (hidden) return `<div class="graph-tooltip"><strong>${t('hidden_coupling')}</strong><br>${escapeHtml(edge.source)} → ${escapeHtml(edge.target)}<br>${t('co_change')}: ${edge.co_change_count} commits, ${Math.round(edge.coupling_ratio * 100)}%<br>${t('temporal_evidence_only')}</div>`;
     const dims = edge.dimensions || {};
     return `
         <div class="graph-tooltip">

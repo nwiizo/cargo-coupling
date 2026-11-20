@@ -20,12 +20,13 @@ use thiserror::Error;
 use crate::config::CompiledConfig;
 use crate::discovery::{
     DiscoveredWorkspaceFile, canonical_file_key, discover_module_tree, file_path_to_module_path,
-    normalize_exclude_path, rs_files, rs_files_excluding_nested_packages,
+    rs_files, rs_files_excluding_nested_packages,
 };
 use crate::metrics::coupling::CouplingMetrics;
 use crate::metrics::dimensions::{IntegrationStrength, Visibility};
 use crate::metrics::module::ModuleMetrics;
 use crate::metrics::project::ProjectMetrics;
+use crate::paths::{config_matching_path, normalized_path};
 use crate::volatility::Volatility;
 use crate::workspace::{WorkspaceError, WorkspaceInfo, resolve_crate_from_path};
 
@@ -1089,30 +1090,7 @@ pub fn analyze_project(path: &Path) -> Result<ProjectMetrics, AnalyzerError> {
 /// when known; otherwise they fall back to the analysis root. Paths are normalized
 /// to forward slashes for consistent glob matching on Windows.
 fn is_path_excluded(file_path: &Path, exclude_base: &Path, config: &CompiledConfig) -> bool {
-    let normalized_file = normalize_exclude_path(file_path);
-    let normalized_base = normalize_exclude_path(exclude_base);
-    let relative = normalized_file
-        .strip_prefix(&normalized_base)
-        .unwrap_or(&normalized_file);
-    let relative_str = relative.to_string_lossy().replace('\\', "/");
-    config.should_exclude(&relative_str)
-}
-
-/// Convert a source path into the same normalized, config-root-relative form used by glob config.
-fn path_for_config_matching(file_path: &Path, config: &CompiledConfig) -> String {
-    let normalized_file = normalize_exclude_path(file_path);
-    let path = config
-        .config_root()
-        .map(normalize_exclude_path)
-        .and_then(|base| {
-            normalized_file
-                .strip_prefix(base)
-                .ok()
-                .map(Path::to_path_buf)
-        })
-        .unwrap_or(normalized_file);
-
-    path.to_string_lossy().replace('\\', "/")
+    config.should_exclude(&config_matching_path(file_path, Some(exclude_base)))
 }
 
 /// Analyze a project using parallel processing with Rayon
@@ -1135,9 +1113,10 @@ pub fn analyze_project_parallel_with_config(
     let exclude_base = config.config_root().unwrap_or(path);
 
     // Collect all .rs file paths first (sequential, but fast), applying exclude patterns.
-    let file_paths: Vec<PathBuf> = rs_files(path)
+    let mut file_paths: Vec<PathBuf> = rs_files(path)
         .filter(|fp| !is_path_excluded(fp, exclude_base, config))
         .collect();
+    file_paths.sort_unstable();
 
     // Calculate optimal chunk size based on file count and available parallelism
     // Smaller chunks = better load balancing, but more overhead
@@ -1221,7 +1200,7 @@ pub fn analyze_project_parallel_with_config(
     // covered by the parse-failure note, not drift.
     let candidate_config_paths = file_paths
         .iter()
-        .map(|file_path| path_for_config_matching(file_path, config))
+        .map(|file_path| config_matching_path(file_path, config.config_root()))
         .collect::<Vec<_>>();
 
     // First pass: register all types with their visibility
@@ -1232,12 +1211,12 @@ pub fn analyze_project_parallel_with_config(
     }
 
     // Second pass: add modules and couplings
-    for analyzed in &analyzed_results {
-        // Clone metrics and add item_dependencies
-        let mut metrics = analyzed.metrics.clone();
-        metrics.item_dependencies = analyzed.item_dependencies.clone();
-        metrics.subdomain =
-            config.get_subdomain(&path_for_config_matching(&analyzed.file_path, config));
+    for analyzed in analyzed_results {
+        let mut metrics = analyzed.metrics;
+        metrics.item_dependencies = analyzed.item_dependencies;
+        let path = config_matching_path(&analyzed.file_path, config.config_root());
+        metrics.subdomain = config.get_subdomain(&path);
+        metrics.is_prelude = config.is_prelude_module(&path);
         project.add_module(metrics);
 
         for dep in &analyzed.dependencies {
@@ -1450,6 +1429,10 @@ fn analyze_with_workspace(
         }
     }
 
+    // Discovery uses per-member hash maps. Stable traversal also keeps Web edge IDs repeatable.
+    discovered_files
+        .sort_unstable_by(|a, b| (&a.crate_name, &a.file_path).cmp(&(&b.crate_name, &b.file_path)));
+
     // Calculate optimal chunk size for parallel processing
     let num_threads = rayon::current_num_threads();
     let file_count = discovered_files.len();
@@ -1529,14 +1512,21 @@ fn analyze_with_workspace(
     // covered by the parse-failure note, not drift.
     let candidate_config_paths = discovered_files
         .iter()
-        .map(|discovered| path_for_config_matching(&discovered.file_path, config))
+        .map(|discovered| config_matching_path(&discovered.file_path, config.config_root()))
         .collect::<Vec<_>>();
 
-    // Build set of known module names for validation
-    let module_names: HashSet<String> = analyzed_files
-        .iter()
-        .map(|a| a.module_name.clone())
-        .collect();
+    let mut module_names = HashSet::new();
+    let mut shared_names = HashSet::new();
+    let mut member_modules: HashMap<String, HashSet<String>> = HashMap::new();
+    for file in &analyzed_files {
+        member_modules
+            .entry(file.crate_name.clone())
+            .or_default()
+            .insert(file.module_name.clone());
+        if !module_names.insert(file.module_name.clone()) {
+            shared_names.insert(file.module_name.clone());
+        }
+    }
 
     // First pass: register all types with their visibility before resolving dependencies.
     for analyzed in &analyzed_files {
@@ -1546,12 +1536,15 @@ fn analyze_with_workspace(
     }
 
     // Second pass: build coupling relationships with workspace context
-    for analyzed in &analyzed_files {
-        // Clone metrics and add item_dependencies
-        let mut metrics = analyzed.metrics.clone();
-        metrics.item_dependencies = analyzed.item_dependencies.clone();
-        metrics.subdomain =
-            config.get_subdomain(&path_for_config_matching(&analyzed.file_path, config));
+    for analyzed in analyzed_files {
+        let mut metrics = analyzed.metrics;
+        if shared_names.contains(analyzed.module_name.as_str()) {
+            metrics.name = format!("{}::{}", analyzed.crate_name, analyzed.module_name);
+        }
+        metrics.item_dependencies = analyzed.item_dependencies;
+        let path = config_matching_path(&analyzed.file_path, config.config_root());
+        metrics.subdomain = config.get_subdomain(&path);
+        metrics.is_prelude = config.is_prelude_module(&path);
         project.add_module(metrics);
 
         for dep in &analyzed.dependencies {
@@ -1564,9 +1557,19 @@ fn analyze_with_workspace(
             let resolved_crate =
                 resolve_crate_from_path(&dep.path, &analyzed.crate_name, workspace);
 
+            let member = resolved_crate
+                .as_deref()
+                .and_then(|name| member_modules.get(name));
+            let path = match (member, resolved_crate.as_deref(), dep.path.split_once("::")) {
+                (Some(_), Some(name), Some((prefix, rest))) if prefix == name.replace('-', "_") => {
+                    rest
+                }
+                _ => &dep.path,
+            };
+            let known_modules = member.unwrap_or(&module_names);
             let target_module =
-                resolve_target_module(&dep.path, &analyzed.module_name, &module_names, &project);
-            let target_is_known_internal_module = module_names.contains(&target_module);
+                resolve_target_module(path, &analyzed.module_name, known_modules, &project);
+            let target_is_known_internal_module = known_modules.contains(&target_module);
             let resolved_crate = if resolved_crate.is_none() && target_is_known_internal_module {
                 Some(analyzed.crate_name.clone())
             } else {
@@ -1667,8 +1670,8 @@ fn format_dead_config_patterns(
         return Vec::new();
     }
 
-    let normalized_scope = normalize_exclude_path(analysis_scope);
-    let normalized_root = normalize_exclude_path(config_root);
+    let normalized_scope = normalized_path(analysis_scope);
+    let normalized_root = normalized_path(config_root);
     let scope = match normalized_scope.strip_prefix(&normalized_root) {
         Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
         // The scope contains the config root (or a lookup quirk): everything the

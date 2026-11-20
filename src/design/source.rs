@@ -21,13 +21,30 @@ pub struct SourceItem {
     pub line: usize,
     pub end_line: usize,
     pub public: bool,
+    /// True for all test-only code, including helpers and fixtures.
     pub is_test: bool,
+    pub test_kind: TestKind,
     pub signature_types: Vec<String>,
     pub calls: Vec<String>,
     pub fields: Vec<(String, String)>,
     pub body_fingerprint: Option<String>,
     pub body_tokens: usize,
     pub forwards_to: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TestKind {
+    None,
+    Helper,
+    Test,
+    Ignored,
+}
+
+impl TestKind {
+    pub(crate) fn is_test_function(self) -> bool {
+        matches!(self, Self::Test | Self::Ignored)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -178,6 +195,25 @@ fn test_attributes(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
+fn function_test_kind(attrs: &[syn::Attribute], inherited_test: bool) -> TestKind {
+    if attrs.iter().any(|attr| {
+        attr.path()
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "test")
+    }) {
+        if attrs.iter().any(|attr| attr.path().is_ident("ignore")) {
+            TestKind::Ignored
+        } else {
+            TestKind::Test
+        }
+    } else if inherited_test || test_attributes(attrs) {
+        TestKind::Helper
+    } else {
+        TestKind::None
+    }
+}
+
 fn scan_items(
     items: &[syn::Item],
     module: &str,
@@ -206,15 +242,15 @@ fn scan_items(
                 }
             }
             syn::Item::Fn(value) => {
-                let is_test = inherited_test || test_attributes(&value.attrs);
-                if !(exclude_tests && is_test) {
+                let test_kind = function_test_kind(&value.attrs, inherited_test);
+                if !(exclude_tests && test_kind != TestKind::None) {
                     output.push(function(
                         &value.sig,
                         Some(&value.block),
                         &value.vis,
                         module,
                         path,
-                        is_test,
+                        test_kind,
                         None,
                     ));
                 }
@@ -232,7 +268,11 @@ fn scan_items(
                             &method.vis,
                             module,
                             path,
-                            inherited_test,
+                            if inherited_test {
+                                TestKind::Helper
+                            } else {
+                                TestKind::None
+                            },
                             Some(&parent),
                         ));
                     }
@@ -250,7 +290,11 @@ fn scan_items(
                             &value.vis,
                             module,
                             path,
-                            inherited_test,
+                            if inherited_test {
+                                TestKind::Helper
+                            } else {
+                                TestKind::None
+                            },
                             Some(&value.ident.to_string()),
                         ));
                     }
@@ -285,6 +329,11 @@ fn scan_items(
                     end_line: value.span().end().line,
                     public: matches!(value.vis, syn::Visibility::Public(_)),
                     is_test: inherited_test,
+                    test_kind: if inherited_test {
+                        TestKind::Helper
+                    } else {
+                        TestKind::None
+                    },
                     signature_types: fields.iter().map(|(_, ty)| ty.clone()).collect(),
                     fields,
                     calls: vec![],
@@ -342,7 +391,7 @@ fn function(
     visibility: &syn::Visibility,
     module: &str,
     path: &Path,
-    is_test: bool,
+    test_kind: TestKind,
     parent: Option<&str>,
 ) -> SourceItem {
     let name = parent
@@ -402,7 +451,8 @@ fn function(
             .map(|b| b.span().end().line)
             .unwrap_or_else(|| sig.span().end().line),
         public: matches!(visibility, syn::Visibility::Public(_)),
-        is_test,
+        is_test: test_kind != TestKind::None,
+        test_kind,
         signature_types,
         calls: calls.names.into_iter().collect(),
         fields: vec![],

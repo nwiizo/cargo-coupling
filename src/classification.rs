@@ -241,11 +241,7 @@ pub(crate) fn is_valid_dependency_path(path: &str) -> bool {
         "violation",
         "page_token",
     ];
-    if common_locals.contains(last_segment) && segments.len() <= 2 {
-        return false;
-    }
-
-    true
+    segments.len() > 2 || !common_locals.contains(last_segment)
 }
 
 /// Calculate same-crate structural distance after target resolution.

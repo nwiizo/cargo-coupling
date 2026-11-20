@@ -45,11 +45,12 @@
 //! max_dependents = 20
 //! ```
 
+use crate::paths::{absolute_normalized_path, find_in_ancestors};
 use glob::Pattern;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::metrics::dimensions::MetricsConfig;
@@ -508,80 +509,37 @@ impl MetricsConfig for CompiledConfig {
 ///
 /// Searches for `.coupling.toml` in the given directory and parent directories.
 pub fn load_config(project_path: &Path) -> Result<CouplingConfig, ConfigError> {
-    // Search for config file
-    let config_path = find_config_file(project_path);
+    find_config_file(project_path)?
+        .map(|path| read_config(&path))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
 
-    match config_path {
-        Some(path) => {
-            let content = fs::read_to_string(&path)?;
-            let config: CouplingConfig = toml::from_str(&content)?;
-            Ok(config)
-        }
-        None => Ok(CouplingConfig::default()),
-    }
+fn read_config(path: &Path) -> Result<CouplingConfig, ConfigError> {
+    Ok(toml::from_str(&fs::read_to_string(path)?)?)
 }
 
 /// Find the config file by searching up the directory tree
-fn find_config_file(start_path: &Path) -> Option<std::path::PathBuf> {
-    let config_names = [".coupling.toml", "coupling.toml"];
-
-    let mut current = if start_path.is_file() {
-        start_path.parent()?.to_path_buf()
-    } else {
-        start_path.to_path_buf()
-    };
-
-    loop {
-        for name in &config_names {
-            let config_path = current.join(name);
-            if config_path.exists() {
-                return Some(config_path);
-            }
-        }
-
-        // Move to parent directory
-        if let Some(parent) = current.parent() {
-            current = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-
-    None
+fn find_config_file(start_path: &Path) -> Result<Option<PathBuf>, ConfigError> {
+    Ok(find_in_ancestors(
+        start_path,
+        &[".coupling.toml", "coupling.toml"],
+    )?)
 }
 
-/// Load and compile configuration
+/// Search the project and its ancestors for configuration.
 pub fn load_compiled_config(project_path: &Path) -> Result<CompiledConfig, ConfigError> {
-    match find_config_file(project_path) {
-        Some(path) => {
-            let content = fs::read_to_string(&path)?;
-            let config: CouplingConfig = toml::from_str(&content)?;
-            let absolute_path = absolute_normalized_path(&path)?;
-            CompiledConfig::from_config_with_root(config, absolute_path.parent())
-        }
+    match find_config_file(project_path)? {
+        Some(path) => load_compiled_config_file(&path),
         None => Ok(CompiledConfig::empty()),
     }
 }
 
-fn absolute_normalized_path(path: &Path) -> Result<PathBuf, std::io::Error> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-
-    let mut normalized = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-
-    Ok(normalized)
+/// Compile the exact file supplied by the caller, rooting patterns at its parent.
+pub fn load_compiled_config_file(path: &Path) -> Result<CompiledConfig, ConfigError> {
+    let config = read_config(path)?;
+    let absolute = absolute_normalized_path(path)?;
+    CompiledConfig::from_config_with_root(config, absolute.parent())
 }
 
 #[cfg(test)]

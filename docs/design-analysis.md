@@ -6,18 +6,32 @@ The CLI and **Plan a change** in the Web UI use the same Rust assessment.
 
 ```sh
 cargo coupling --design .
+cargo coupling --agent --focus analyzer ./src
 cargo coupling --design --json . > design-report.json
 cargo coupling --changed-since main --impact-depth 4 .
 cargo coupling --impact analyzer --impact-depth 3 --json .
 cargo coupling --web --context ./design-context.toml --no-open .
 ```
 
-`--changed-since` and `--context` select design output even without `--design`.
+`--changed-since`, `--focus`, and `--context` select design output even without `--design`.
+`--agent` selects the bounded JSON handoff described in [the agent review guide](agent-review.md).
 Without `--impact-depth`, traversal reaches every reachable module; a supplied
 positive depth reports whether additional paths were omitted. Git comparison
 includes committed, staged, unstaged and untracked changes within the selected
 scope. Package selection also includes its discovered `#[path]` source files.
 Deleted items retain their original revision and line numbers.
+
+Automatic design options require two distinct modules in the analyzed scope;
+external and unresolved observations remain in the evidence. Test candidates
+exclude helpers and fixture structs and identify ignored tests. The ordering and
+additive JSON fields are described in [the agent review guide](agent-review.md).
+
+The Web server permits one on-demand design analysis at a time. A second request
+receives HTTP 503 with a retry message until the running analysis finishes.
+Reading the startup snapshot without focus, depth or comparison parameters
+remains available. Cancelling the browser request does not stop started blocking
+analysis, so its capacity remains occupied until the worker exits. Source and
+context changes since startup still require restarting the Web server.
 
 ## Jobs and available evidence
 
@@ -119,8 +133,9 @@ remain versioned in Git; the Web UI reads them and does not edit the TOML file.
 
 Balance uses `max(abs(strength - distance), 1 - volatility)` for normalized
 dimensions. Stability and proximity compensate for coupling. The methodology
-identifier is `khononov-compensation-v2`; old multiplicative scores cannot be
-compared directly. Health grades retain the issue-based grading policy.
+identifier is `khononov-compensation-v3`; old multiplicative scores cannot be
+compared directly. The balance formula is unchanged from v2; grades no longer
+infer over-engineering from sparse findings.
 
 Alternatives use the least balanced observation for each directed module pair.
 Scenarios average matched observations, not all project dependencies; later
@@ -129,12 +144,16 @@ No matching observation produces `null` scores, not a zero score. Each option
 includes assumptions and tradeoffs; adding a trait does not itself establish
 encapsulation or prove that a business rule is shared.
 
-Priority is `(severity weights + reachable consumers + inherited paths +
+Priority is `(severity weights + reachable consumers +
 4 if planned + 4 if frozen) × business_value`. Critical/high/medium/low findings
 weigh 8/4/2/1. JSON includes `value_per_effort` when an estimate is supplied.
 The Web can order estimated work by priority per day; unestimated work remains
 visible afterwards. Default ordering uses impact and importance without
 inventing an effort estimate.
+CLI and Web Hotspots use this same calculation without planning context.
+Inherited paths are supporting evidence, not another hidden priority bonus.
+Known shared rules, runtime relationships and release-unit constraints mark
+affected alternatives `requires-review`; a higher score cannot remove them.
 
 Every assessment records its schema, analyzer/scoring versions, scope, revision,
 dirty state, source/config/context fingerprints, effective settings, Git window,
@@ -168,7 +187,7 @@ requested severity, while unchanged debt is retained.
    download JSON to retain the result.
 
 The planning view uses the startup working-tree snapshot independently of the
-history timeline. Restart the server after editing sources; a comparison that
+history timeline. Restart the server after editing sources or design context; a comparison that
 would mix startup metrics with changed or newly added files returns a refresh
 message. Source files must be inside the analyzed workspace, including when a
 historical directory has since been deleted.
@@ -211,5 +230,4 @@ all reported observations. UI navigation and field labels support English and
 Japanese; detailed diagnostic explanations and supplied evidence retain their
 original text.
 
-See [implementation tracking](implementation-todo.md) and the
-[v0.4.0 verification record](v0.4.0-verification.md) for checks and screenshots.
+The [v0.4.0 verification record](v0.4.0-verification.md) contains the release checks and screenshots.

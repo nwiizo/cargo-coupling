@@ -5,10 +5,11 @@
 //! following `mod` declarations, including `#[path]` attributes, and derives
 //! module names. Walk-based names take precedence for files both methods find.
 
+use crate::paths::normalized_path;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use syn::{Expr, ExprLit, ItemMod, Lit, Meta};
 use walkdir::WalkDir;
@@ -59,33 +60,6 @@ pub(crate) fn file_path_to_module_path(file_path: &Path, src_root: &Path) -> Str
     parts.join("::")
 }
 
-/// Normalize a path for exclude matching without resolving symlinks.
-///
-/// This keeps `./src`, `/tmp/foo`, and other caller-provided forms comparable
-/// by making them absolute and removing `.` / `..` components lexically.
-pub(crate) fn normalize_exclude_path(path: &Path) -> PathBuf {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
-    };
-
-    let mut normalized = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-
-    normalized
-}
-
 /// Get an iterator over all Rust source files in `dir`, excluding hidden directories and `target/`.
 ///
 /// Uses relative paths for filtering to avoid false positives when the project
@@ -95,21 +69,14 @@ pub(crate) fn rs_files(dir: &Path) -> impl Iterator<Item = PathBuf> {
     WalkDir::new(dir)
         .follow_links(true)
         .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(move |entry| {
-            let file_path = entry.path();
-            // Use relative path from the search root to check for hidden/target directories.
-            // This prevents false positives when parent directories contain `.` or `target`.
-            // Example: `/home/user/.config/myproject/src/lib.rs` should not be skipped
-            // just because `.config` is in the parent path.
-            let file_path = file_path.strip_prefix(dir).unwrap_or(file_path);
-
-            !file_path.components().any(|c| {
-                let s = c.as_os_str().to_string_lossy();
-                is_skipped_component(&s)
-            }) && file_path.extension() == Some(OsStr::new("rs"))
+        .filter_entry(|entry| {
+            entry.depth() == 0 || !is_skipped_component(&entry.file_name().to_string_lossy())
         })
-        .map(|e| e.path().to_path_buf())
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.file_type().is_file() && entry.path().extension() == Some(OsStr::new("rs"))
+        })
+        .map(walkdir::DirEntry::into_path)
 }
 
 /// Get Rust source files under `dir`, pruning nested packages and conventional non-source roots.
@@ -117,7 +84,7 @@ pub(crate) fn rs_files_excluding_nested_packages(
     dir: &Path,
     manifest_path: &Path,
 ) -> impl Iterator<Item = PathBuf> {
-    let manifest_path = normalize_exclude_path(manifest_path);
+    let manifest_path = normalized_path(manifest_path);
     WalkDir::new(dir)
         .follow_links(true)
         .into_iter()
@@ -157,7 +124,7 @@ pub(crate) fn should_descend_workspace_source(
 
     if path.is_dir() {
         let cargo_toml = path.join("Cargo.toml");
-        if cargo_toml.exists() && normalize_exclude_path(&cargo_toml) != manifest_path {
+        if cargo_toml.exists() && normalized_path(&cargo_toml) != manifest_path {
             return false;
         }
     }
@@ -173,8 +140,8 @@ fn is_manifest_level_non_source(path: &Path, manifest_path: &Path) -> bool {
     let Some(manifest_dir) = manifest_path.parent() else {
         return false;
     };
-    let path = normalize_exclude_path(path);
-    let manifest_dir = normalize_exclude_path(manifest_dir);
+    let path = normalized_path(path);
+    let manifest_dir = normalized_path(manifest_dir);
 
     path == manifest_dir.join("build.rs")
         || path == manifest_dir.join("tests")
@@ -213,7 +180,7 @@ pub(crate) struct ModuleTreeDiscovery {
 
 /// Return a stable key for comparing file identities across lexical path forms.
 pub(crate) fn canonical_file_key(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| normalize_exclude_path(path))
+    fs::canonicalize(path).unwrap_or_else(|_| normalized_path(path))
 }
 
 /// Discover files reachable from a crate root through external `mod` declarations.

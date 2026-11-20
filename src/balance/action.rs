@@ -41,39 +41,67 @@ impl std::fmt::Display for RefactoringAction {
             } => {
                 write!(
                     f,
-                    "Introduce trait `{}` with methods: {}",
+                    "If it hides volatile knowledge, consider trait `{}` with methods: {}",
                     suggested_name,
                     methods.join(", ")
                 )
             }
             RefactoringAction::MoveCloser { target_location } => {
-                write!(f, "Move component to `{}`", target_location)
+                write!(
+                    f,
+                    "If the responsibilities change together, consider moving the component to `{}`",
+                    target_location
+                )
             }
             RefactoringAction::ExtractAdapter {
                 adapter_name,
                 purpose,
             } => {
-                write!(f, "Extract adapter `{}` to {}", adapter_name, purpose)
+                write!(
+                    f,
+                    "If translation isolates volatile knowledge, consider adapter `{}` to {}",
+                    adapter_name, purpose
+                )
             }
             RefactoringAction::SplitModule { suggested_modules } => {
-                write!(f, "Split into modules: {}", suggested_modules.join(", "))
+                write!(
+                    f,
+                    "If responsibilities evolve independently, consider boundaries such as: {}",
+                    suggested_modules.join(", ")
+                )
             }
             RefactoringAction::SimplifyAbstraction { direct_usage } => {
-                write!(f, "Replace with direct usage: {}", direct_usage)
+                write!(
+                    f,
+                    "If the boundary adds no needed protection, consider direct usage: {}",
+                    direct_usage
+                )
             }
             RefactoringAction::BreakCycle {
                 suggested_direction,
             } => {
-                write!(f, "Break cycle by {}", suggested_direction)
+                write!(
+                    f,
+                    "If the cycle obstructs independent changes, consider {}",
+                    suggested_direction
+                )
             }
             RefactoringAction::StabilizeInterface { interface_name } => {
-                write!(f, "Add stable interface `{}`", interface_name)
+                write!(
+                    f,
+                    "If it hides unstable details, consider interface `{}`",
+                    interface_name
+                )
             }
             RefactoringAction::General { action } => {
                 write!(f, "{}", action)
             }
             RefactoringAction::AddGetters { fields } => {
-                write!(f, "Add getter methods for: {}", fields.join(", "))
+                write!(
+                    f,
+                    "Review whether these fields expose unintended knowledge before adding accessors: {}",
+                    fields.join(", ")
+                )
             }
             RefactoringAction::IntroduceNewtype {
                 suggested_name,
@@ -81,7 +109,7 @@ impl std::fmt::Display for RefactoringAction {
             } => {
                 write!(
                     f,
-                    "Introduce newtype: `struct {}({});`",
+                    "If it enforces a domain invariant, consider newtype: `struct {}({});`",
                     suggested_name, wrapped_type
                 )
             }

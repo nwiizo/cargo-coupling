@@ -3,44 +3,6 @@
 // =====================================================
 
 /**
- * Stable crates set for volatility estimation
- */
-export const STABLE_CRATES = new Set([
-    'std', 'core', 'alloc', 'serde', 'tokio', 'thiserror', 'anyhow',
-    'log', 'tracing', 'clap', 'syn', 'quote', 'proc_macro2', 'rayon',
-    'regex', 'chrono', 'uuid', 'rand', 'futures', 'async_trait',
-    'bytes', 'http', 'hyper', 'axum', 'tower', 'tonic', 'prost',
-    'sqlx', 'diesel'
-]);
-
-/**
- * Check if a target is an external crate
- */
-export function isExternalCrate(target) {
-    const parts = target.split('::');
-    if (parts.length < 2) return false;
-    const crateName = parts[0].toLowerCase();
-    return STABLE_CRATES.has(crateName) ||
-           (!target.startsWith('crate::') &&
-            !target.startsWith('self::') &&
-            !target.startsWith('super::'));
-}
-
-/**
- * Estimate volatility based on target name
- */
-export function estimateVolatility(target, explicitVolatility) {
-    if (explicitVolatility && explicitVolatility !== 'Unknown') {
-        return explicitVolatility;
-    }
-    const parts = target.split('::');
-    const crateName = parts[0].replace('cargo-coupling::', '').toLowerCase();
-    if (STABLE_CRATES.has(crateName)) return 'Low';
-    if (parts.length > 1 && !target.startsWith('crate::')) return 'Medium';
-    return explicitVolatility || 'Medium';
-}
-
-/**
  * Debounce function
  */
 export function debounce(func, wait) {

@@ -306,7 +306,7 @@ fn dimension_for_issue(issue_type: IssueType) -> GradeDimension {
 // ===== Health Grading =====
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthGrade {
-    /// Over-optimized signal; the project may be chasing too little coupling.
+    /// Legacy grade retained for API compatibility; no longer inferred from issue density.
     S,
     /// Coupling is appropriate for the architecture.
     A,
@@ -340,7 +340,7 @@ impl HealthGrade {
 impl std::fmt::Display for HealthGrade {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HealthGrade::S => write!(f, "S (Over-optimized! Real code has some issues. Ship it!)"),
+            HealthGrade::S => write!(f, "S (Legacy grade; reassess with the current analyzer)"),
             HealthGrade::A => write!(f, "A (Well-balanced)"),
             HealthGrade::B => write!(f, "B (Healthy)"),
             HealthGrade::C => write!(f, "C (Room for improvement)"),
@@ -399,14 +399,7 @@ pub(crate) fn calculate_health_grade(
         return HealthGrade::B;
     }
 
-    // S: Over-optimized! Too few issues (< 5%) = you're probably over-engineering
-    // This is a WARNING, not a reward. Stop refactoring!
-    if high == 0 && medium_density <= 0.05 && internal_couplings >= 20 {
-        return HealthGrade::S;
-    }
-
-    // A: Well-balanced - no high issues AND reasonable medium issues (5-10%)
-    // This is the ideal target grade
+    // Sparse findings cannot establish over-engineering (or complete coverage).
     if high == 0 && medium_density <= 0.10 && internal_couplings >= 10 {
         return HealthGrade::A;
     }

@@ -73,11 +73,11 @@ impl fmt::Display for Visibility {
 pub enum IntegrationStrength {
     /// Strongest coupling - direct access to internals
     Intrusive,
-    /// Strong coupling - depends on function signatures
+    /// Shared functional requirements; calls/signatures are only syntactic clues
     Functional,
     /// Medium coupling - depends on data models
     Model,
-    /// Weakest coupling - depends only on contracts/traits
+    /// Integration-specific contracts; trait syntax alone does not establish this
     Contract,
 }
 
@@ -125,7 +125,7 @@ pub enum Subdomain {
     Core,
     /// Supporting subdomain - stable business logic, low volatility
     Supporting,
-    /// Generic subdomain - solved problems, stable implementations
+    /// Generic subdomain - solved functionality; provider changes need separate assessment
     Generic,
 }
 

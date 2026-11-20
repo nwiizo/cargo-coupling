@@ -13,7 +13,7 @@ use crate::balance::issue_type::IssueType;
 use crate::balance::project::analyze_project_balance_with_thresholds;
 use crate::balance::score::{BalanceInterpretation, BalanceScore, IssueThresholds};
 use crate::balance::severity::Severity;
-use crate::manifest::{AnalysisManifest, ManifestContext, build_manifest};
+use crate::manifest::AnalysisManifest;
 use crate::metrics::dimensions::{Distance, IntegrationStrength};
 use crate::metrics::project::ProjectMetrics;
 use crate::volatility::TemporalCoupling;
@@ -35,7 +35,7 @@ pub struct TextReportOptions {
 
 /// Generate a summary report to the given writer
 pub fn generate_summary<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
-    let manifest = default_manifest();
+    let manifest = default_manifest(metrics);
     generate_summary_with_thresholds(metrics, &IssueThresholds::default(), &manifest, writer)
 }
 
@@ -423,43 +423,67 @@ fn refactoring_action_japanese(action: &RefactoringAction) -> String {
     use RefactoringAction;
     match action {
         RefactoringAction::IntroduceTrait { suggested_name, .. } => {
-            format!("トレイト `{}` を導入して抽象化する", suggested_name)
+            format!(
+                "変わりやすい内部知識を隠せるなら、トレイト `{}` を検討する",
+                suggested_name
+            )
         }
         RefactoringAction::MoveCloser { target_location } => {
-            format!("`{}` に移動して距離を縮める", target_location)
+            format!(
+                "同じ理由で変更する責務なら、`{}` への移動を検討する",
+                target_location
+            )
         }
         RefactoringAction::ExtractAdapter { adapter_name, .. } => {
-            format!("アダプタ `{}` を抽出する", adapter_name)
+            format!(
+                "内部知識の伝播を抑えられるなら、アダプタ `{}` を検討する",
+                adapter_name
+            )
         }
         RefactoringAction::SplitModule { suggested_modules } => {
-            format!("モジュールを分割: {}", suggested_modules.join(", "))
+            format!(
+                "独立して変更する責務なら分割を検討する: {}",
+                suggested_modules.join(", ")
+            )
         }
-        RefactoringAction::SimplifyAbstraction { .. } => "抽象化を簡素化する".to_string(),
+        RefactoringAction::SimplifyAbstraction { .. } => {
+            "境界が守る必要のある動作を確認してから簡素化を検討する".to_string()
+        }
         RefactoringAction::BreakCycle {
             suggested_direction,
         } => {
-            format!("循環を断つ: {}", suggested_direction)
+            format!(
+                "循環が独立した変更を妨げるなら検討する: {}",
+                suggested_direction
+            )
         }
         RefactoringAction::StabilizeInterface { interface_name } => {
-            format!("安定したインターフェース `{}` を追加", interface_name)
+            format!(
+                "不安定な内部詳細を隠せるなら、インターフェース `{}` を検討する",
+                interface_name
+            )
         }
         RefactoringAction::General { action } => {
             if action.starts_with("Introduce a `") && action.contains("` facade/wrapper module") {
                 let facade = action.split('`').nth(1).unwrap_or("facade");
                 format!("`{}` モジュールを導入し、直接利用をそこに集約する", facade)
-            } else if action == "Extract a shared abstraction or make the dependency explicit" {
-                "共有された抽象化を抽出するか、依存関係を明示する".to_string()
+            } else if action
+                == "Confirm a shared change requirement before choosing a shared abstraction or retaining separate implementations"
+            {
+                "同じ要件で変更する必要があるか確認し、共通化と別実装の維持を比較する".to_string()
             } else {
                 action.clone()
             }
         }
-        RefactoringAction::AddGetters { .. } => "getterメソッドを追加する".to_string(),
+        RefactoringAction::AddGetters { .. } => {
+            "公開フィールドが意図しない内部知識を伝えていないか確認する".to_string()
+        }
         RefactoringAction::IntroduceNewtype {
             suggested_name,
             wrapped_type,
         } => {
             format!(
-                "newtype `struct {}({})` を導入",
+                "不変条件を型で守れるなら、newtype `struct {}({})` を検討する",
                 suggested_name, wrapped_type
             )
         }
@@ -491,7 +515,7 @@ fn issue_instance_description_japanese(issue: &CouplingIssue) -> String {
 
 /// Generate a full Markdown report with refactoring suggestions
 pub fn generate_report<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
-    let manifest = default_manifest();
+    let manifest = default_manifest(metrics);
     generate_report_with_thresholds(metrics, &IssueThresholds::default(), &manifest, writer)
 }
 
@@ -975,11 +999,14 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
     }
     writeln!(writer)?;
 
-    // Volatility distribution (only for internal couplings where we have git data)
+    // Use the same provider volatility as the project score and Web graph.
+    let module_index =
+        crate::metrics::target::ModuleIndex::new(&metrics.modules, &metrics.workspace_members);
     let internal_couplings: Vec<_> = metrics
         .couplings
         .iter()
         .filter(|c| c.distance != Distance::DifferentCrate)
+        .map(|edge| module_index.effective_coupling(edge))
         .collect();
 
     if !internal_couplings.is_empty() {
@@ -1028,10 +1055,8 @@ fn write_coupling_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) ->
     // (source, target) pair, so repeated use sites cannot hide a more severe
     // coupling merely because they were encountered later.
     let mut worst_by_pair = std::collections::BTreeMap::new();
-    for coupling in metrics
-        .couplings
+    for coupling in internal_couplings
         .iter()
-        .filter(|c| c.distance != Distance::DifferentCrate)
         .filter(|c| !is_crate_root_facade(&c.target))
     {
         let score = BalanceScore::calculate(coupling);
@@ -1225,7 +1250,7 @@ fn write_volatility_section<W: Write>(metrics: &ProjectMetrics, writer: &mut W) 
     if metrics.file_changes.is_empty() {
         writeln!(
             writer,
-            "*Git history analysis not available. Run in a git repository for volatility data.*\n"
+            "*No file-change counts are available for this analysis window. See the analysis manifest for Git coverage.*\n"
         )?;
         return Ok(());
     }
@@ -1458,11 +1483,16 @@ fn write_best_practices<W: Write>(writer: &mut W) -> io::Result<()> {
 }
 
 fn truncate_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len {
-        path.to_string()
-    } else {
-        format!("...{}", &path[path.len() - max_len + 3..])
+    let length = path.chars().count();
+    if length <= max_len {
+        return path.to_owned();
     }
+    let suffix = path.chars().skip(length - max_len.saturating_sub(3));
+    format!(
+        "{}{}",
+        ".".repeat(max_len.min(3)),
+        suffix.collect::<String>()
+    )
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
@@ -1483,7 +1513,7 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 /// 2. Actionable with specific file/module references
 /// 3. Copy-paste ready for AI refactoring prompts
 pub fn generate_ai_output<W: Write>(metrics: &ProjectMetrics, writer: &mut W) -> io::Result<()> {
-    let manifest = default_manifest();
+    let manifest = default_manifest(metrics);
     generate_ai_output_with_thresholds(metrics, &IssueThresholds::default(), &manifest, writer)
 }
 
@@ -1617,11 +1647,11 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
         )?;
         writeln!(
             writer,
-            "For each issue, suggest specific code changes to reduce coupling."
+            "For each finding, verify the shared knowledge, structural distance, and expected changes."
         )?;
         writeln!(
             writer,
-            "Focus on introducing traits, moving code closer, or breaking circular dependencies."
+            "Compare retaining the boundary with concrete alternatives. Preserve runtime and release constraints, and identify behavioral checks; syntax and co-change alone do not justify a refactor."
         )?;
         writeln!(writer, "```")?;
     }
@@ -1631,15 +1661,8 @@ pub fn generate_ai_output_with_thresholds<W: Write>(
     Ok(())
 }
 
-fn default_manifest() -> AnalysisManifest {
-    build_manifest(&ManifestContext {
-        git_used: true,
-        tests_excluded: false,
-        parse_failures: 0,
-        skipped_crates: Vec::new(),
-        boundary_skipped_files: 0,
-        dead_config_patterns: Vec::new(),
-    })
+fn default_manifest(metrics: &ProjectMetrics) -> AnalysisManifest {
+    AnalysisManifest::from_metrics(metrics, metrics.has_git_observations(), false)
 }
 
 enum ManifestFormat {
@@ -1947,7 +1970,7 @@ mod tests {
             coupling_ratio: 0.4,
         });
 
-        let manifest = default_manifest();
+        let manifest = default_manifest(&metrics);
         let thresholds = IssueThresholds::default();
         let mut output = Vec::new();
         generate_report_with_options(
@@ -2004,7 +2027,7 @@ mod tests {
         generate_report_with_options(
             &metrics,
             &thresholds,
-            &default_manifest(),
+            &default_manifest(&metrics),
             TextReportOptions::default(),
             &mut output,
         )
@@ -2067,6 +2090,13 @@ mod tests {
         let mut module = ModuleMetrics::new(PathBuf::from("src/report.rs"), "report".to_string());
         module.subdomain = Some(Subdomain::Supporting);
         metrics.add_module(module);
+        metrics.add_coupling(crate::CouplingMetrics::new(
+            "consumer".into(),
+            "report".into(),
+            IntegrationStrength::Model,
+            Distance::DifferentModule,
+            crate::Volatility::High,
+        ));
 
         let mut output = Vec::new();
         generate_report(&metrics, &mut output).unwrap();
@@ -2074,6 +2104,7 @@ mod tests {
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("| Module | Subdomain |"));
         assert!(output_str.contains("| `report` | Supporting |"));
+        assert!(output_str.contains("| `consumer` | `report` | Model | Diff Mod | Low |"));
     }
 
     #[test]
@@ -2196,6 +2227,10 @@ mod tests {
 
     #[test]
     fn test_truncate_path() {
+        assert_eq!(
+            truncate_path("あいうえおかきくけこさ", 10),
+            "...おかきくけこさ"
+        );
         assert_eq!(truncate_path("short", 10), "short");
         assert_eq!(
             truncate_path("this_is_a_very_long_path", 15),

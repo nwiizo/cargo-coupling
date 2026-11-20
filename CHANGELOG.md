@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.4.1 (unreleased)
+
+- Count distinct internal neighbours for fan-in and fan-out. Resolve provider
+  volatility by module identity and retain same-named modules from different
+  workspace members. Apply configured prelude exemptions to fan-in findings.
+  Rust clients constructing exhaustive `ModuleMetrics` literals must supply
+  `is_prelude` (normally `false`) or use `..Default::default()`. The scoring
+  methodology identifier advances to v4.
+- Honor explicit configuration files, report invalid configuration, and find
+  workspace settings from nested working directories.
+- Share Git observations between volatility and co-change analysis. Support
+  file scopes and preserve successful empty windows in Web coverage reports.
+- Align Markdown volatility, Web dependency counts and graph node identities
+  with the same provider and distance used for scoring. Render long Unicode
+  module names safely in Markdown reports.
+
+- Keep design alternatives independent of equal-score observation order, and
+  trigger retained `changed` decisions only from observed Git changes, not focus.
+- Preserve one observed assessment when aggregating parallel Web graph edges,
+  with deterministic selection and ordering. Borrow current metrics when impact
+  analysis does not need a baseline merge.
+- Reuse backend findings in Web inspectors. History-only coupling edges now emit
+  `dimensions: null`, show co-change evidence and stay outside Dimension Space.
+- Surface unknown owners and possible Generic provider changes in design review;
+  document [concept and job verification](docs/modularity-conformance.md).
+- Restrict automatic design options to distinct analyzed modules; keep external,
+  unresolved and self observations as evidence, including names that collide
+  with internal modules.
+- Distinguish test functions and ignored tests from helpers and fixtures, and
+  prioritize change-related evidence before bounded agent output is truncated.
+- Serialize bounded agent views through borrowed fields while preserving JSON
+  fields, baseline information and omission counts.
+- Limit concurrent Web design analysis to one worker, returning HTTP 503 while
+  busy and retaining capacity if the HTTP request is cancelled.
+- Associate Web findings with the dependency observation that triggered them.
+  The critical findings panel lists the report's High and Critical findings.
+- Refresh Cargo dependencies and pin the browser graph and Markdown libraries.
+  The Dagre layout extension now bundles its layout engine.
+- Build Docker images with stable Rust. CI also runs the test suite on the
+  minimum supported version, Rust 1.99.0.
+
 ## v0.4.0
 
 Change-oriented design analysis, a structure-first Web UI, and refactoring guided

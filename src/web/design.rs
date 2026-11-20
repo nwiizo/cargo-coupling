@@ -26,6 +26,7 @@ pub(super) fn routes() -> Router<Arc<AppState>> {
 struct DesignQuery {
     changed_since: Option<String>,
     depth: Option<usize>,
+    focus: Option<String>,
 }
 
 async fn get_design(
@@ -35,10 +36,19 @@ async fn get_design(
     if query.depth == Some(0) {
         return api_error(StatusCode::BAD_REQUEST, "Depth must be at least 1");
     }
-    let Some(reference) = query.changed_since.filter(|s| !s.trim().is_empty()) else {
+    let reference = query.changed_since.filter(|s| !s.trim().is_empty());
+    if reference.is_none() && query.focus.is_none() && query.depth.is_none() {
         return Json(&state.design).into_response();
+    }
+    let Ok(permit) = state.design_slots.clone().try_acquire_owned() else {
+        return api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Design analysis is already running. Retry after it finishes.",
+        );
     };
     let result = tokio::task::spawn_blocking(move || {
+        // A cancelled HTTP request must not release capacity while analysis continues.
+        let _permit = permit;
         // Refuse to combine startup metrics with later source edits.
         let current = crate::analyzer::analyze_workspace_with_config(&state.analysis_path, &state.analysis_config)
             .map_err(|error| (StatusCode::CONFLICT, error.to_string()))?;
@@ -47,10 +57,14 @@ async fn get_design(
         if changes::source_fingerprint(&inventory, &root) != state.design.provenance.source_fingerprint {
             return Err((StatusCode::CONFLICT, "Source files changed after startup. Restart cargo coupling --web to refresh the snapshot.".to_string()));
         }
-        assess(&state.metrics, &state.analysis_config, &state.thresholds, AssessmentRequest {
-            path: &state.analysis_path, context_path: state.context_path.as_deref(), changed_since: Some(reference.trim()), baseline: None,
+        let report = assess(&state.metrics, &state.analysis_config, &state.thresholds, AssessmentRequest {
+            path: &state.analysis_path, context_path: state.context_path.as_deref(), changed_since: reference.as_deref().map(str::trim), baseline: None, focus: query.focus.as_deref(),
             max_depth: query.depth.or(state.design.provenance.max_depth), git_months: state.git_months, git_used: state.design.provenance.git_used,
-        }).map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))
+        }).map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+        if report.provenance.context_fingerprint != state.design.provenance.context_fingerprint {
+            return Err((StatusCode::CONFLICT, "Design context changed after startup. Restart cargo coupling --web to refresh the snapshot.".into()));
+        }
+        Ok(report)
     }).await;
     match result {
         Ok(Ok(report)) => Json(report).into_response(),
@@ -109,6 +123,7 @@ mod tests {
                 context_path: None,
                 changed_since: None,
                 baseline: None,
+                focus: None,
                 max_depth: None,
                 git_months: 6,
                 git_used: false,
@@ -131,8 +146,54 @@ mod tests {
             no_git: true,
             design,
             context_path: None,
+            design_slots: Arc::new(tokio::sync::Semaphore::new(1)),
         });
         (dir, state)
+    }
+
+    #[tokio::test]
+    async fn concurrent_design_requests_return_busy_until_capacity_is_released() {
+        let (_dir, state) = state();
+        let occupied = state.design_slots.clone().acquire_owned().await.unwrap();
+        let focused = || DesignQuery {
+            changed_since: None,
+            focus: Some("a".into()),
+            depth: None,
+        };
+        let result = get_design(State(state.clone()), Query(focused())).await;
+        assert_eq!(result.status(), StatusCode::SERVICE_UNAVAILABLE);
+        // Reading the startup snapshot does not consume analysis capacity.
+        let snapshot = get_design(
+            State(state.clone()),
+            Query(DesignQuery {
+                changed_since: None,
+                focus: None,
+                depth: None,
+            }),
+        )
+        .await;
+        assert_eq!(snapshot.status(), StatusCode::OK);
+        drop(occupied);
+        let result = get_design(State(state.clone()), Query(focused())).await;
+        assert_eq!(result.status(), StatusCode::OK);
+        assert_eq!(state.design_slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn focused_review_refuses_context_changed_since_startup() {
+        let (dir, state) = state();
+        std::fs::write(dir.path().join(".coupling-context.toml"), "version=1\n[[components]]\nname='a'\nmodules=['a']\nplanned_changes='Replace implementation'\n").unwrap();
+        let result = get_design(
+            State(state.clone()),
+            Query(DesignQuery {
+                focus: Some("a".into()),
+                changed_since: None,
+                depth: None,
+            }),
+        )
+        .await;
+        assert_eq!(result.status(), StatusCode::CONFLICT);
+        assert_eq!(state.design_slots.available_permits(), 1);
     }
 
     #[tokio::test]
@@ -142,6 +203,7 @@ mod tests {
         let result = get_design(
             State(state),
             Query(DesignQuery {
+                focus: None,
                 changed_since: Some("HEAD".into()),
                 depth: None,
             }),
@@ -184,6 +246,7 @@ mod tests {
         let result = get_design(
             State(state),
             Query(DesignQuery {
+                focus: None,
                 changed_since: Some("HEAD".into()),
                 depth: None,
             }),

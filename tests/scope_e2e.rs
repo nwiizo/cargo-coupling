@@ -47,6 +47,42 @@ fn analyze(path: &Path) -> ProjectMetrics {
     analyze_workspace_with_config(path, &CompiledConfig::empty()).unwrap()
 }
 
+#[test]
+fn workspace_keeps_modules_with_the_same_name_in_different_crates() {
+    let tmp = fixture();
+    for member in ["alpha", "beta"] {
+        let src = tmp.path().join(member).join("src");
+        fs::write(
+            src.join("lib.rs"),
+            "pub mod shared; pub fn run() { crate::shared::call(); }",
+        )
+        .unwrap();
+        fs::write(src.join("shared.rs"), "pub fn call() {}").unwrap();
+    }
+    fs::write(
+        tmp.path().join("alpha/src/lib.rs"),
+        "pub mod shared; pub fn run() { crate::shared::call(); beta::shared::call(); }",
+    )
+    .unwrap();
+    let metrics = analyze(tmp.path());
+    assert!(
+        metrics
+            .couplings
+            .iter()
+            .any(|edge| edge.source == "alpha::lib" && edge.target == "beta::shared")
+    );
+    for member in ["alpha", "beta"] {
+        let key = format!("{member}::shared");
+        assert!(metrics.modules.contains_key(&key), "missing {key}");
+        assert!(
+            metrics.modules[&key]
+                .path
+                .ends_with(format!("{member}/src/shared.rs"))
+        );
+        assert!(metrics.couplings.iter().any(|edge| edge.target == key));
+    }
+}
+
 fn assert_scope(metrics: &ProjectMetrics, scope: &Path, files: usize) {
     assert_eq!(metrics.total_files, files);
     let scope = fs::canonicalize(scope).unwrap();

@@ -10,6 +10,9 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 pub struct DesignAssessment {
     pub schema_version: u32,
+    pub review_scope: String,
+    pub focus: Vec<String>,
+    pub questions: Vec<ReviewQuestion>,
     pub provenance: Provenance,
     pub coverage: Vec<String>,
     pub changes: ChangeSet,
@@ -34,6 +37,8 @@ pub struct DesignAssessment {
 pub struct EdgeEvidence {
     pub source: String,
     pub target: String,
+    pub source_kind: EndpointKind,
+    pub target_kind: EndpointKind,
     pub observed_usage: Option<String>,
     pub inferred_strength: String,
     pub origin: String,
@@ -47,11 +52,21 @@ pub struct EdgeEvidence {
     pub unknowns: Vec<String>,
 }
 
+/// Whether an observed endpoint denotes a module whose boundary we can review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EndpointKind {
+    Module,
+    External,
+    Unresolved,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ChangeImpact {
     pub origin: String,
     pub changed_items: Vec<String>,
     pub reachability: Reachability,
+    pub contextual_reachability: ContextImpact,
     pub tests: Vec<TestCandidate>,
 }
 
@@ -60,6 +75,28 @@ pub struct TestCandidate {
     pub item: SourceItem,
     pub reason: String,
     pub path: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ContextImpact {
+    pub paths: Vec<ContextPath>,
+    pub max_depth: Option<usize>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ContextPath {
+    pub module: String,
+    pub path: Vec<String>,
+    pub steps: Vec<ImpactStep>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ImpactStep {
+    pub source: String,
+    pub target: String,
+    pub code_dependency: bool,
+    pub rule_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,6 +121,7 @@ pub struct SharedReason {
     pub co_changes: Option<usize>,
     pub ratio: Option<f64>,
     pub suggested_boundary: Option<String>,
+    pub verification: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,6 +145,17 @@ pub struct Alternative {
     pub hypothetical_balance: f64,
     pub assumptions: Vec<String>,
     pub tradeoffs: Vec<String>,
+    pub status: String,
+    pub constraints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewQuestion {
+    pub id: String,
+    pub modules: Vec<String>,
+    pub question: String,
+    pub reason: String,
+    pub context_section: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -182,6 +231,8 @@ pub struct DecisionReview {
     pub status: String,
     pub triggered: Vec<String>,
     pub pending_checks: Vec<String>,
+    pub evidence: Vec<String>,
+    pub rejected_options: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

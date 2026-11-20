@@ -67,7 +67,7 @@ pub(crate) fn analyze_hidden_temporal_coupling(metrics: &ProjectMetrics) -> Vec<
                 ratio_pct, temporal.co_change_count
             ),
             refactoring: RefactoringAction::General {
-                action: "Extract a shared abstraction or make the dependency explicit".to_string(),
+                action: "Confirm a shared change requirement before choosing a shared abstraction or retaining separate implementations".to_string(),
             },
             balance_score: 1.0 - temporal.coupling_ratio,
         });

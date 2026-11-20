@@ -1,9 +1,126 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { structureModel } from '../web-assets/js/structure-view.js';
-import { buildElements } from '../web-assets/js/coupling-graph-2d.js';
+import { buildElements, analyzeCoupling } from '../web-assets/js/coupling-graph-2d.js';
 import { moduleLabel, placeLabel } from '../web-assets/js/module-labels.js';
 import { arrangeNetwork } from '../web-assets/js/network-layout.js';
+import { render3dMode } from '../web-assets/js/coupling-graph-3d.js';
+import { state, setGraph3d } from '../web-assets/js/state.js';
+import { populateCriticalIssues } from '../web-assets/js/panels-and-jobs.js';
+import { showFocusedIssueDetails } from '../web-assets/js/ui-controls.js';
+
+test('critical panel lists backend high and critical findings only', context => {
+    const previousGraph = state.graphData;
+    const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    const list = { innerHTML: '', querySelectorAll: () => [] };
+    const badge = { style: {} };
+    globalThis.document = {
+        getElementById: id => id === 'critical-count' ? badge : list,
+        createElement: () => ({ get innerHTML() { return this.textContent; } }),
+    };
+    context.after(() => {
+        state.graphData = previousGraph;
+        if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
+        else delete globalThis.document;
+    });
+    state.graphData = { edges: [], issues: [
+        { id: 'i1', source: 'consumer', target: 'provider', severity: 'High', description: 'Observed risk' },
+        { id: 'i2', source: 'other', target: 'provider', severity: 'Medium', description: 'Review later' },
+    ] };
+    populateCriticalIssues();
+    assert.equal(Number(badge.textContent), 1);
+    assert.match(list.innerHTML, /Observed risk/);
+    assert.doesNotMatch(list.innerHTML, /Review later/);
+});
+
+test('dimension space omits unmeasured co-change even in older snapshots', (context) => {
+    let rendered;
+    const graph = { graphData(data) { rendered = data; return this; }, cooldownTicks() { return this; }, cameraPosition() {} };
+    const oldGraph = state.graph3d;
+    const oldMode = state.current3dMode;
+    const oldDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    const oldFrame = Object.getOwnPropertyDescriptor(globalThis, 'requestAnimationFrame');
+    context.after(() => {
+        setGraph3d(oldGraph);
+        state.current3dMode = oldMode;
+        for (const [key, descriptor] of [['document', oldDocument], ['requestAnimationFrame', oldFrame]]) {
+            if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+            else delete globalThis[key];
+        }
+    });
+    globalThis.document = {
+        getElementById() { return null; },
+        createElement() { return { textContent: '', get innerHTML() { return this.textContent; } }; },
+    };
+    globalThis.requestAnimationFrame = () => {};
+    setGraph3d(graph);
+    const dimensions = { strength: { value: .75 }, distance: { value: .5 }, volatility: { value: 1 } };
+    render3dMode({ edges: [{ id: 'real', source: 'a', target: 'b', dimensions }, { id: 'unknown', source: 'a', target: 'b' }], hidden_couplings: [
+        { id: 'history', source: 'b', target: 'c', dimensions, coupling_ratio: 1 },
+    ] }, 'dimension-space');
+    assert.deepEqual(rendered.nodes.filter(node => node.isCouplingPoint).map(node => node.id), ['space-real']);
+});
+
+test('co-change remains evidence without fabricated model dimensions', () => {
+    for (const dimensions of [null, { strength: { value: .75, label: 'Functional' }, volatility: { value: 1, label: 'High' } }]) {
+        const elements = buildElements({ nodes: [{ id: 'a' }, { id: 'b' }], edges: [], hidden_couplings: [
+            { id: 'hidden-a-b', source: 'a', target: 'b', co_change_count: 3, coupling_ratio: 1, dimensions },
+        ] });
+        const edge = elements.find(element => element.data.hiddenCoupling).data;
+        assert.equal(edge.strength, null);
+        assert.equal(edge.balance, null);
+        assert.equal(edge.coChangeCount, 3);
+        assert.equal(edge.couplingRatio, 1);
+        assert.equal(analyzeCoupling(edge).status, 'unknown');
+    }
+});
+
+test('edge interpretation uses the supplied assessment without a second scoring model', () => {
+    const data = { strengthLabel: 'Contract', distance: 'SameModule', volatility: 'Low', balanceLabel: 'Balanced', classification: 'Acceptable' };
+    assert.equal(analyzeCoupling(data).status, 'good');
+    assert.equal(analyzeCoupling({ ...data, balanceLabel: 'NeedsReview' }).status, 'acceptable');
+    assert.equal(analyzeCoupling({ ...data, issue: { severity: 'High' } }).status, 'critical');
+    assert.equal(analyzeCoupling({ target: 'std::thing' }).status, 'unknown');
+});
+
+test('parallel observations retain one real assessment independent of input order', () => {
+    const nodes = [{ id: 'a' }, { id: 'b' }];
+    const cohesive = { id: 'e1', source: 'a', target: 'b', dimensions: {
+        strength: { value: 1, label: 'Intrusive' }, distance: { value: 0.1, label: 'SameModule' },
+        volatility: { value: 1, label: 'High' }, balance: { value: .9, label: 'Balanced', classification: 'High Cohesion' },
+    } };
+    const distant = { id: 'e2', source: 'a', target: 'b', dimensions: {
+        strength: { value: .75, label: 'Functional' }, distance: { value: .5, label: 'DifferentModule' },
+        volatility: { value: 1, label: 'High' }, balance: { value: .25, label: 'NeedsRefactoring', classification: 'Global Complexity' },
+    } };
+    const first = buildElements({ nodes, edges: [cohesive, distant] });
+    const reverse = buildElements({ nodes, edges: [distant, cohesive] });
+    assert.deepEqual(first, reverse);
+    const edge = first.find(element => element.data.edgeType === 'module').data;
+    assert.equal(edge.strength, .75);
+    assert.equal(edge.distance, 'DifferentModule');
+    assert.equal(edge.balanceLabel, 'NeedsRefactoring');
+    assert.equal(edge.classification, 'Global Complexity');
+    assert.equal(edge.count, 2);
+});
+
+test('selecting a finding inspects its observation even when the 2D edge is aggregated', context => {
+    const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    const { graphData, selectedNode, selectedEdge } = state;
+    context.after(() => {
+        Object.assign(state, { graphData, selectedNode, selectedEdge });
+        if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
+        else delete globalThis.document;
+    });
+    globalThis.document = { getElementById: () => null };
+    const observed = { id: 'e1', source: 'consumer', target: 'provider', location: { line: 23 } };
+    state.graphData = { edges: [observed] };
+    const finding = { severity: 'High', focus: { edge_id: 'e1' } };
+    showFocusedIssueDetails(finding, { data: () => ({ id: 'group', location: { line: 5 } }) });
+    assert.equal(state.selectedEdge.id, observed.id);
+    assert.deepEqual(state.selectedEdge.location, observed.location);
+    assert.equal(state.selectedEdge.issue, finding);
+});
 
 test('initial 3D positions are deterministic and keep every node apart', () => {
     const nodes = Array.from({ length: 49 }, (_, i) => ({ id: `module-${i}` }));

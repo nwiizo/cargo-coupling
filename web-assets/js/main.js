@@ -4,7 +4,7 @@
 
 import { CONFIG, state, setGraphData, setSelectedNode, setSelectedEdge, setShowItems, setCy, setGraphProjection, set3dMode, setActiveRevision } from './state.js';
 import { setupLanguageToggle, updateUILanguage } from './i18n.js';
-import { initCytoscape, buildElements, getCytoscapeStyle, getLayoutConfig, applyLayout, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, clearHighlights } from './coupling-graph-2d.js';
+import { initCytoscape, buildElements, edgeDataToDetails, getCytoscapeStyle, getLayoutConfig, applyLayout, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, clearHighlights } from './coupling-graph-2d.js';
 import { initCouplingGraph3d, render3dMode, focusLink3d, focusNode3d, clear3dFocus, resize3dGraph, refresh3dLanguage } from './coupling-graph-3d.js';
 import {
     updateHeaderStats,
@@ -91,8 +91,12 @@ async function init() {
 
         // Handle initial URL selection after everything is ready
         const initial = getInitialSelection();
-        if (!initial.module && initial.view !== 'tree') document.getElementById('canvas-view-structure')?.click();
-        handleInitialUrlSelection();
+        if (initial.view === 'design') {
+            document.getElementById('canvas-view-design')?.click();
+        } else {
+            if (!initial.module && initial.view !== 'tree') document.getElementById('canvas-view-structure')?.click();
+            handleInitialUrlSelection();
+        }
 
     } catch (error) {
         console.error('Failed to initialize:', error);
@@ -496,7 +500,7 @@ function selectEdgeFromGraphData(edgeData) {
         const selectedEdge = edge.first();
         const apiLinkId = edgeData.id || selectedEdge.data('originalIds')?.[0] || selectedEdge.id();
         highlightDependencyPath(selectedEdge);
-        showEdgeDetails(selectedEdge.data());
+        showEdgeDetails(edgeDataToDetails(edgeData));
         focusLink3d(apiLinkId, [selectedEdge.data('source'), selectedEdge.data('target')]);
         return;
     }
@@ -505,26 +509,6 @@ function selectEdgeFromGraphData(edgeData) {
     focusLink3d(edgeData.id, [edgeData.source, edgeData.target]);
 }
 
-function edgeDataToDetails(edgeData) {
-    const dims = edgeData.dimensions || {};
-    return {
-        id: edgeData.id,
-        source: edgeData.source,
-        target: edgeData.target,
-        edgeType: edgeData.issue?.type === 'HiddenCoupling' ? 'hidden-coupling' : 'module',
-        strength: dims.strength?.value ?? 0.5,
-        strengthLabel: dims.strength?.label ?? 'Model',
-        distance: dims.distance?.label ?? 'DifferentModule',
-        volatility: dims.volatility?.label ?? 'Low',
-        balance: dims.balance?.value ?? 0.5,
-        balanceLabel: dims.balance?.label ?? 'Acceptable',
-        classification: dims.balance?.classification || '',
-        classificationJa: dims.balance?.classification_ja || '',
-        issue: edgeData.issue,
-        couplingRatio: edgeData.coupling_ratio,
-        coChangeCount: edgeData.co_change_count
-    };
-}
 
 /**
  * Focus on an item internally (used by URL navigation)

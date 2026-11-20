@@ -1,5 +1,7 @@
+use super::target::ModuleIndex;
+use crate::paths::config_matching_path;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
 use crate::volatility::{TemporalCoupling, Volatility};
 
@@ -43,6 +45,11 @@ impl ProjectMetrics {
     /// Create an empty project metrics accumulator.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Evidence available to compatibility entrypoints whose caller supplies no run status.
+    pub(crate) fn has_git_observations(&self) -> bool {
+        !self.file_changes.is_empty() || !self.temporal_couplings.is_empty()
     }
 
     /// Add module metrics
@@ -163,91 +170,26 @@ impl ProjectMetrics {
             return;
         }
 
-        // Debug: print file changes for troubleshooting
-        #[cfg(test)]
-        {
-            eprintln!("DEBUG: file_changes = {:?}", self.file_changes);
-        }
-
-        let module_paths: Vec<(String, PathBuf)> = self
-            .modules
-            .iter()
-            .map(|(name, module)| (name.clone(), module.path.clone()))
-            .collect();
-
+        let modules = ModuleIndex::new(&self.modules, &self.workspace_members);
         for coupling in &mut self.couplings {
-            if let Some(module_path) = target_module_path(&coupling.target, &module_paths) {
+            if let Some(module) = modules.provider(coupling) {
                 coupling.volatility = Volatility::from_count(change_count_for_module_path(
-                    module_path,
+                    &module.path,
                     &self.file_changes,
                 ));
-                continue;
-            }
-
-            // Try to find the target file in file_changes
-            // The target is like "crate::module" or "crate::module::Type"
-            // We need to match this against file paths like "src/module.rs"
-            //
-            // Special cases in Rust module system:
-            // - crate root "crate::crate_name" or "crate_name::crate_name" -> lib.rs
-            // - binary entry point -> main.rs
-            // - glob imports "crate::*" -> don't match specific files
-
-            // Extract all path components from target
-            let target_segments: Vec<&str> = coupling.target.split("::").collect();
-
-            // Find the best matching file
-            let mut max_target_changes = 0usize;
-            for (file_path, &changes) in &self.file_changes {
-                // Get file name without .rs extension (e.g., "balance" from "src/balance.rs")
-                let file_name = file_path
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(file_path)
-                    .trim_end_matches(".rs");
-
-                // Check if any target path component matches the file name
-                let target_matches_file = target_segments.iter().any(|part| {
-                    let part_lower = part.to_lowercase();
-                    let file_lower = file_name.to_lowercase();
-
-                    // Direct match: "balance" == "balance"
-                    if part_lower == file_lower {
-                        return true;
-                    }
-
-                    // Handle crate root: if the part matches the crate name and file is lib.rs
-                    // e.g., "cargo_coupling" matches "lib" (lib.rs is the crate root)
-                    if file_lower == "lib" && !part.is_empty() && *part != "*" {
-                        // This could be the crate root reference
-                        // We also match if the part is the crate name (same as first path component)
-                        if target_segments.len() >= 2 && target_segments[1] == *part {
-                            return true;
-                        }
-                    }
-
-                    // Handle underscore vs hyphen in crate names
-                    // e.g., "cargo-coupling" might appear as "cargo_coupling" in code
-                    let part_normalized = part_lower.replace('-', "_");
-                    let file_normalized = file_lower.replace('-', "_");
-                    if part_normalized == file_normalized {
-                        return true;
-                    }
-
-                    // Path contains match: "web" matches "src/web/graph.rs"
-                    if file_path.to_lowercase().contains(&part_lower) {
-                        return true;
-                    }
-
-                    false
+            } else if self.modules.is_empty() && coupling.distance != Distance::DifferentCrate {
+                // Library clients can supply edges and Git counts without a module inventory.
+                // Use only an exact file stem and decline ambiguous filenames.
+                let mut matches = self.file_changes.iter().filter(|(path, _)| {
+                    let stem = Path::new(path).file_stem().and_then(|name| name.to_str());
+                    coupling.target.split("::").any(|part| Some(part) == stem)
                 });
-
-                if target_matches_file {
-                    max_target_changes = max_target_changes.max(changes);
+                if let Some((_, count)) = matches.next()
+                    && matches.next().is_none()
+                {
+                    coupling.volatility = Volatility::from_count(*count);
                 }
             }
-
-            coupling.volatility = Volatility::from_count(max_target_changes);
         }
     }
 
@@ -261,36 +203,29 @@ impl ProjectMetrics {
             return 0;
         }
 
-        let mut module_paths = HashMap::new();
-        let has_subdomain_config = config.has_subdomain_config();
-        for (name, module) in &mut self.modules {
-            let relative_path = path_for_config_matching(&module.path, config);
-            if has_subdomain_config {
-                module.subdomain = config.get_subdomain(&relative_path);
+        if config.has_subdomain_config() {
+            for module in self.modules.values_mut() {
+                module.subdomain =
+                    config.get_subdomain(&config_matching_path(&module.path, config.config_root()));
             }
-
-            insert_module_path_aliases(&mut module_paths, name, module, &relative_path);
         }
-
+        let modules = ModuleIndex::new(&self.modules, &self.workspace_members);
+        let paths: HashMap<_, _> = self
+            .modules
+            .values()
+            .map(|module| {
+                (
+                    &module.path,
+                    config_matching_path(&module.path, config.config_root()),
+                )
+            })
+            .collect();
         let mut override_count = 0;
         for coupling in &mut self.couplings {
-            let target_short = coupling
-                .target
-                .rsplit("::")
-                .next()
+            let lookup = modules
+                .provider(coupling)
+                .map(|module| paths[&module.path].as_str())
                 .unwrap_or(&coupling.target);
-            let lookup = module_paths
-                .get(&coupling.target)
-                .or_else(|| module_paths.get(target_short))
-                .or_else(|| {
-                    coupling
-                        .target
-                        .rsplit("::")
-                        .find_map(|segment| module_paths.get(segment))
-                })
-                .map(String::as_str)
-                .unwrap_or(coupling.target.as_str());
-
             if let Some(override_vol) = config.get_volatility_override(lookup) {
                 coupling.volatility = override_vol;
                 override_count += 1;
@@ -611,15 +546,17 @@ impl ProjectMetrics {
 
     /// Get types with serde derives (potential DTO exposure)
     pub fn serde_types(&self) -> Vec<(&str, &TypeDefinition)> {
-        self.modules
-            .iter()
-            .flat_map(|(module_name, m)| {
-                m.type_definitions
-                    .values()
-                    .filter(|t| t.has_serde_derive)
-                    .map(move |t| (module_name.as_str(), t))
-            })
+        self.named_types()
+            .filter(|(_, ty)| ty.has_serde_derive)
             .collect()
+    }
+
+    fn named_types(&self) -> impl Iterator<Item = (&str, &TypeDefinition)> {
+        self.modules.iter().flat_map(|(module, data)| {
+            data.type_definitions
+                .values()
+                .map(move |ty| (module.as_str(), ty))
+        })
     }
 
     /// Identify potential God Modules
@@ -650,14 +587,8 @@ impl ProjectMetrics {
 
     /// Get types with exposed public fields
     pub fn types_with_public_fields(&self) -> Vec<(&str, &TypeDefinition)> {
-        self.modules
-            .iter()
-            .flat_map(|(module_name, m)| {
-                m.type_definitions
-                    .values()
-                    .filter(|t| t.public_field_count > 0 && !t.is_trait)
-                    .map(move |t| (module_name.as_str(), t))
-            })
+        self.named_types()
+            .filter(|(_, ty)| ty.public_field_count > 0 && !ty.is_trait)
             .collect()
     }
 }
@@ -678,23 +609,6 @@ fn should_keep_existing_type_registration(
     }
 }
 
-fn target_module_path<'a>(target: &str, module_paths: &'a [(String, PathBuf)]) -> Option<&'a Path> {
-    let target = target.trim_start_matches("crate::");
-    let target_without_crate = target.split_once("::").and_then(|(_, rest)| {
-        module_paths
-            .iter()
-            .any(|(module, _)| rest == module || rest.starts_with(&format!("{module}::")))
-            .then_some(rest)
-    });
-    let target = target_without_crate.unwrap_or(target);
-
-    module_paths
-        .iter()
-        .filter(|(module, _)| target == module || target.starts_with(&format!("{module}::")))
-        .max_by_key(|(module, _)| module.len())
-        .map(|(_, path)| path.as_path())
-}
-
 fn change_count_for_module_path(
     module_path: &Path,
     file_changes: &HashMap<String, usize>,
@@ -713,66 +627,6 @@ fn module_file_paths_match(module_path: &str, git_path: &str) -> bool {
     module_path == git_path
         || module_path.ends_with(&format!("/{git_path}"))
         || git_path.ends_with(&format!("/{module_path}"))
-}
-
-fn insert_module_path_aliases(
-    module_paths: &mut HashMap<String, String>,
-    key_name: &str,
-    module: &ModuleMetrics,
-    relative_path: &str,
-) {
-    module_paths.insert(key_name.to_string(), relative_path.to_string());
-    module_paths.insert(module.name.clone(), relative_path.to_string());
-
-    if let Some(short_name) = key_name.rsplit("::").next() {
-        module_paths.insert(short_name.to_string(), relative_path.to_string());
-    }
-
-    if let Some(short_name) = module.name.rsplit("::").next() {
-        module_paths.insert(short_name.to_string(), relative_path.to_string());
-    }
-
-    if let Some(file_stem) = module.path.file_stem().and_then(|stem| stem.to_str()) {
-        module_paths.insert(file_stem.to_string(), relative_path.to_string());
-    }
-}
-
-fn path_for_config_matching(file_path: &Path, config: &impl MetricsConfig) -> String {
-    let normalized_file = normalize_path_for_matching(file_path);
-    let path = config
-        .config_root()
-        .map(normalize_path_for_matching)
-        .and_then(|base| {
-            normalized_file
-                .strip_prefix(base)
-                .ok()
-                .map(Path::to_path_buf)
-        })
-        .unwrap_or(normalized_file);
-
-    path.to_string_lossy().replace('\\', "/")
-}
-
-fn normalize_path_for_matching(path: &Path) -> PathBuf {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
-    };
-
-    let mut normalized = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    normalized
 }
 
 /// Summary of circular dependencies.

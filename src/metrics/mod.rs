@@ -7,6 +7,7 @@ pub mod coupling;
 pub mod dimensions;
 pub mod module;
 pub mod project;
+pub(crate) mod target;
 
 pub use crate::volatility::{TemporalCoupling, Volatility};
 pub use coupling::{CouplingLocation, CouplingMetrics};
@@ -20,6 +21,57 @@ pub use project::{CircularDependencySummary, ProjectMetrics};
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn volatility_uses_the_identified_provider() {
+        let mut project = ProjectMetrics::new();
+        for module in ["sales::rules", "tax::rules"] {
+            project.add_module(ModuleMetrics::new(
+                format!("src/{}.rs", module.replace("::", "/")).into(),
+                module.into(),
+            ));
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join(".coupling.toml"),
+            "[volatility]\nhigh=['**/sales/rules.rs']\nlow=['**/tax/rules.rs']\n",
+        )
+        .unwrap();
+        let mut config = crate::load_compiled_config(tmp.path()).unwrap();
+        for (target, distance) in [
+            ("sales::rules", Distance::DifferentModule),
+            ("tax::rules", Distance::DifferentModule),
+            ("rules", Distance::DifferentModule),
+            ("vendor::rules", Distance::DifferentCrate),
+        ] {
+            project.add_coupling(CouplingMetrics::new(
+                "app".into(),
+                target.into(),
+                IntegrationStrength::Model,
+                distance,
+                Volatility::Medium,
+            ));
+        }
+        assert_eq!(project.apply_config_volatility_overrides(&mut config), 2);
+        let levels: Vec<_> = project
+            .couplings
+            .iter()
+            .map(|edge| edge.volatility)
+            .collect();
+        assert_eq!(
+            levels,
+            [
+                Volatility::High,
+                Volatility::Low,
+                Volatility::Medium,
+                Volatility::Medium
+            ]
+        );
+        project.file_changes.insert("src/sales/rules.rs".into(), 12);
+        project.update_volatility_from_git();
+        assert_eq!(project.couplings[2].volatility, Volatility::Medium);
+        assert_eq!(project.couplings[3].volatility, Volatility::Medium);
+    }
 
     #[test]
     fn test_integration_strength_values() {

@@ -34,6 +34,8 @@ pub struct AppState {
     pub no_git: bool,
     pub design: crate::design::model::DesignAssessment,
     pub context_path: Option<PathBuf>,
+    /// Capacity shared by all requests, including detached blocking work.
+    pub design_slots: Arc<tokio::sync::Semaphore>,
 }
 
 /// Configuration for the web server
@@ -77,6 +79,17 @@ pub async fn start_server(
     thresholds: IssueThresholds,
     config: ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let git_used = !config.no_git && metrics.has_git_observations();
+    start_server_with_history_status(metrics, thresholds, config, git_used).await
+}
+
+/// Start the server with the Git observation status supplied by the analysis run.
+pub async fn start_server_with_history_status(
+    metrics: ProjectMetrics,
+    thresholds: IssueThresholds,
+    config: ServerConfig,
+    git_used: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let history = load_history(&config, &thresholds);
     let source_root = analysis_source_root(&config.analysis_path);
     let design = crate::design::assessment::assess(
@@ -88,10 +101,10 @@ pub async fn start_server(
             context_path: config.context_path.as_deref(),
             changed_since: config.changed_since.as_deref(),
             baseline: config.baseline.as_deref(),
+            focus: None,
             max_depth: config.impact_depth,
             git_months: config.git_months,
-            git_used: !config.no_git
-                && (!metrics.file_changes.is_empty() || !metrics.temporal_couplings.is_empty()),
+            git_used,
         },
     )?;
 
@@ -107,6 +120,7 @@ pub async fn start_server(
         no_git: config.no_git,
         design,
         context_path: config.context_path,
+        design_slots: Arc::new(tokio::sync::Semaphore::new(1)),
     });
 
     let app = Router::new()
@@ -117,7 +131,7 @@ pub async fn start_server(
     let addr = SocketAddr::from(([127, 0, 0, 1], config.port));
     let listener = TcpListener::bind(addr).await?;
 
-    let url = format!("http://localhost:{}", config.port);
+    let url = format!("http://localhost:{}", listener.local_addr()?.port());
     eprintln!("Starting web server at {}", url);
 
     if config.open_browser {

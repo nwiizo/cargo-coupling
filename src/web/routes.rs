@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli_output::JsonHistory;
 use crate::history::analyze_ref;
-use crate::manifest::{ManifestContext, build_manifest};
+use crate::manifest::AnalysisManifest;
 use crate::report::{TextReportOptions, generate_report_with_options};
 
 use super::graph;
@@ -118,7 +118,11 @@ async fn get_graph(
             !state.no_git,
         ) {
             Ok(analysis) => {
-                let graph = graph::project_to_graph(&analysis.metrics, &state.thresholds);
+                let graph = graph::project_to_graph_with_history(
+                    &analysis.metrics,
+                    &state.thresholds,
+                    !state.no_git,
+                );
                 Json(graph).into_response()
             }
             Err(e) => (
@@ -128,23 +132,22 @@ async fn get_graph(
                 .into_response(),
         }
     } else {
-        let graph = graph::project_to_graph(&state.metrics, &state.thresholds);
+        let graph = graph::project_to_graph_with_history(
+            &state.metrics,
+            &state.thresholds,
+            state.design.provenance.git_used,
+        );
         Json(graph).into_response()
     }
 }
 
 /// GET /api/report - Returns the current Markdown analysis report.
 async fn get_report(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let manifest = build_manifest(&ManifestContext {
-        git_used: !state.no_git
-            && (!state.metrics.file_changes.is_empty()
-                || !state.metrics.temporal_couplings.is_empty()),
-        tests_excluded: state.analysis_config.exclude_tests,
-        parse_failures: state.metrics.parse_failures,
-        skipped_crates: state.metrics.skipped_crates.clone(),
-        boundary_skipped_files: state.metrics.boundary_skipped_files,
-        dead_config_patterns: state.metrics.dead_config_patterns.clone(),
-    });
+    let manifest = AnalysisManifest::from_metrics(
+        &state.metrics,
+        state.design.provenance.git_used,
+        state.analysis_config.exclude_tests,
+    );
     let mut output = Vec::new();
 
     match generate_report_with_options(
@@ -338,7 +341,11 @@ async fn get_module(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ModuleQuery>,
 ) -> impl IntoResponse {
-    let graph = graph::project_to_graph(&state.metrics, &state.thresholds);
+    let graph = graph::project_to_graph_with_history(
+        &state.metrics,
+        &state.thresholds,
+        state.design.provenance.git_used,
+    );
 
     // Find the module by name
     if let Some(node) = graph

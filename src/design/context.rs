@@ -63,6 +63,9 @@ pub struct BusinessRule {
     pub id: String,
     pub modules: Vec<String>,
     pub description: String,
+    /// Test names or evidence references; declarations are not execution results.
+    #[serde(default)]
+    pub verification: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -134,6 +137,10 @@ pub struct Decision {
     pub review_on: Vec<ReviewTrigger>,
     /// Optional previously recorded context fingerprint.
     pub context_fingerprint: Option<String>,
+    #[serde(default)]
+    pub evidence: Vec<String>,
+    #[serde(default)]
+    pub rejected_options: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -197,6 +204,9 @@ impl DesignContext {
         for rule in &self.rules {
             selectors(&rule.modules)?;
             nonempty(&rule.description)?;
+            for reference in &rule.verification {
+                nonempty(reference)?;
+            }
         }
         for relation in &self.relationships {
             selector(&relation.source)?;
@@ -231,6 +241,9 @@ impl DesignContext {
         for decision in &self.decisions {
             selectors(&decision.modules)?;
             nonempty(&decision.reason)?;
+            for reference in decision.evidence.iter().chain(&decision.rejected_options) {
+                nonempty(reference)?;
+            }
             if decision.review_on.is_empty() {
                 return Err(ContextError::Invalid(format!(
                     "{} needs review triggers",

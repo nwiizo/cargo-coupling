@@ -336,7 +336,7 @@ pub fn generate_impact_output_with_depth<W: Write>(
     };
     writeln!(
         writer,
-        "Risk Score: {} {} ({}/100)",
+        "Review attention (heuristic, not failure probability): {} {} ({}/100)",
         risk_icon, analysis.risk_level, analysis.risk_score
     )?;
 

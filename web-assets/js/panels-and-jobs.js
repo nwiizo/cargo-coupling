@@ -6,7 +6,7 @@ import { state, setSelectedNode } from './state.js';
 import { t } from './i18n.js';
 import { highlightDependencyPath, focusOnNode, clearHighlights } from './coupling-graph-2d.js';
 import { focusLink3d, focusNode3d } from './coupling-graph-3d.js';
-import { showEdgeDetails, showNodeDetails, showBlastRadius, clearBlastRadius, clearDetails } from './ui-controls.js';
+import { showFocusedIssueDetails, showNodeDetails, showBlastRadius, clearBlastRadius, clearDetails } from './ui-controls.js';
 import { escapeHtml } from './utils.js';
 
 // =====================================================
@@ -18,150 +18,27 @@ export function populateCriticalIssues() {
     const countBadge = document.getElementById('critical-count');
     if (!container || !state.graphData) return;
 
-    const criticalEdges = state.graphData.edges
-        .map(edge => {
-            const dims = edge.dimensions || {};
-            const strength = dims.strength?.label || 'Unknown';
-            const distance = dims.distance?.label || 'Unknown';
-            const volatility = dims.volatility?.label || 'Unknown';
-            const classification = dims.balance?.classification || '';
-            const classificationJa = dims.balance?.classification_ja || '';
-
-            let priority = 0;
-            let status = 'good';
-            let icon = '✅';
-
-            if (classification === 'Global Complexity' || classification === 'Needs Refactoring') {
-                priority = 3;
-                status = 'critical';
-                icon = '❌';
-            } else if (classification === 'Local Complexity') {
-                priority = 1;
-                status = 'possible-issue';
-                icon = '🤔';
-            } else if (classification === 'Acceptable') {
-                priority = 0;
-                status = 'good';
-                icon = '🔒';
-            }
-
-            return {
-                ...edge,
-                strength,
-                distance,
-                volatility,
-                classification,
-                classificationJa,
-                priority,
-                status,
-                icon
-            };
-        })
-        .filter(e => e.priority >= 1)
-        .sort((a, b) => b.priority - a.priority)
-        .slice(0, 5);
-
+    const findings = (state.graphData.issues || []).filter(issue =>
+        issue.severity === 'High' || issue.severity === 'Critical'
+    );
     if (countBadge) {
-        countBadge.textContent = criticalEdges.length;
-        countBadge.style.display = criticalEdges.length > 0 ? 'inline-block' : 'none';
+        countBadge.textContent = findings.length;
+        countBadge.style.display = findings.length ? 'inline-block' : 'none';
     }
-
-    if (criticalEdges.length === 0) {
-        container.innerHTML = `
-            <div style="padding: 0.5rem; background: rgba(34, 197, 94, 0.1); border-radius: 0.375rem; color: var(--accent-green);">
-                ✅ ${t('no_issues')}
-            </div>
-        `;
+    if (!findings.length) {
+        container.innerHTML = `<p class="no-data">${t('no_issues')}</p>`;
         return;
     }
-
-    container.innerHTML = criticalEdges.map(edge => {
-        const sourceName = edge.source.split('::').pop();
-        const targetName = edge.target.split('::').pop();
-        const fix = getConcreteFix(edge.strength, edge.distance, edge.volatility, sourceName, targetName);
-        const classificationDisplay = state.currentLang === 'ja' ? edge.classificationJa : edge.classification;
-
-        return `
-            <div class="critical-issue-item ${edge.status}" data-edge-id="${edge.id}">
-                <div class="critical-issue-header">
-                    <span class="critical-issue-icon">${edge.icon}</span>
-                    <span class="critical-issue-path">${sourceName} → ${targetName}</span>
-                </div>
-                <div class="critical-issue-dims">
-                    <span class="dim-tag strength">${edge.strength}</span>
-                    <span class="dim-tag distance">${edge.distance}</span>
-                    <span class="dim-tag volatility">${edge.volatility}</span>
-                </div>
-                <div class="critical-issue-classification">${classificationDisplay}</div>
-                ${fix ? `
-                <div class="critical-issue-fix">
-                    <strong>${t('fix_action')}:</strong> ${fix.action}
-                    ${fix.code ? `<pre class="fix-code"><code>${escapeHtml(fix.code)}</code></pre>` : ''}
-                </div>
-                ` : ''}
-            </div>
-        `;
-    }).join('');
-
-    container.querySelectorAll('.critical-issue-item').forEach(item => {
-        item.addEventListener('click', () => {
-            const edgeId = item.dataset.edgeId;
-            const edgeData = criticalEdges.find(edge => edge.id === edgeId);
-            let edge = state.cy.getElementById(edgeId);
-            if (!edge.length && edgeData) {
-                edge = state.cy.edges().filter(e =>
-                    e.data('source') === edgeData.source && e.data('target') === edgeData.target
-                );
-            }
-            if (edge.length) {
-                const selectedEdge = edge.first();
-                highlightDependencyPath(selectedEdge);
-                showEdgeDetails(selectedEdge.data());
-                focusLink3d(edgeId, [selectedEdge.data('source'), selectedEdge.data('target')]);
-            }
-        });
+    const visible = findings.slice(0, 5);
+    container.innerHTML = visible.map(issue => `
+        <button type="button" class="critical-issue-item critical" data-issue-id="${escapeHtml(issue.id)}">
+            <strong>${escapeHtml(issue.source)} → ${escapeHtml(issue.target)}</strong>
+            <span>${escapeHtml(issue.description)}</span>
+        </button>
+    `).join('');
+    container.querySelectorAll('[data-issue-id]').forEach(button => {
+        button.addEventListener('click', () => focusIssue(visible.find(issue => issue.id === button.dataset.issueId)));
     });
-}
-
-function getConcreteFix(strength, distance, volatility, sourceName, targetName) {
-    const isStrongCoupling = ['Intrusive', 'Functional'].includes(strength);
-    const isFar = ['DifferentModule', 'DifferentCrate'].includes(distance);
-    const isHighVolatility = volatility === 'High';
-
-    if (isStrongCoupling && isFar && isHighVolatility) {
-        if (strength === 'Intrusive') {
-            return {
-                action: t('fix_intrusive'),
-                code: `// Before: Direct field access
-let value = ${targetName.toLowerCase()}.field;
-
-// After: Abstract with trait
-trait ${targetName}Provider {
-    fn get_value(&self) -> Value;
-}`
-            };
-        }
-        return {
-            action: t('fix_functional'),
-            code: `// Before: Concrete type dependency
-fn process(dep: &${targetName}) { ... }
-
-// After: Abstract via trait
-trait ${targetName}Trait {
-    fn do_something(&self);
-}`
-        };
-    }
-
-    if (isStrongCoupling && isFar && volatility === 'Medium') {
-        return { action: t('fix_monitor'), code: null };
-    }
-
-    if (!isStrongCoupling && !isFar) {
-        return { action: t('fix_local'), code: null };
-    }
-
-    return null;
 }
 
 // =====================================================
@@ -172,30 +49,10 @@ export function populateHotspots() {
     const container = document.getElementById('hotspot-list');
     if (!container || !state.graphData) return;
 
-    const hotspots = state.graphData.nodes.map(node => {
-        let score = 0;
-        const relatedIssues = state.graphData.edges.filter(e =>
-            (e.source === node.id || e.target === node.id) && e.issue
-        ).length;
-
-        score += relatedIssues * 30;
-        score += ((node.metrics?.couplings_out || 0) + (node.metrics?.couplings_in || 0)) * 5;
-        if (node.metrics?.health === 'critical') score += 50;
-        else if (node.metrics?.health === 'needs_review') score += 20;
-        if (node.in_cycle) score += 40;
-
-        return {
-            id: node.id,
-            label: node.label,
-            score,
-            issues: relatedIssues,
-            health: node.metrics?.health || 'unknown',
-            inCycle: node.in_cycle
-        };
-    })
-    .filter(n => n.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+    const hotspots = (state.graphData.hotspots || []).slice(0, 5).map(h => ({
+        id: h.module, label: h.module, score: h.score,
+        issues: h.issues.length, inCycle: h.in_cycle
+    }));
 
     if (hotspots.length === 0) {
         container.innerHTML = '<div class="no-data">No hotspots detected</div>';
@@ -374,7 +231,7 @@ function focusIssue(issue) {
         }
         if (edge.length) {
             highlightDependencyPath(edge.first());
-            showEdgeDetails(edge.first().data());
+            showFocusedIssueDetails(issue, edge.first());
         }
     } else if (focus.node_ids?.length && state.cy) {
         clearHighlights();

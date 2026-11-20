@@ -729,8 +729,8 @@ mod tests {
     fn test_health_grade_calculation() {
         let mut issues = HashMap::new();
 
-        // No issues with >= 20 couplings = S (over-optimized warning)
-        assert_eq!(calculate_health_grade(&issues, 100), HealthGrade::S);
+        // Absence of findings is not evidence of over-engineering.
+        assert_eq!(calculate_health_grade(&issues, 100), HealthGrade::A);
 
         // No issues with 10-19 couplings = A (well-balanced)
         assert_eq!(calculate_health_grade(&issues, 15), HealthGrade::A);

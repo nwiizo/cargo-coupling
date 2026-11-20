@@ -49,6 +49,76 @@ fn cargo_coupling() -> Command {
     Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
 }
 
+#[test]
+fn declared_prelude_exempts_only_the_matching_provider_from_fan_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    for name in ["prelude", "other"] {
+        write(&tmp.path().join(format!("{name}.rs")), "pub fn run() {}");
+    }
+    for name in ["first", "second"] {
+        write(
+            &tmp.path().join(format!("{name}.rs")),
+            "pub fn call() { crate::prelude::run(); crate::other::run(); }",
+        );
+    }
+    write(
+        &tmp.path().join(".coupling.toml"),
+        "[analysis]\nprelude_modules=['prelude.rs']\n",
+    );
+    let config = load_compiled_config(tmp.path()).unwrap();
+    let metrics = analyze_workspace_with_config(tmp.path(), &config).unwrap();
+    let thresholds = cargo_coupling::IssueThresholds {
+        max_dependents: 1,
+        ..Default::default()
+    };
+    let report = cargo_coupling::analyze_project_balance_with_thresholds(&metrics, &thresholds);
+    let targets: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.issue_type == IssueType::HighAfferentCoupling)
+        .map(|i| i.target.as_str())
+        .collect();
+    assert_eq!(targets, ["other"]);
+}
+
+#[test]
+fn config_selection_honors_custom_names_and_reports_invalid_files() {
+    let tmp = fixture_project();
+    let run = |extra: &[&str]| {
+        cargo_coupling()
+            .current_dir(tmp.path())
+            .args(["coupling", "--json", "--no-git"])
+            .args(extra)
+            .arg("src")
+            .output()
+            .unwrap()
+    };
+    write(
+        &tmp.path().join("custom.toml"),
+        "[analysis]\nexclude_tests=true\n",
+    );
+    let selected = run(&["--config", "custom.toml"]);
+    assert!(selected.status.success());
+    assert!(String::from_utf8_lossy(&selected.stdout).contains("Test code was excluded"));
+    assert!(!run(&["--config", "missing.toml"]).status.success());
+    write(&tmp.path().join(".coupling.toml"), "invalid=[");
+    assert!(!run(&[]).status.success());
+}
+
+#[test]
+fn relative_scope_finds_configuration_above_working_directory() {
+    let tmp = fixture_project();
+    let config = tmp.path().join(".coupling.toml");
+    write(&config, "[analysis]\nexclude_tests=true\n");
+    let output = cargo_coupling()
+        .current_dir(tmp.path().join("src"))
+        .args(["coupling", "--json", "--no-git", "."])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Test code was excluded"));
+}
+
 fn manifest_for_config(config_toml: &str) -> AnalysisManifest {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();

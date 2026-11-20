@@ -24,12 +24,17 @@ const labels = {
     new: ['New issues', '新しい問題'], worsened: ['Worsened issues', '悪化した問題'], resolved: ['Resolved issues', '解消した問題'],
     download: ['Download analysis JSON', '解析結果をJSONで保存'], close: ['Close source', 'ソースを閉じる'],
     baseline: ['Baseline changes', '比較元からの変化'],
+    questions: ['Questions before changing', '変更前の確認事項'],
     changes: ['Changed source items', '変更した関数・型'],
     origins: ['Changed modules', '変更元モジュール'], reviews: ['Decisions to revisit', '見直しが必要な判断'],
     pathsHelp: ['Arrows run from the change origin toward affected consumers; dependency arrows run in the opposite direction.', '矢印は変更元から影響先への順序です。コードの依存方向とは逆になります。'],
 };
 const tr = key => labels[key]?.[state.currentLang === 'ja' ? 1 : 0] ?? key;
-const sections = ['priorities', 'impact', 'changes', 'baseline', 'exposures', 'abstractions', 'shared_reasons', 'hierarchy', 'alternatives', 'scenarios', 'external_interfaces', 'coordination', 'lifecycle', 'runtime', 'decisions', 'edges', 'coverage'];
+const sectionGroups = [
+    ['Change review', '変更の確認', ['impact', 'changes', 'baseline', 'questions']],
+    ['Design decisions', '設計の判断', ['priorities', 'alternatives', 'scenarios', 'decisions']],
+    ['Supporting evidence', '判断の根拠', ['exposures', 'abstractions', 'shared_reasons', 'hierarchy', 'external_interfaces', 'coordination', 'lifecycle', 'runtime', 'edges', 'coverage']],
+];
 const factLabels = {
     Change: '変化', Issue: '問題', Severity: '重要度', Balance: 'バランス', Priority: '優先度', Issues: '問題数',
     'Business weight': '事業上の重要度', 'Effort (days)': '見積もり日数', 'Priority / day': '1日あたりの優先度',
@@ -45,7 +50,7 @@ const factLabels = {
     'Observed usage': '観測した使い方', 'Inferred strength': '推定した結合の強さ', Revision: 'ソースの時点',
 };
 let report, activeSection = 'priorities', filter = '', limit = 50, onFocus;
-let request, sourceRequest, impactRequest, explored, selectedOrigin = '', selectedDepth = '', reference = '', effortOrder = false;
+let request, sourceRequest, selectedOrigin = '', selectedDepth = '', reference = '', effortOrder = false;
 
 function el(tag, text, className) {
     const node = document.createElement(tag);
@@ -122,22 +127,22 @@ async function json(path, signal) {
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     return data;
 }
-async function load(compare = false) {
-    impactRequest?.abort();
+async function load(compare = false, focus = false) {
     request?.abort(); request = new AbortController();
     const status = document.getElementById('design-status');
     status.textContent = tr('loading'); status.setAttribute('aria-busy', 'true');
     const params = new URLSearchParams();
     if (compare && reference.trim()) params.set('changed_since', reference.trim());
+    if (focus && selectedOrigin) params.set('focus', selectedOrigin);
     if (selectedDepth) params.set('depth', selectedDepth);
     try {
         const next = await json(`/api/design?${params}`, request.signal);
-        report = next; explored = undefined; limit = 50;
-        if (compare) activeSection = 'impact';
+        report = next; limit = 50;
+        if (compare || focus) activeSection = 'impact';
         status.textContent = ''; render();
     } catch (error) {
         if (error.name === 'AbortError') return;
-        status.replaceChildren(el('span', error.message), button(tr('retry'), () => load(compare)));
+        status.replaceChildren(el('span', error.message), button(tr('retry'), () => load(compare, focus)));
     } finally { status.removeAttribute('aria-busy'); }
 }
 
@@ -176,21 +181,18 @@ function render() {
     const depth = input('design-depth', selectedDepth, 'number'); depth.addEventListener('input', () => { selectedDepth = depth.value; });
     const trace = el('button', tr('explore'), 'design-button'); trace.type = 'submit';
     explore.append(field(tr('module'), origin), field(tr('depth'), depth), trace);
-    explore.addEventListener('submit', async event => {
-        impactRequest?.abort(); const pending = new AbortController(); impactRequest = pending;
-        event.preventDefault(); trace.disabled = true;
-        const status = document.getElementById('design-status'); status.textContent = tr('loading');
-        const params = new URLSearchParams({ module: selectedOrigin }); if (selectedDepth) params.set('depth', selectedDepth);
-        try { explored = await json(`/api/impact?${params}`, pending.signal); activeSection = 'impact'; limit = 50; status.textContent = ''; render(); }
-        catch (error) { if (error.name !== 'AbortError') status.textContent = error.message; }
-        finally { trace.disabled = false; }
-    });
+    explore.addEventListener('submit', event => { event.preventDefault(); load(false, true); });
     controls.append(compare, explore); view.append(controls);
     const shell = el('div', undefined, 'design-shell');
     const nav = el('nav', undefined, 'design-nav'); nav.setAttribute('aria-label', tr('title'));
-    for (const section of sections) {
-        const control = button(tr(section), () => { activeSection = section; limit = 50; render(); document.getElementById('design-results-title').focus(); });
-        control.setAttribute('aria-pressed', String(section === activeSection)); nav.append(control);
+    for (const [en, ja, sections] of sectionGroups) {
+        const group = el('details'); group.open = sections.includes(activeSection);
+        group.append(el('summary', state.currentLang === 'ja' ? ja : en));
+        for (const section of sections) {
+            const control = button(tr(section), () => { activeSection = section; limit = 50; render(); document.getElementById('design-results-title').focus(); });
+            control.setAttribute('aria-pressed', String(section === activeSection)); group.append(control);
+        }
+        nav.append(group);
     }
     const results = el('section', undefined, 'design-results');
     const title = el('h2', tr(activeSection)); title.id = 'design-results-title'; title.tabIndex = -1;
@@ -222,9 +224,6 @@ function renderCards() {
     if (activeSection === 'priorities' && effortOrder) rows = [...rows].sort((a, b) => (b.value_per_effort ?? -1) - (a.value_per_effort ?? -1) || b.priority_score - a.priority_score);
     if (activeSection === 'impact') {
         container.append(el('p', tr('pathsHelp'), 'design-muted'));
-        if (explored) {
-            rows = [{ origin: explored.module, changed_items: [], tests: [], reachability: explored.cascading_impact }, ...rows];
-        }
     }
     const matching = rows.filter(row => JSON.stringify(row).toLowerCase().includes(filter.toLowerCase()));
     if (!matching.length) container.append(el('p', tr('empty'), 'design-empty'));
@@ -256,8 +255,12 @@ function renderCard(section, row) {
     case 'impact':
         notes(card, row.changed_items);
         for (const path of row.reachability?.paths || []) card.append(pathView(path.path));
-        if (!row.reachability?.paths?.length) card.append(el('p', `${tr('affected')}: 0`));
-        if (row.reachability?.truncated) card.append(el('p', tr('truncated'), 'design-warning'));
+        for (const path of row.contextual_reachability?.paths || []) {
+            card.append(pathView(path.path));
+            notes(card, path.steps.filter(step => step.rule_ids.length).map(step => `${step.source} → ${step.target}: ${step.rule_ids.join(', ')} (${state.currentLang === 'ja' ? '宣言した共有ルール' : 'declared shared rule'})`));
+        }
+        if (!row.reachability?.paths?.length && !row.contextual_reachability?.paths?.length) card.append(el('p', `${tr('affected')}: 0`));
+        if (row.reachability?.truncated || row.contextual_reachability?.truncated) card.append(el('p', tr('truncated'), 'design-warning'));
         if (row.tests?.length) {
             const details = el('details'); details.append(el('summary', `${tr('tests')} (${row.tests.length})`));
             for (const test of row.tests) { details.append(el('p', `${test.item.name} · ${test.reason}`)); sourceButton(details, test.item); }
@@ -281,7 +284,9 @@ function renderCard(section, row) {
         for (const group of row.internal_groups) card.append(el('p', group.join(' · '), 'design-group'));
         break;
     case 'alternatives':
-        card.append(el('strong', row.action)); score(card, row.current_balance, row.hypothetical_balance); notes(card, row.assumptions); notes(card, row.tradeoffs); break;
+        card.append(el('strong', row.action)); facts(card, [['Status', row.status]]); notes(card, row.constraints); score(card, row.current_balance, row.hypothetical_balance); notes(card, row.assumptions); notes(card, row.tradeoffs); break;
+    case 'questions':
+        notes(card, [row.question, row.reason, row.context_section]); card.append(pathView(row.modules)); break;
     case 'scenarios':
         notes(card, [row.description]); facts(card, [['Affected edges', row.affected_edges]]);
         if (row.affected_edges) score(card, row.current_balance, row.hypothetical_balance);
@@ -299,7 +304,7 @@ function renderCard(section, row) {
     case 'runtime':
         facts(card, [['Source', row.source], ['Target', row.target], ['Kind', row.kind], ['Origin', row.origin], ['Evidence', row.evidence]]); notes(card, [row.review]); break;
     case 'decisions':
-        facts(card, [['Status', row.status], ['Modules', row.modules], ['Reason', row.reason]]); notes(card, row.triggered); notes(card, row.pending_checks); break;
+        facts(card, [['Status', row.status], ['Modules', row.modules], ['Reason', row.reason]]); notes(card, row.triggered); notes(card, row.pending_checks); notes(card, row.evidence); notes(card, row.rejected_options); break;
     case 'edges':
         facts(card, [['Observed usage', row.observed_usage], ['Inferred strength', row.inferred_strength], ['Origin', row.origin], ['Balance', row.balance.toFixed(2)]]);
         notes(card, [row.reason, ...row.unknowns]); sourceButton(card, row); break;

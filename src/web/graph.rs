@@ -11,7 +11,7 @@ use crate::balance::issue::CouplingIssue;
 use crate::balance::issue_type::IssueType;
 use crate::balance::score::{BalanceInterpretation, BalanceScore, IssueThresholds};
 use crate::balance::severity::Severity;
-use crate::manifest::{ManifestContext, build_manifest};
+use crate::manifest::AnalysisManifest;
 use crate::metrics::coupling::CouplingMetrics;
 use crate::metrics::dimensions::{Distance, IntegrationStrength};
 use crate::metrics::module::BalanceClassification;
@@ -39,7 +39,8 @@ pub struct HiddenCouplingEdge {
     pub target: String,
     pub co_change_count: usize,
     pub coupling_ratio: f64,
-    pub dimensions: Dimensions,
+    /// Co-change alone cannot establish strength, distance, or volatility.
+    pub dimensions: Option<Dimensions>,
     pub issue: IssueInfo,
 }
 
@@ -85,6 +86,7 @@ pub struct BlindSpotData {
 /// Complete graph data for visualization
 #[derive(Debug, Clone, Serialize)]
 pub struct GraphData {
+    pub hotspots: Vec<crate::cli_output::Hotspot>,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
     pub summary: Summary,
@@ -308,16 +310,21 @@ fn paths_match(module_path: &str, git_path: &str) -> bool {
 
 /// Convert ProjectMetrics to GraphData for visualization
 pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) -> GraphData {
-    let target_subdomains = crate::balance::subdomain::build_target_subdomain_map(metrics);
+    let git_used = metrics.has_git_observations();
+    project_to_graph_with_history(metrics, thresholds, git_used)
+}
+
+pub(super) fn project_to_graph_with_history(
+    metrics: &ProjectMetrics,
+    thresholds: &IssueThresholds,
+    git_used: bool,
+) -> GraphData {
+    let module_index =
+        crate::metrics::target::ModuleIndex::new(&metrics.modules, &metrics.workspace_members);
     let effective_couplings: Vec<_> = metrics
         .couplings
         .iter()
-        .map(|coupling| {
-            crate::balance::subdomain::coupling_with_essential_volatility(
-                coupling,
-                &target_subdomains,
-            )
-        })
+        .map(|coupling| module_index.effective_coupling(coupling))
         .collect();
     // Use the caller's configured thresholds so the web grade matches the CLI grade
     // (the previous default-thresholds call produced an inconsistent grade).
@@ -348,50 +355,19 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
         })
         .collect();
 
-    // Build a mapping from full path to short name for internal modules
-    // This allows us to normalize edge source/target to match node IDs
-    let module_names = crate::design::graph::DependencyGraph {
-        nodes: metrics.modules.keys().cloned().collect(),
-        ..Default::default()
+    let normalize_to_node_id = |path: &str| {
+        module_index
+            .resolve(path)
+            .map_or_else(|| path.to_owned(), |module| module.name.clone())
     };
-
-    // Build a mapping from type/function names to their module names
-    // This allows us to resolve paths like "BalanceScore::calculate" to "balance"
-    let mut item_to_module: HashMap<&str, Option<&str>> = HashMap::new();
-    for (module_name, module) in &metrics.modules {
-        for name in module
-            .type_definitions
-            .keys()
-            .chain(module.function_definitions.keys())
-        {
-            item_to_module
-                .entry(name.as_str())
-                .and_modify(|owner| {
-                    if *owner != Some(module_name.as_str()) {
-                        *owner = None;
-                    }
-                })
-                .or_insert(Some(module_name.as_str()));
+    let target_node_id = |edge: &CouplingMetrics| {
+        if edge.distance != Distance::DifferentCrate {
+            normalize_to_node_id(&edge.target)
+        } else if metrics.modules.contains_key(&edge.target) {
+            format!("[external] {}", edge.target)
+        } else {
+            edge.target.clone()
         }
-    }
-
-    // Helper closure to normalize a path to existing node ID
-    let normalize_to_node_id = |path: &str| -> String {
-        // Complete module identities take precedence over item-name heuristics.
-        if let Some(module) = module_names.resolve(path) {
-            return module;
-        }
-
-        // Try to resolve via item name (type or function)
-        // e.g., "BalanceScore::calculate" -> look up "BalanceScore" -> "balance"
-        if let Some(first) = path.split("::").next()
-            && let Some(Some(module)) = item_to_module.get(first)
-        {
-            return (*module).to_string();
-        }
-
-        // Keep full path for external crates
-        path.to_string()
     };
 
     // Build node metrics from couplings (using normalized IDs)
@@ -402,7 +378,7 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
 
     for coupling in &effective_couplings {
         let source_id = normalize_to_node_id(&coupling.source);
-        let target_id = normalize_to_node_id(&coupling.target);
+        let target_id = target_node_id(coupling);
 
         *node_couplings_out.entry(source_id.clone()).or_insert(0) += 1;
         *node_couplings_in.entry(target_id.clone()).or_insert(0) += 1;
@@ -551,14 +527,22 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
 
     // Add nodes that appear only in couplings but not in modules (external crates)
     for coupling in &effective_couplings {
-        for full_path in [&coupling.source, &coupling.target] {
+        for (full_path, node_id, is_external) in [
+            (
+                &coupling.source,
+                normalize_to_node_id(&coupling.source),
+                false,
+            ),
+            (
+                &coupling.target,
+                target_node_id(coupling),
+                coupling.distance == Distance::DifferentCrate,
+            ),
+        ] {
             // Skip glob imports (e.g., "crate::*", "foo::*")
             if full_path.ends_with("::*") || full_path == "*" {
                 continue;
             }
-
-            // Normalize to node ID (use short name for internal modules)
-            let node_id = normalize_to_node_id(full_path);
 
             // Skip if already seen (either as internal module or previously added external)
             if seen_nodes.contains(&node_id) {
@@ -578,11 +562,6 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
             } else {
                 "needs_review"
             };
-
-            // Determine if this is an external crate
-            let is_external = full_path.contains("::")
-                && !full_path.starts_with("crate::")
-                && module_names.resolve(full_path).is_none();
 
             nodes.push(Node {
                 id: node_id.clone(),
@@ -613,8 +592,17 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
         }
     }
 
+    nodes.sort_by(|a, b| a.id.cmp(&b.id));
+
     // Build edges (using normalized node IDs)
     let mut edges: Vec<Edge> = Vec::new();
+    let reported: HashMap<_, _> = balance_report
+        .issues
+        .iter()
+        .enumerate()
+        .map(|(index, issue)| (issue.stable_key(), (index, issue)))
+        .collect();
+    let mut issue_edges = HashMap::new();
 
     for (edge_id, coupling) in effective_couplings.iter().enumerate() {
         // Skip edges involving glob imports
@@ -627,7 +615,7 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
         }
 
         let source_id = normalize_to_node_id(&coupling.source);
-        let target_id = normalize_to_node_id(&coupling.target);
+        let target_id = target_node_id(coupling);
 
         // Skip self-loops (module referencing itself)
         if source_id == target_id {
@@ -637,7 +625,28 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
         let score = BalanceScore::calculate(coupling);
         let in_cycle = cycle_edges.contains(&(coupling.source.clone(), coupling.target.clone()));
 
-        let issue = find_issue_for_coupling(coupling, &score, thresholds);
+        let id = format!("e{edge_id}");
+        // A reported finding belongs to the observation that triggered it.
+        // Parallel references can have different strength, severity and balance.
+        let issue = crate::balance::identify_issues_with_thresholds(coupling, thresholds)
+            .into_iter()
+            .filter_map(|candidate| {
+                let &(index, finding) = reported.get(&candidate.stable_key())?;
+                if finding.severity != candidate.severity
+                    || finding.balance_score != candidate.balance_score
+                {
+                    return None;
+                }
+                issue_edges.entry(index).or_insert_with(|| id.clone());
+                Some(index)
+            })
+            .min()
+            .map(|index| &balance_report.issues[index])
+            .map(|issue| IssueInfo {
+                issue_type: format!("{:?}", issue.issue_type),
+                severity: issue.severity.to_string(),
+                description: issue.description.clone(),
+            });
 
         // Build location info if available
         let location = if coupling.location.line > 0 || coupling.location.file_path.is_some() {
@@ -654,7 +663,7 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
         };
 
         edges.push(Edge {
-            id: format!("e{}", edge_id),
+            id,
             source: source_id,
             target: target_id,
             dimensions: coupling_to_dimensions(coupling, &score),
@@ -669,11 +678,11 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
         .map(|edge| ordered_pair(&edge.source, &edge.target))
         .collect();
     let file_to_module = build_file_to_module_map(metrics);
-    let hidden_couplings = build_hidden_couplings(metrics, &file_to_module, &explicit_edge_pairs);
+    let hidden_couplings = build_hidden_couplings(metrics, &file_to_module, &balance_report.issues);
     let graph_issues = build_graph_issues(
         &balance_report.issues,
         &normalize_to_node_id,
-        &edges,
+        &issue_edges,
         &hidden_couplings,
     );
 
@@ -693,14 +702,11 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
     }
 
     // Count internal vs external couplings
-    let internal_couplings = metrics
-        .couplings
-        .iter()
-        .filter(|c| !c.target.contains("::") || c.target.starts_with("crate::"))
-        .count();
+    let internal_couplings = metrics.internal_coupling_count();
     let external_couplings = metrics.couplings.len() - internal_couplings;
 
     GraphData {
+        hotspots: crate::cli_output::calculate_hotspots(metrics, thresholds, usize::MAX),
         nodes,
         edges,
         summary: Summary {
@@ -746,20 +752,15 @@ pub fn project_to_graph(metrics: &ProjectMetrics, thresholds: &IssueThresholds) 
             .collect(),
         hidden_couplings,
         issues: graph_issues,
-        not_analyzed: build_not_analyzed_manifest(metrics),
+        not_analyzed: build_not_analyzed_manifest(AnalysisManifest::from_metrics(
+            metrics,
+            git_used,
+            thresholds.exclude_tests,
+        )),
     }
 }
 
-fn build_not_analyzed_manifest(metrics: &ProjectMetrics) -> AnalysisManifestData {
-    let manifest = build_manifest(&ManifestContext {
-        git_used: !metrics.file_changes.is_empty() || !metrics.temporal_couplings.is_empty(),
-        tests_excluded: false,
-        parse_failures: metrics.parse_failures,
-        skipped_crates: metrics.skipped_crates.clone(),
-        boundary_skipped_files: metrics.boundary_skipped_files,
-        dead_config_patterns: metrics.dead_config_patterns.clone(),
-    });
-
+fn build_not_analyzed_manifest(manifest: AnalysisManifest) -> AnalysisManifestData {
     AnalysisManifestData {
         blind_spots: manifest
             .blind_spots
@@ -778,7 +779,7 @@ fn build_not_analyzed_manifest(metrics: &ProjectMetrics) -> AnalysisManifestData
 fn build_hidden_couplings(
     metrics: &ProjectMetrics,
     file_to_module: &[(String, String)],
-    explicit_edge_pairs: &HashSet<(String, String)>,
+    issues: &[CouplingIssue],
 ) -> Vec<HiddenCouplingEdge> {
     let mut seen = HashSet::new();
     let mut hidden = Vec::new();
@@ -799,30 +800,27 @@ fn build_hidden_couplings(
         }
 
         let pair = ordered_pair(&source, &target);
-        if explicit_edge_pairs.contains(&pair) || !seen.insert(pair.clone()) {
+        let Some(issue) = issues.iter().find(|issue| {
+            issue.issue_type == IssueType::HiddenCoupling
+                && ordered_pair(&issue.source, &issue.target) == pair
+        }) else {
+            continue;
+        };
+        if !seen.insert(pair.clone()) {
             continue;
         }
 
-        let ratio_pct = temporal.coupling_ratio * 100.0;
         hidden.push(HiddenCouplingEdge {
             id: format!("hidden-{}-{}", sanitize_id(&pair.0), sanitize_id(&pair.1)),
             source: pair.0,
             target: pair.1,
             co_change_count: temporal.co_change_count,
             coupling_ratio: temporal.coupling_ratio,
-            dimensions: hidden_coupling_dimensions(temporal.coupling_ratio),
+            dimensions: None,
             issue: IssueInfo {
                 issue_type: "HiddenCoupling".to_string(),
-                severity: if temporal.coupling_ratio >= 0.8 {
-                    "High"
-                } else {
-                    "Medium"
-                }
-                .to_string(),
-                description: format!(
-                    "Strong temporal co-change without code dependency ({ratio_pct:.0}% ratio, {} co-changes)",
-                    temporal.co_change_count
-                ),
+                severity: issue.severity.to_string(),
+                description: issue.description.clone(),
             },
         });
     }
@@ -830,35 +828,10 @@ fn build_hidden_couplings(
     hidden
 }
 
-fn hidden_coupling_dimensions(coupling_ratio: f64) -> Dimensions {
-    Dimensions {
-        strength: DimensionValue {
-            value: 0.75,
-            label: "Functional".to_string(),
-        },
-        distance: DimensionValue {
-            value: 0.5,
-            label: "DifferentModule".to_string(),
-        },
-        volatility: DimensionValue {
-            value: 1.0,
-            label: "High".to_string(),
-        },
-        balance: BalanceValue {
-            value: 1.0 - coupling_ratio,
-            label: "NeedsRefactoring".to_string(),
-            interpretation: "Hidden temporal coupling".to_string(),
-            classification: "Global Complexity".to_string(),
-            classification_ja: "グローバル複雑性 (隠れた結合)".to_string(),
-        },
-        connascence: None,
-    }
-}
-
 fn build_graph_issues<F>(
     issues: &[CouplingIssue],
     normalize_to_node_id: &F,
-    edges: &[Edge],
+    issue_edges: &HashMap<usize, String>,
     hidden_couplings: &[HiddenCouplingEdge],
 ) -> Vec<GraphIssue>
 where
@@ -870,7 +843,13 @@ where
         .map(|(index, issue)| {
             let source = normalize_issue_endpoint(&issue.source, normalize_to_node_id);
             let target = normalize_issue_endpoint(&issue.target, normalize_to_node_id);
-            let focus = issue_focus(issue, &source, &target, edges, hidden_couplings);
+            let focus = issue_focus(
+                issue,
+                &source,
+                &target,
+                issue_edges.get(&index),
+                hidden_couplings,
+            );
 
             GraphIssue {
                 id: format!("issue-{index}"),
@@ -891,7 +870,7 @@ fn issue_focus(
     issue: &CouplingIssue,
     source: &str,
     target: &str,
-    edges: &[Edge],
+    edge_id: Option<&String>,
     hidden_couplings: &[HiddenCouplingEdge],
 ) -> IssueFocus {
     if issue.issue_type == IssueType::HiddenCoupling
@@ -906,14 +885,11 @@ fn issue_focus(
         };
     }
 
-    if let Some(edge) = edges
-        .iter()
-        .find(|edge| edge.source == source && edge.target == target)
-    {
+    if let Some(edge_id) = edge_id {
         return IssueFocus {
             kind: "edge".to_string(),
-            node_ids: vec![edge.source.clone(), edge.target.clone()],
-            edge_id: Some(edge.id.clone()),
+            node_ids: vec![source.to_string(), target.to_string()],
+            edge_id: Some(edge_id.clone()),
         };
     }
 
@@ -1013,53 +989,177 @@ fn coupling_to_dimensions(coupling: &CouplingMetrics, score: &BalanceScore) -> D
     }
 }
 
-fn find_issue_for_coupling(
-    coupling: &CouplingMetrics,
-    score: &BalanceScore,
-    _thresholds: &IssueThresholds,
-) -> Option<IssueInfo> {
-    // Check for obvious issues
-    if coupling.strength == IntegrationStrength::Intrusive
-        && coupling.distance == Distance::DifferentCrate
-    {
-        return Some(IssueInfo {
-            issue_type: "GlobalComplexity".to_string(),
-            severity: "High".to_string(),
-            description: format!(
-                "Intrusive coupling to {} across crate boundary",
-                coupling.target
-            ),
-        });
-    }
-
-    if coupling.strength.value() >= 0.75 && coupling.volatility == Volatility::High {
-        return Some(IssueInfo {
-            issue_type: "CascadingChangeRisk".to_string(),
-            severity: "Medium".to_string(),
-            description: format!(
-                "Strong coupling to highly volatile target {}",
-                coupling.target
-            ),
-        });
-    }
-
-    if score.score < 0.4 {
-        return Some(IssueInfo {
-            issue_type: "LowBalance".to_string(),
-            severity: if score.score < 0.2 { "High" } else { "Medium" }.to_string(),
-            description: format!(
-                "Low balance score ({:.2}) indicates coupling anti-pattern",
-                score.score
-            ),
-        });
-    }
-
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graph_keeps_external_homonyms_outside_internal_nodes() {
+        let mut metrics = ProjectMetrics::new();
+        for name in ["app::consumer", "shared"] {
+            metrics.add_module(crate::ModuleMetrics::new(
+                format!("{name}.rs").into(),
+                name.into(),
+            ));
+        }
+        for (target, distance) in [
+            ("app::shared", Distance::DifferentModule),
+            ("other::shared", Distance::DifferentCrate),
+            ("shared", Distance::DifferentCrate),
+        ] {
+            metrics.add_coupling(CouplingMetrics::new(
+                "app::consumer".into(),
+                target.into(),
+                IntegrationStrength::Model,
+                distance,
+                Volatility::Low,
+            ));
+        }
+        let graph = project_to_graph(&metrics, &IssueThresholds::default());
+        let local = graph.nodes.iter().find(|node| node.id == "shared").unwrap();
+        assert_eq!(local.metrics.couplings_in, 1);
+        assert_eq!(graph.summary.internal_couplings, 1);
+        assert_eq!(graph.summary.external_couplings, 2);
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .filter(|node| node
+                    .file_path
+                    .as_deref()
+                    .is_some_and(|path| path.starts_with("[external]")))
+                .count(),
+            2
+        );
+        assert!(
+            graph
+                .edges
+                .iter()
+                .any(|edge| edge.target == "other::shared")
+        );
+    }
+
+    #[test]
+    fn graph_reports_excluded_tests() {
+        let thresholds = IssueThresholds {
+            exclude_tests: true,
+            ..Default::default()
+        };
+        let graph = project_to_graph(&ProjectMetrics::new(), &thresholds);
+        assert!(
+            graph
+                .not_analyzed
+                .notes
+                .iter()
+                .any(|note| note.contains("Test code was excluded"))
+        );
+    }
+
+    #[test]
+    fn temporal_edges_reuse_report_findings_without_inventing_dimensions() {
+        let mut metrics = ProjectMetrics::new();
+        for name in ["pricing", "invoicing", "lib"] {
+            metrics.add_module(crate::ModuleMetrics::new(
+                format!("src/{name}.rs").into(),
+                name.into(),
+            ));
+        }
+        for other in ["invoicing", "lib"] {
+            metrics
+                .temporal_couplings
+                .push(crate::volatility::TemporalCoupling {
+                    file_a: "src/pricing.rs".into(),
+                    file_b: format!("src/{other}.rs"),
+                    co_change_count: 3,
+                    coupling_ratio: 1.0,
+                });
+        }
+        let graph = project_to_graph(&metrics, &IssueThresholds::default());
+        assert_eq!(
+            graph.hidden_couplings.len(),
+            1,
+            "facade co-change is expected"
+        );
+        let edge = &graph.hidden_couplings[0];
+        assert_eq!(
+            edge.issue.severity, "Medium",
+            "three co-changes do not establish High severity"
+        );
+        let json = serde_json::to_value(edge).unwrap();
+        assert!(
+            json["dimensions"].is_null(),
+            "co-change does not measure any model dimension"
+        );
+        let issue = graph
+            .issues
+            .iter()
+            .find(|issue| issue.issue_type == "HiddenCoupling")
+            .unwrap();
+        assert_eq!(edge.issue.severity, issue.severity);
+        assert_eq!(issue.focus.edge_id.as_deref(), Some(edge.id.as_str()));
+    }
+
+    #[test]
+    fn cohesive_edges_do_not_receive_web_only_risk_findings() {
+        let mut metrics = ProjectMetrics::new();
+        for name in ["domain::consumer", "domain::provider"] {
+            metrics.add_module(crate::ModuleMetrics::new(
+                format!("{name}.rs").into(),
+                name.into(),
+            ));
+        }
+        metrics.add_coupling(CouplingMetrics::new(
+            "domain::consumer".into(),
+            "domain::provider".into(),
+            IntegrationStrength::Intrusive,
+            Distance::SameModule,
+            Volatility::High,
+        ));
+        let thresholds = IssueThresholds::default();
+        let report = crate::analyze_project_balance_with_thresholds(&metrics, &thresholds);
+        assert!(report.issues.is_empty());
+        let graph = project_to_graph(&metrics, &thresholds);
+        assert!(
+            graph.edges[0].issue.is_none(),
+            "Web must share the CLI's balance judgment"
+        );
+    }
+
+    #[test]
+    fn parallel_edges_attach_and_focus_findings_on_the_observed_dependency() {
+        let mut metrics = ProjectMetrics::new();
+        for strength in [
+            IntegrationStrength::Contract,
+            IntegrationStrength::Intrusive,
+        ] {
+            metrics.add_coupling(CouplingMetrics::new(
+                "consumer".into(),
+                "provider".into(),
+                strength,
+                Distance::DifferentModule,
+                Volatility::High,
+            ));
+        }
+        let graph = project_to_graph(&metrics, &IssueThresholds::default());
+        let contract = graph
+            .edges
+            .iter()
+            .find(|e| e.dimensions.strength.label == "Contract")
+            .unwrap();
+        let intrusive = graph
+            .edges
+            .iter()
+            .find(|e| e.dimensions.strength.label == "Intrusive")
+            .unwrap();
+        assert!(contract.issue.is_none());
+        assert_eq!(intrusive.issue.as_ref().unwrap().severity, "High");
+        let issue = graph
+            .issues
+            .iter()
+            .find(|issue| issue.issue_type == "CascadingChangeRisk")
+            .unwrap();
+        assert_eq!(issue.focus.edge_id.as_ref(), Some(&intrusive.id));
+    }
 
     #[test]
     fn graph_dimensions_use_declared_essential_volatility() {

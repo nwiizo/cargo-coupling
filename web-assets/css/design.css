@@ -29,6 +29,9 @@
 .design-shell { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 1.5rem; align-items: start; }
 .design-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: .35rem; max-height: calc(100vh - var(--header-height, 5rem) - var(--toolbar-height, 3rem) - 3rem); overflow-y: auto; overscroll-behavior: contain; }
 .design-nav .design-button { background: transparent; border-color: transparent; }
+.design-nav details { min-width: 0; }
+.design-nav summary { cursor: pointer; padding: .7rem .4rem; color: #cbd5e1; font-size: .85rem; }
+.design-nav details > .design-button { display: block; width: 100%; margin-bottom: .2rem; }
 .design-nav [aria-pressed="true"] { color: #a5f3fc; background: #16404b; border-color: #227382; }
 .design-results { min-width: 0; }
 .design-results h2 { margin: 0 0 1rem; font-size: 1.3rem; }

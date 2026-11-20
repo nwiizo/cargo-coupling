@@ -134,43 +134,39 @@ impl DimensionStats {
         self.strength_counts.total()
     }
 
+    fn percentage(&self, count: usize) -> f64 {
+        let total = self.total();
+        if total == 0 {
+            return 0.0;
+        }
+        count as f64 / total as f64 * 100.0
+    }
+
     /// Get percentage of each strength level
     pub fn strength_percentages(&self) -> (f64, f64, f64, f64) {
-        let total = self.total() as f64;
-        if total == 0.0 {
-            return (0.0, 0.0, 0.0, 0.0);
-        }
         (
-            self.strength_counts.intrusive as f64 / total * 100.0,
-            self.strength_counts.functional as f64 / total * 100.0,
-            self.strength_counts.model as f64 / total * 100.0,
-            self.strength_counts.contract as f64 / total * 100.0,
+            self.percentage(self.strength_counts.intrusive),
+            self.percentage(self.strength_counts.functional),
+            self.percentage(self.strength_counts.model),
+            self.percentage(self.strength_counts.contract),
         )
     }
 
     /// Get percentage of each distance level
     pub fn distance_percentages(&self) -> (f64, f64, f64) {
-        let total = self.total() as f64;
-        if total == 0.0 {
-            return (0.0, 0.0, 0.0);
-        }
         (
-            self.distance_counts.same_module as f64 / total * 100.0,
-            self.distance_counts.different_module as f64 / total * 100.0,
-            self.distance_counts.different_crate as f64 / total * 100.0,
+            self.percentage(self.distance_counts.same_module),
+            self.percentage(self.distance_counts.different_module),
+            self.percentage(self.distance_counts.different_crate),
         )
     }
 
     /// Get percentage of each volatility level
     pub fn volatility_percentages(&self) -> (f64, f64, f64) {
-        let total = self.total() as f64;
-        if total == 0.0 {
-            return (0.0, 0.0, 0.0);
-        }
         (
-            self.volatility_counts.low as f64 / total * 100.0,
-            self.volatility_counts.medium as f64 / total * 100.0,
-            self.volatility_counts.high as f64 / total * 100.0,
+            self.percentage(self.volatility_counts.low),
+            self.percentage(self.volatility_counts.medium),
+            self.percentage(self.volatility_counts.high),
         )
     }
 
@@ -186,11 +182,7 @@ impl DimensionStats {
 
     /// Percentage of ideal couplings
     pub fn ideal_percentage(&self) -> f64 {
-        let total = self.total() as f64;
-        if total == 0.0 {
-            return 0.0;
-        }
-        self.ideal_count() as f64 / total * 100.0
+        self.percentage(self.ideal_count())
     }
 }
 
@@ -284,6 +276,8 @@ pub struct ModuleMetrics {
     pub is_test_module: bool,
     /// Number of test functions (#[test])
     pub test_function_count: usize,
+    /// Whether this module is explicitly exempt from fan-in findings.
+    pub is_prelude: bool,
     /// DDD subdomain classification from config, if configured.
     pub subdomain: Option<Subdomain>,
 }

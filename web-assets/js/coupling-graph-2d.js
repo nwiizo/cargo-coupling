@@ -4,7 +4,6 @@
 
 import { state, setCy, setCurrentLayout } from './state.js';
 import { t } from './i18n.js';
-import { STABLE_CRATES, isExternalCrate, estimateVolatility } from './utils.js';
 import { moduleLabel } from './module-labels.js';
 import { ScreenLabels } from './screen-labels.js';
 
@@ -124,91 +123,35 @@ export function buildElements(data, options = {}) {
 
     data.edges.forEach(edge => {
         const key = `${edge.source}->${edge.target}`;
-        const dims = edge.dimensions || {};
-
         if (!edgeMap.has(key)) {
             edgeMap.set(key, {
-                source: edge.source,
-                target: edge.target,
-                strength: dims.strength?.value ?? 0.5,
-                strengthLabel: dims.strength?.label ?? 'Model',
-                distance: dims.distance?.label ?? 'DifferentModule',
-                volatility: dims.volatility?.label ?? 'Low',
-                balance: dims.balance?.value ?? 0.5,
-                balanceLabel: dims.balance?.label ?? 'Acceptable',
-                classification: dims.balance?.classification ?? '',
-                classificationJa: dims.balance?.classification_ja ?? '',
-                interpretation: dims.balance?.interpretation ?? '',
-                connascence: dims.connascence ?? null,
-                issue: edge.issue,
+                representative: edge,
                 inCycle: edge.in_cycle,
-                location: edge.location,
                 count: 1,
                 originalIds: [edge.id]
             });
         } else {
             const existing = edgeMap.get(key);
-            const newStrength = dims.strength?.value ?? 0.5;
-            if (newStrength > existing.strength) {
-                existing.strength = newStrength;
-                existing.strengthLabel = dims.strength?.label ?? existing.strengthLabel;
-            }
-            existing.balance = Math.min(existing.balance, dims.balance?.value ?? 0.5);
+            if (compareObservations(edge, existing.representative) < 0) existing.representative = edge;
             existing.inCycle = existing.inCycle || edge.in_cycle;
-            existing.issue = existing.issue || edge.issue;
-            existing.connascence = existing.connascence || dims.connascence || null;
             existing.count++;
             existing.originalIds.push(edge.id);
         }
     });
 
-    const edges = Array.from(edgeMap.entries()).map(([key, data]) => ({
-        data: {
+    const edges = Array.from(edgeMap.entries()).sort(([a], [b]) => compareIds(a, b)).map(([key, group]) => {
+        const edge = group.representative;
+        return { data: {
+            ...edgeDataToDetails(edge),
             id: `edge-${sanitizeElementId(key)}`,
-            source: data.source,
-            target: data.target,
-            edgeType: 'module',
-            strength: data.strength,
-            strengthLabel: data.strengthLabel,
-            distance: data.distance,
-            volatility: data.volatility,
-            balance: data.balance,
-            balanceLabel: data.balanceLabel,
-            classification: data.classification,
-            classificationJa: data.classificationJa,
-            interpretation: data.interpretation,
-            connascence: data.connascence,
-            issue: data.issue,
-            inCycle: data.inCycle,
-            location: data.location,
-            count: data.count,
-            originalIds: data.originalIds
-        }
-    }));
+            inCycle: group.inCycle,
+            count: group.count,
+            originalIds: group.originalIds.sort(compareIds)
+        } };
+    });
 
     (data.hidden_couplings || []).forEach(hidden => {
-        const dims = hidden.dimensions || {};
-        edges.push({
-            data: {
-                id: hidden.id,
-                source: hidden.source,
-                target: hidden.target,
-                edgeType: 'hidden-coupling',
-                strength: dims.strength?.value ?? 0.75,
-                strengthLabel: dims.strength?.label ?? 'Functional',
-                distance: dims.distance?.label ?? 'DifferentModule',
-                volatility: dims.volatility?.label ?? 'High',
-                balance: dims.balance?.value ?? (1 - hidden.coupling_ratio),
-                balanceLabel: dims.balance?.label ?? 'NeedsRefactoring',
-                classification: dims.balance?.classification ?? 'Needs Refactoring',
-                classificationJa: dims.balance?.classification_ja ?? '要改善',
-                issue: hidden.issue,
-                hiddenCoupling: true,
-                coChangeCount: hidden.co_change_count,
-                couplingRatio: hidden.coupling_ratio,
-                count: 1
-            }
-        });
+        edges.push({ data: hiddenCouplingDetails(hidden) });
     });
 
     // Add item-level edges if enabled
@@ -724,105 +667,71 @@ function getDistanceStyle(distance) {
     return 'dotted';
 }
 
-function getStrengthName(value) {
-    if (value >= 0.75) return 'Intrusive';
-    if (value >= 0.5) return 'Functional';
-    if (value >= 0.25) return 'Model';
-    return 'Contract';
-}
-
 function sanitizeElementId(value) {
     return value.replace(/[^a-zA-Z0-9_-]/g, '-');
 }
 
-/**
- * Analyze coupling based on Khononov's balance formula
- */
-export function analyzeCoupling(strength, distance, volatility, targetName = '') {
-    const isStrongCoupling = ['Intrusive', 'Functional'].includes(strength);
-    const isWeakCoupling = ['Model', 'Contract'].includes(strength);
-    const isClose = ['SameFunction', 'SameModule'].includes(distance);
-    const isFar = ['DifferentModule', 'DifferentCrate'].includes(distance);
+function compareIds(left, right) {
+    return left < right ? -1 : left > right ? 1 : 0;
+}
 
-    const effectiveVolatility = estimateVolatility(targetName, volatility);
-    const isHighVolatility = effectiveVolatility === 'High';
-    const isLowVolatility = effectiveVolatility === 'Low';
-    const isMediumVolatility = effectiveVolatility === 'Medium';
-
-    const isStableExternal = isExternalCrate(targetName) && isLowVolatility;
-    const hasModularity = (isStrongCoupling && isClose) || (isWeakCoupling && isFar);
-
-    // Case 1: Strong + Far
-    if (isStrongCoupling && isFar) {
-        if (isLowVolatility) {
-            return {
-                status: 'good',
-                icon: '🔒',
-                statusText: t('stable_external'),
-                action: null
-            };
-        }
-        if (isMediumVolatility) {
-            return {
-                status: 'acceptable',
-                icon: '⚠️',
-                statusText: t('global_complexity_medium'),
-                action: t('fix_monitor')
-            };
-        }
-        return {
-            status: 'critical',
-            icon: '❌',
-            statusText: t('global_complexity_high'),
-            action: t('fix_functional')
-        };
+// Keep all dimensions and labels from one observed relationship. Combining a
+// maximum strength with another observation's balance invents an assessment.
+function compareObservations(left, right) {
+    for (const [axis, direction] of [['balance', 1], ['strength', -1], ['distance', -1], ['volatility', -1]]) {
+        const a = left.dimensions?.[axis]?.value, b = right.dimensions?.[axis]?.value;
+        if (Number.isFinite(a) !== Number.isFinite(b)) return Number.isFinite(a) ? -1 : 1;
+        if (Number.isFinite(a) && a !== b) return (a - b) * direction;
     }
+    return compareIds(left.id, right.id);
+}
 
-    // Case 2: Strong + Close = High Cohesion (Good)
-    if (isStrongCoupling && isClose) {
-        return {
-            status: 'good',
-            icon: '✅',
-            statusText: t('high_cohesion'),
-            action: null
-        };
-    }
-
-    // Case 3: Weak + Far = Loose Coupling (Good)
-    if (isWeakCoupling && isFar) {
-        return {
-            status: 'good',
-            icon: '✅',
-            statusText: t('loose_coupling'),
-            action: null
-        };
-    }
-
-    // Case 4: Weak + Close = Local Complexity (potential over-abstraction)
-    if (isWeakCoupling && isClose) {
-        return {
-            status: 'acceptable',
-            icon: '🤔',
-            statusText: t('local_complexity'),
-            action: t('fix_local')
-        };
-    }
-
+export function edgeDataToDetails(edge) {
+    if (Number.isFinite(edge.coupling_ratio)) return hiddenCouplingDetails(edge);
+    const dims = edge.dimensions || {};
     return {
-        status: 'good',
-        icon: '✅',
-        statusText: t('balance'),
-        action: null
+        id: edge.id, source: edge.source, target: edge.target, edgeType: 'module',
+        strength: dims.strength?.value ?? null,
+        strengthLabel: dims.strength?.label ?? 'Unknown',
+        distance: dims.distance?.label ?? 'Unknown',
+        volatility: dims.volatility?.label ?? 'Unknown',
+        balance: dims.balance?.value ?? null,
+        balanceLabel: dims.balance?.label ?? 'Unknown',
+        classification: dims.balance?.classification ?? '',
+        classificationJa: dims.balance?.classification_ja ?? '',
+        interpretation: dims.balance?.interpretation ?? '',
+        connascence: dims.connascence ?? null,
+        issue: edge.issue,
+        location: edge.location, inCycle: edge.in_cycle, count: 1
     };
 }
 
-function getEdgeColorByAnalysis(data) {
-    const strength = data.strengthLabel || getStrengthName(data.strength);
-    const distance = data.distance || 'Unknown';
-    const volatility = data.volatility || 'Medium';
-    const target = data.target || '';
+// Old API snapshots may contain invented dimensions on co-change edges. Ignore
+// those fields as well as null dimensions from current servers.
+export function hiddenCouplingDetails(edge) {
+    return {
+        id: edge.id, source: edge.source, target: edge.target,
+        edgeType: 'hidden-coupling', hiddenCoupling: true,
+        strength: null, strengthLabel: 'Unknown', distance: 'Unknown', volatility: 'Unknown',
+        balance: null, balanceLabel: 'Unknown', classification: '', classificationJa: '',
+        issue: edge.issue, coChangeCount: edge.co_change_count, couplingRatio: edge.coupling_ratio, count: 1
+    };
+}
 
-    const analysis = analyzeCoupling(strength, distance, volatility, target);
+/** Render the server assessment; do not infer another model from syntax labels. */
+export function analyzeCoupling(data) {
+    if (data.hiddenCoupling || data.edgeType === 'hidden-coupling') {
+        return { status: 'unknown', icon: '?', statusText: t('temporal_evidence_only'), action: null };
+    }
+    const status = ['Critical', 'High'].includes(data.issue?.severity) ? 'critical'
+        : data.issue?.severity === 'Medium' ? 'acceptable'
+        : { Balanced: 'good', Acceptable: 'acceptable', NeedsReview: 'acceptable', NeedsRefactoring: 'critical', Critical: 'critical' }[data.balanceLabel] || 'unknown';
+    const classification = state.currentLang === 'ja' ? data.classificationJa || data.classification : data.classification;
+    return { status, icon: { good: '✅', acceptable: '⚠️', critical: '❌', unknown: '?' }[status], statusText: classification || t('unknown'), action: null };
+}
+
+function getEdgeColorByAnalysis(data) {
+    const analysis = analyzeCoupling(data);
 
     switch (analysis.status) {
         case 'good': return COLORS.good;

@@ -4,9 +4,9 @@
 
 import { state, setSelectedNode, setSelectedEdge, setCenterMode } from './state.js';
 import { t, tf } from './i18n.js';
-import { applyLayout, clearHighlights, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, analyzeCoupling, getHealthColor } from './coupling-graph-2d.js';
+import { applyLayout, clearHighlights, centerOnNode, focusOnNode, highlightNeighbors, highlightDependencyPath, analyzeCoupling, edgeDataToDetails, getHealthColor } from './coupling-graph-2d.js';
 import { refresh3dGraph, focusLink3d, focusNode3d, fitActiveGraph } from './coupling-graph-3d.js';
-import { debounce, escapeHtml, estimateVolatility } from './utils.js';
+import { debounce, escapeHtml } from './utils.js';
 import { updateUrl } from './url-router.js';
 
 // =====================================================
@@ -741,20 +741,22 @@ function selectAndFocusItem(node) {
     });
 }
 
+export function showFocusedIssueDetails(issue, displayedEdge) {
+    const id = issue.focus.edge_id;
+    const observation = state.graphData.edges.find(edge => edge.id === id);
+    const details = observation ? edgeDataToDetails(observation) : displayedEdge.data();
+    showEdgeDetails({ ...details, issue });
+}
+
 export function showEdgeDetails(data) {
     setSelectedNode(null);
     setSelectedEdge(data);
     const container = document.getElementById('node-details');
     if (!container) return;
 
-    const analysis = analyzeCoupling(
-        data.strengthLabel || 'Model',
-        data.distance || 'DifferentModule',
-        data.volatility || 'Medium',
-        data.target || ''
-    );
-
-    const effectiveVol = estimateVolatility(data.target || '', data.volatility || 'Medium');
+    const analysis = analyzeCoupling(data);
+    const hidden = data.hiddenCoupling || data.edgeType === 'hidden-coupling';
+    const effectiveVol = data.volatility || 'Unknown';
     const location = data.location;
     const hasLocation = location && location.file_path && !location.file_path.startsWith('[external]');
     const inCycle = data.inCycle || false;
@@ -797,6 +799,7 @@ export function showEdgeDetails(data) {
         </details>
         <details class="inspector-section" open>
             <summary>${t('balanced_dimensions')}</summary>
+        ${hidden ? `<div class="no-data">${t('temporal_evidence_only')}</div>` : `
         <div class="detail-row">
             <span class="detail-label">${t('strength')}:</span>
             <span class="strength-badge ${(data.strengthLabel || '').toLowerCase()}">${labelValue(data.strengthLabel || 'Model')}</span>
@@ -811,7 +814,7 @@ export function showEdgeDetails(data) {
         </div>
         <div class="detail-row">
             <span class="detail-label">${t('balance')}:</span>
-            <span>${((data.balance || 0) * 100).toFixed(0)}%</span>
+            <span>${Number.isFinite(data.balance) ? `${(data.balance * 100).toFixed(0)}%` : t('unknown')}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">${t('classification')}:</span>
@@ -823,12 +826,13 @@ export function showEdgeDetails(data) {
                 <span class="connascence-strength">${connascence.strength || 'Weak'}</span>
             </div>
         ` : `<div class="connascence-info"><span class="connascence-type">${t('connascence_not_detected')}</span></div>`}
+        `}
         </details>
         <details class="inspector-section" open>
             <summary>${t('assessment')}</summary>
         <div class="analysis-result ${analysis.status}">
             <span class="analysis-icon">${analysis.icon}</span>
-            <span class="analysis-text">${analysis.statusText}</span>
+            <span class="analysis-text">${escapeHtml(analysis.statusText)}</span>
         </div>
         ${analysis.action ? `<div class="analysis-action">${analysis.action}</div>` : ''}
         ${interpretation ? `
@@ -1006,7 +1010,7 @@ function focusIssueInGraph(issue) {
     const firstEdge = focused.edges[0];
     if (firstEdge) {
         highlightDependencyPath(firstEdge);
-        showEdgeDetails(firstEdge.data());
+        showFocusedIssueDetails(issue, firstEdge);
         return;
     }
 

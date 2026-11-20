@@ -2,6 +2,96 @@ use std::{fs, process::Command};
 use tempfile::tempdir;
 
 #[test]
+fn design_options_require_two_distinct_known_modules() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.rs"), "pub fn value() -> Result<Vec<u8>, std::io::Error> { Err(std::io::Error::other(\"bad\")) }\n").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
+        .args(["coupling", "--agent", "--focus", "a", "--no-git"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["alternatives"], serde_json::json!([]));
+    assert!(!report["evidence"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn impact_test_candidates_exclude_helpers_and_fixtures() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("a.rs"),
+        r#"
+pub fn value() -> u8 { 1 }
+#[cfg(test)]
+mod tests {
+    fn helper() -> u8 { super::value() }
+    struct Fixture;
+    impl Fixture { fn setup() {} }
+    #[test] fn actual() { assert_eq!(helper(), 1); }
+    #[tokio::test] async fn async_case() { assert_eq!(helper(), 1); }
+    #[test] #[ignore = "manual"] fn ignored_case() { assert_eq!(helper(), 1); }
+}
+"#,
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
+        .args(["coupling", "--agent", "--focus", "a", "--no-git"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let names: Vec<_> = report["impact"][0]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|candidate| candidate["item"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["actual", "async_case", "ignored_case"]);
+    let tests = report["impact"][0]["tests"].as_array().unwrap();
+    assert_eq!(tests[0]["item"]["test_kind"], "test");
+    assert_eq!(tests[1]["item"]["test_kind"], "test");
+    assert_eq!(tests[2]["item"]["test_kind"], "ignored");
+    assert!(tests[2]["reason"].as_str().unwrap().contains("--ignored"));
+}
+
+#[test]
+fn focused_options_prioritize_the_origin_before_alphabetical_neighbors() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("z_focus.rs"),
+        "pub fn value() -> u8 { 1 }\n",
+    )
+    .unwrap();
+    let mut consumer = String::from("pub fn work() { crate::z_focus::value();");
+    for index in 0..8 {
+        fs::write(
+            dir.path().join(format!("a_{index}.rs")),
+            "pub fn value() -> u8 { 1 }\n",
+        )
+        .unwrap();
+        consumer.push_str(&format!("crate::a_{index}::value();"));
+    }
+    consumer.push_str("}\n");
+    fs::write(dir.path().join("consumer.rs"), consumer).unwrap();
+    fs::write(
+        dir.path().join(".coupling.toml"),
+        "[subdomains]\ncore=['*.rs']\n",
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
+        .args(["coupling", "--agent", "--focus", "z_focus", "--no-git"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["alternatives"][0]["target"], "z_focus");
+    assert!(report["omitted"]["alternatives"].as_u64().unwrap() > 0);
+}
+
+#[test]
 fn design_report_connects_declared_context_to_observed_modules() {
     let dir = tempdir().unwrap();
     fs::create_dir(dir.path().join("src")).unwrap();
@@ -21,6 +111,11 @@ fn design_report_connects_declared_context_to_observed_modules() {
     )
     .unwrap();
     fs::write(dir.path().join("src/service.rs"), "pub fn quote(n: u32) -> u32 { crate::policy::price(n) }\n#[test] fn quote_test() { assert_eq!(quote(2), 4); }\n").unwrap();
+    fs::write(
+        dir.path().join(".coupling.toml"),
+        "[subdomains]\ncore=['src/policy.rs','src/service.rs']\n",
+    )
+    .unwrap();
     fs::write(
         dir.path().join(".coupling-context.toml"),
         r#"
@@ -53,6 +148,8 @@ id = "keep-together"
 modules = ["*policy", "*service"]
 reason = "Both ship as one unit"
 review_on = ["planned-change", "cross-team"]
+evidence = ["docs/quote-consistency.md"]
+rejected_options = ["Separate delivery without a consistent price revision"]
 [[scenarios]]
 name = "Keep knowledge local"
 description = "A responsibility move, not an implemented change"
@@ -82,6 +179,28 @@ distance = 0.0
     );
     let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     let design = &report["design"];
+    assert_eq!(
+        design["decisions"][0]["evidence"][0],
+        "docs/quote-consistency.md"
+    );
+    assert_eq!(
+        design["decisions"][0]["rejected_options"][0],
+        "Separate delivery without a consistent price revision"
+    );
+    let separation = design["alternatives"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|option| option["action"] == "separate-responsibilities")
+        .expect("retain a separation option for comparison");
+    assert_eq!(separation["status"], "requires-review");
+    assert!(
+        separation["constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|constraint| constraint.as_str().unwrap().contains("quote-consistency"))
+    );
     assert!(design["scenarios"][0]["affected_edges"].as_u64().unwrap() > 0);
     assert!(design["scenarios"][0]["hypothetical_balance"].is_number());
     assert_eq!(design["scenarios"][1]["affected_edges"], 0);
@@ -136,6 +255,33 @@ distance = 0.0
             .iter()
             .any(|entry| entry["planned_changes"] == "Introduce regional pricing")
     );
+
+    // With no planning context, CLI and design report must agree exactly.
+    fs::remove_file(dir.path().join(".coupling-context.toml")).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
+        .args([
+            "coupling",
+            "--design",
+            "--json",
+            "--no-git",
+            "--max-deps",
+            "0",
+        ])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let priorities = report["design"]["priorities"].as_array().unwrap();
+    let hotspots = report["hotspots"].as_array().unwrap();
+    assert!(!hotspots.is_empty());
+    for (hotspot, priority) in hotspots.iter().zip(priorities) {
+        assert_eq!(hotspot["module"], priority["module"]);
+        assert_eq!(
+            hotspot["score"].as_f64(),
+            priority["priority_score"].as_f64()
+        );
+    }
 }
 
 #[test]
@@ -248,6 +394,26 @@ fn git_change_reaches_three_hops_and_current_tests_while_retaining_deleted_item_
         design["baseline"]["settings_fingerprint"],
         design["provenance"]["config_fingerprint"]
     );
+    let result = Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
+        .args([
+            "coupling",
+            "--agent",
+            "--no-git",
+            "--changed-since",
+            "HEAD",
+            "--impact-depth",
+            "3",
+        ])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let review: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    // These fixture lists fit within the handoff limits. Borrowed serialization
+    // must preserve every field, including revision, depth and baseline notes.
+    assert_eq!(review["baseline"], design["baseline"]);
+    assert_eq!(review["impact"], design["impact"]);
+    assert_eq!(review["omitted"]["baseline.findings"], 0);
 }
 
 #[test]
@@ -266,4 +432,97 @@ fn malformed_context_fails_instead_of_silently_ignoring_design_facts() {
         .unwrap();
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("unknown field"));
+}
+
+#[test]
+fn agent_review_traces_declared_rules_without_inventing_code_dependencies() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.rs"), "pub fn price() -> u32 { 1 }\n").unwrap();
+    fs::write(
+        dir.path().join("b.rs"),
+        "pub fn quote() -> u32 { 1 }\n#[test] fn quote_test() { assert_eq!(quote(), 1); }\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("unrelated.rs"), "pub fn other() {}\n").unwrap();
+    fs::write(dir.path().join(".coupling-context.toml"), "version=1\n[[rules]]\nid='pricing'\nmodules=['a','b']\ndescription='Both implement the same pricing rule'\n").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
+        .args(["coupling", "--agent", "--focus", "a", "--no-git"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let review: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(review["format"], "cargo-coupling/agent-review");
+    assert_eq!(review["schema_version"], 1);
+    assert_eq!(review["focus"], serde_json::json!(["a", "b"]));
+    let impact = &review["impact"][0];
+    assert_eq!(impact["origin"], "a");
+    assert!(
+        impact["reachability"]["paths"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let declared = &impact["contextual_reachability"]["paths"][0];
+    assert_eq!(declared["module"], "b");
+    assert_eq!(
+        declared["steps"][0]["rule_ids"],
+        serde_json::json!(["pricing"])
+    );
+    assert!(
+        impact["tests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|test| test["item"]["name"] == "quote_test")
+    );
+    assert!(!review["questions"].as_array().unwrap().is_empty());
+    assert!(review["omitted"].is_object());
+    assert!(!review["coverage"].as_array().unwrap().is_empty());
+    assert_eq!(review["verification_status"], "not-run");
+
+    let missing = Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
+        .args(["coupling", "--agent", "--focus", "missing", "--no-git"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+}
+
+#[test]
+fn agent_review_discloses_nested_omissions_and_preserves_verification_references() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.rs"), "pub fn price() {}\n").unwrap();
+    let mut tests = String::from("pub fn quote() {}\n");
+    for number in 0..25 {
+        tests.push_str(&format!("#[test] fn quote_{number}() {{ quote(); }}\n"));
+    }
+    fs::write(dir.path().join("b.rs"), tests).unwrap();
+    fs::write(dir.path().join(".coupling-context.toml"), "version=1\n[[rules]]\nid='pricing'\nmodules=['a','b']\ndescription='Shared price'\nverification=['b::quote_0']\n").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_cargo-coupling"))
+        .args(["coupling", "--agent", "--focus", "a", "--no-git"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["impact"][0]["tests"].as_array().unwrap().len(), 20);
+    assert_eq!(report["omitted"]["impact[0].tests"], 5);
+    assert_eq!(report["shared_rules"][0]["verification"][0], "b::quote_0");
+    assert_eq!(report["verification_status"], "not-run");
+    assert!(
+        !report["questions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|question| question["id"] == "verify-rule:pricing")
+    );
 }

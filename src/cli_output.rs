@@ -107,7 +107,7 @@ pub fn run_check(
     // Check minimum grade
     if let Some(min_grade) = &config.min_grade {
         // Note: S is treated as equal to A for comparison purposes
-        // (S is a warning about over-optimization, not a higher grade)
+        // Legacy S input remains compatible; current reports never infer it.
         let grade_order = |g: &HealthGrade| match g {
             HealthGrade::S => 5, // Same as A
             HealthGrade::A => 5,
@@ -539,15 +539,17 @@ fn issue_refactoring_japanese(issue: &CouplingIssue) -> String {
             )
         }
         IssueType::HiddenCoupling => {
-            "共有されている知識を明示的な抽象化や境界に切り出す".to_string()
+            "同じ要件で変更する必要があるか確認し、共通化と別実装の維持を比較する".to_string()
         }
         IssueType::AccidentalVolatility => {
             "変更理由を分離し、安定サブドメインを高頻度変更から守る".to_string()
         }
         _ => {
             let action = issue.refactoring.to_string();
-            if action == "Extract a shared abstraction or make the dependency explicit" {
-                "共有された抽象化を抽出するか、依存関係を明示する".to_string()
+            if action
+                == "Confirm a shared change requirement before choosing a shared abstraction or retaining separate implementations"
+            {
+                "同じ要件で変更する必要があるか確認し、共通化と別実装の維持を比較する".to_string()
             } else {
                 action
             }

@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -160,7 +160,10 @@ pub fn detect_scattered_external_coupling(
 /// Read resolved package versions from the nearest Cargo.lock. Missing or
 /// unparsable lockfiles are treated as absent.
 pub fn load_lock_versions_near(start: &Path) -> HashMap<String, Vec<String>> {
-    let Some(lock_path) = find_cargo_lock(start) else {
+    let Some(lock_path) = crate::paths::find_in_ancestors(start, &["Cargo.lock"])
+        .ok()
+        .flatten()
+    else {
         return HashMap::new();
     };
     let Ok(content) = fs::read_to_string(lock_path) else {
@@ -197,24 +200,6 @@ struct CargoLock {
 struct CargoLockPackage {
     name: String,
     version: String,
-}
-
-fn find_cargo_lock(start: &Path) -> Option<PathBuf> {
-    let mut current = if start.is_file() {
-        start.parent().map(Path::to_path_buf)
-    } else {
-        Some(start.to_path_buf())
-    };
-
-    while let Some(dir) = current {
-        let lock_path = dir.join("Cargo.lock");
-        if lock_path.exists() {
-            return Some(lock_path);
-        }
-        current = dir.parent().map(Path::to_path_buf);
-    }
-
-    None
 }
 
 fn external_crate_name(coupling: &CouplingMetrics) -> String {

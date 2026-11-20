@@ -1,10 +1,10 @@
 //! Refactoring priorities and their explanations.
 
 use crate::balance::project::analyze_project_balance_with_thresholds;
-use crate::{CouplingIssue, Distance, IssueThresholds, ProjectMetrics, Severity};
+use crate::{IssueThresholds, ProjectMetrics};
 use serde::Serialize;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     io::{self, Write},
 };
 
@@ -47,7 +47,7 @@ pub fn get_issue_explanation(issue_type: &str) -> IssueExplanation {
                 "Testing requires many mocks/stubs",
                 "Hard to understand in isolation",
             ],
-            how_to_fix: "Split into smaller modules with clear responsibilities",
+            how_to_fix: "Check for unrelated responsibilities before splitting; orchestration can legitimately have high fan-out",
             example: Some("e.g., Split main.rs into cli.rs, config.rs, runner.rs"),
         },
         "High Afferent Coupling" => IssueExplanation {
@@ -57,7 +57,7 @@ pub fn get_issue_explanation(issue_type: &str) -> IssueExplanation {
                 "Fear of changing leads to technical debt",
                 "Wide blast radius for bugs",
             ],
-            how_to_fix: "Define a stable interface (trait) to hide implementation details",
+            how_to_fix: "Check whether consumers depend on volatile details; retain a stable shared abstraction when appropriate",
             example: Some("e.g., pub struct -> pub trait + impl for abstraction"),
         },
         "Circular Dependency" | "CircularDependency" => IssueExplanation {
@@ -67,7 +67,7 @@ pub fn get_issue_explanation(issue_type: &str) -> IssueExplanation {
                 "Unit testing is difficult (need both)",
                 "May cause compilation order issues",
             ],
-            how_to_fix: "Extract shared types to a common module, or use traits to invert dependencies",
+            how_to_fix: "Confirm whether the cycle crosses responsibilities that must evolve independently before changing its boundaries",
             example: Some("e.g., A -> B -> A becomes A -> Common <- B"),
         },
         "Global Complexity" => IssueExplanation {
@@ -77,7 +77,7 @@ pub fn get_issue_explanation(issue_type: &str) -> IssueExplanation {
                 "Changes have unpredictable effects",
                 "Module is not self-contained",
             ],
-            how_to_fix: "Move the dependency closer, or use an interface for loose coupling",
+            how_to_fix: "Compare retaining a stable boundary, moving related responsibilities closer, and hiding shared knowledge",
             example: None,
         },
         "Cascading Change Risk" => IssueExplanation {
@@ -87,7 +87,7 @@ pub fn get_issue_explanation(issue_type: &str) -> IssueExplanation {
                 "Bugs propagate through the chain",
                 "Constant rework needed",
             ],
-            how_to_fix: "Depend on a stable interface instead of implementation",
+            how_to_fix: "Confirm the shared knowledge and expected changes before introducing an integration-specific interface",
             example: None,
         },
         "Scattered External Coupling" => IssueExplanation {
@@ -97,7 +97,7 @@ pub fn get_issue_explanation(issue_type: &str) -> IssueExplanation {
                 "Upgrade risk is spread across unrelated modules",
                 "Harder to replace or mock the dependency",
             ],
-            how_to_fix: "Introduce a facade or wrapper module around the crate",
+            how_to_fix: "Check actual replacement needs and public API exposure before paying the maintenance cost of a wrapper",
             example: Some("e.g., reqwest calls go through http_client.rs"),
         },
         "Inappropriate Intimacy" | "InappropriateIntimacy" => IssueExplanation {
@@ -107,7 +107,7 @@ pub fn get_issue_explanation(issue_type: &str) -> IssueExplanation {
                 "Internal changes affect external code",
                 "Unclear module boundaries",
             ],
-            how_to_fix: "Access through public methods or traits instead",
+            how_to_fix: "Check whether access exposes unintended knowledge; a getter that exposes the same representation may not help",
             example: Some("e.g., foo.internal_field -> foo.get_value()"),
         },
         _ => IssueExplanation {
@@ -151,10 +151,7 @@ pub(super) fn calculate_hotspots_with_cycles(
     circular_deps: &[Vec<String>],
 ) -> Vec<Hotspot> {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
-    let names = crate::design::graph::DependencyGraph {
-        nodes: metrics.modules.keys().cloned().collect(),
-        ..Default::default()
-    };
+    let names = crate::design::graph::DependencyGraph::from_metrics(metrics);
     let canonical = |name: &str| names.resolve(name).unwrap_or_else(|| name.to_string());
     let cycle_modules: HashSet<String> = circular_deps
         .iter()
@@ -162,117 +159,28 @@ pub(super) fn calculate_hotspots_with_cycles(
         .map(|name| canonical(name))
         .collect();
 
-    // Group issues by source module
-    let mut module_issues: HashMap<String, Vec<&CouplingIssue>> = HashMap::new();
-    for issue in &report.issues {
-        module_issues
-            .entry(canonical(&issue.source))
-            .or_default()
-            .push(issue);
-    }
-
-    // Calculate coupling counts per module
-    let mut couplings_out: HashMap<String, usize> = HashMap::new();
-    let mut couplings_in: HashMap<String, usize> = HashMap::new();
-    for coupling in &metrics.couplings {
-        if coupling.distance != Distance::DifferentCrate {
-            *couplings_out
-                .entry(canonical(&coupling.source))
-                .or_default() += 1;
-            *couplings_in.entry(canonical(&coupling.target)).or_default() += 1;
+    // Use the design report's baseline ordering. Context may add explicit
+    // business weights in --design, but presentation never invents another score.
+    crate::design::planning::priorities(
+        &names, &crate::design::context::DesignContext::default(), &report.issues, &[],
+    ).into_iter().take(limit).map(|priority| {
+        let module = priority.module;
+        let issues = report.issues.iter().filter(|issue|
+            canonical(&issue.source) == module || canonical(&issue.target) == module
+        ).map(|issue| HotspotIssue {
+            severity: issue.severity.to_string(),
+            issue_type: issue.issue_type.to_string(),
+            description: issue.description.clone(),
+        }).collect();
+        Hotspot {
+            score: priority.priority_score as u32,
+            file_path: metrics.modules.get(&module).map(|m| m.path.display().to_string()),
+            in_cycle: cycle_modules.contains(&module),
+            module,
+            issues,
+            suggestion: "Confirm the shared reason for change and expected future changes; compare retaining the boundary, hiding knowledge, and moving related responsibilities. A cycle alone does not prescribe a refactoring.".into(),
         }
-    }
-
-    // Build hotspots
-    let mut hotspots: Vec<Hotspot> = Vec::new();
-
-    for (module, issues) in &module_issues {
-        let mut score: u32 = 0;
-
-        // Base score from issue count and severity
-        for issue in issues {
-            score += match issue.severity {
-                Severity::Critical => 50,
-                Severity::High => 30,
-                Severity::Medium => 15,
-                Severity::Low => 5,
-            };
-        }
-
-        // Bonus for circular dependencies
-        let in_cycle = cycle_modules.contains(module);
-        if in_cycle {
-            score += 40;
-        }
-
-        // Bonus for high coupling count
-        let out_count = couplings_out.get(module).copied().unwrap_or(0);
-        let in_count = couplings_in.get(module).copied().unwrap_or(0);
-        score += (out_count + in_count) as u32 * 2;
-
-        // Determine primary issue type for suggestion
-        let primary_issue = issues.iter().max_by_key(|i| i.severity);
-        let suggestion = if in_cycle {
-            "Break circular dependency by extracting shared types or inverting with traits".into()
-        } else if let Some(issue) = primary_issue {
-            format!("{}", issue.refactoring)
-        } else {
-            "Review module coupling".into()
-        };
-
-        // Get file path
-        let file_path = metrics
-            .modules
-            .get(module)
-            .map(|m| m.path.display().to_string());
-
-        hotspots.push(Hotspot {
-            module: module.clone(),
-            score,
-            issues: issues
-                .iter()
-                .map(|i| HotspotIssue {
-                    severity: format!("{}", i.severity),
-                    issue_type: format!("{}", i.issue_type),
-                    description: i.description.clone(),
-                })
-                .collect(),
-            suggestion,
-            file_path,
-            in_cycle,
-        });
-    }
-
-    // Also add modules in cycles that don't have other issues
-    for module in &cycle_modules {
-        if !module_issues.contains_key(module) {
-            let file_path = metrics
-                .modules
-                .get(module)
-                .map(|m| m.path.display().to_string());
-
-            hotspots.push(Hotspot {
-                module: module.clone(),
-                score: 40,
-                issues: vec![HotspotIssue {
-                    severity: "Critical".into(),
-                    issue_type: "CircularDependency".into(),
-                    description: "Part of a circular dependency cycle".into(),
-                }],
-                suggestion:
-                    "Break circular dependency by extracting shared types or inverting with traits"
-                        .into(),
-                file_path,
-                in_cycle: true,
-            });
-        }
-    }
-
-    // Sort by score descending, then module name for deterministic ties.
-    hotspots.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.module.cmp(&b.module)));
-    hotspots.truncate(limit);
-
-    hotspots
+    }).collect()
 }
 
 /// Generate hotspots output to writer
@@ -294,7 +202,10 @@ pub fn generate_hotspots_output<W: Write>(
     if hotspots.is_empty() {
         writeln!(writer)?;
         writeln!(writer, "✅ No significant hotspots detected.")?;
-        writeln!(writer, "   Your codebase has good coupling balance.")?;
+        writeln!(
+            writer,
+            "   No matching findings in the analyzed scope; check coverage before concluding safety."
+        )?;
         return Ok(());
     }
 
@@ -341,7 +252,7 @@ pub fn generate_hotspots_output<W: Write>(
                     writeln!(writer, "      • {}", reason)?;
                 }
                 writeln!(writer)?;
-                writeln!(writer, "   🔧 How to fix:")?;
+                writeln!(writer, "   🔧 Before changing:")?;
                 writeln!(writer, "      {}", explanation.how_to_fix)?;
                 if let Some(example) = explanation.example {
                     writeln!(writer, "      {}", example)?;
@@ -352,7 +263,7 @@ pub fn generate_hotspots_output<W: Write>(
 
         // Suggestion (only if not verbose, since verbose already shows how_to_fix)
         if !verbose {
-            writeln!(writer, "   → Fix: {}", hotspot.suggestion)?;
+            writeln!(writer, "   → Review: {}", hotspot.suggestion)?;
         }
         writeln!(writer)?;
     }

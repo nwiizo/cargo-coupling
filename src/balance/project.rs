@@ -10,7 +10,7 @@ use super::patterns::{analyze_module_coupling, analyze_rust_patterns};
 use super::score::{BalanceInterpretation, BalanceScore, IssueThresholds};
 use super::severity::Severity;
 use super::signals::{analyze_accidental_volatility, analyze_hidden_temporal_coupling};
-use super::subdomain::{build_target_subdomain_map, coupling_with_essential_volatility};
+use crate::metrics::target::ModuleIndex;
 
 pub fn analyze_project_balance(metrics: &ProjectMetrics) -> ProjectBalanceReport {
     analyze_project_balance_with_thresholds(metrics, &IssueThresholds::default())
@@ -24,22 +24,20 @@ pub fn analyze_project_balance_with_thresholds(
     let thresholds = thresholds.clone();
     let mut all_issues = Vec::new();
     let mut internal_balance_scores: Vec<BalanceScore> = Vec::new();
-    let mut all_balance_scores: Vec<BalanceScore> = Vec::new();
-    let target_subdomains = build_target_subdomain_map(metrics);
+    let module_index = ModuleIndex::new(&metrics.modules, &metrics.workspace_members);
 
-    // Analyze individual couplings
-    // Only INTERNAL couplings affect the health score
-    for coupling in &metrics.couplings {
-        let effective_coupling = coupling_with_essential_volatility(coupling, &target_subdomains);
-        let score = BalanceScore::calculate(&effective_coupling);
-        all_balance_scores.push(score.clone());
-
-        // Only count internal couplings for scoring
-        if effective_coupling.distance != Distance::DifferentCrate {
-            internal_balance_scores.push(score);
-            let issues = identify_issues_with_thresholds(&effective_coupling, &thresholds);
-            all_issues.extend(issues);
-        }
+    // Only internal couplings affect project health.
+    for coupling in metrics
+        .couplings
+        .iter()
+        .filter(|edge| edge.distance != Distance::DifferentCrate)
+    {
+        let effective_coupling = module_index.effective_coupling(coupling);
+        internal_balance_scores.push(BalanceScore::calculate(&effective_coupling));
+        all_issues.extend(identify_issues_with_thresholds(
+            &effective_coupling,
+            &thresholds,
+        ));
     }
 
     // Analyze module-level coupling patterns (already filters external)
@@ -61,11 +59,11 @@ pub fn analyze_project_balance_with_thresholds(
     // git churn that may settle) so the reader can judge whether to act now.
     for issue in &mut all_issues {
         if issue.issue_type == IssueType::CascadingChangeRisk {
-            // The subdomain map is keyed by short module name; the issue target is fully qualified.
-            let target_key = issue.target.rsplit("::").next().unwrap_or(&issue.target);
             let tag = if matches!(
-                target_subdomains.get(target_key),
-                Some(Some(Subdomain::Core))
+                module_index
+                    .resolve(&issue.target)
+                    .and_then(|m| m.subdomain),
+                Some(Subdomain::Core)
             ) {
                 " (essential volatility: target is a Core subdomain that genuinely evolves)"
             } else {
@@ -180,7 +178,7 @@ pub(crate) fn dedupe_issues_by_stable_key(issues: &mut Vec<super::issue::Couplin
 /// Only considers internal couplings (not external crate dependencies)
 /// since external dependencies are outside the developer's control.
 pub fn calculate_project_score(metrics: &ProjectMetrics) -> f64 {
-    let target_subdomains = build_target_subdomain_map(metrics);
+    let module_index = ModuleIndex::new(&metrics.modules, &metrics.workspace_members);
 
     // Filter to internal couplings only
     let internal_scores: Vec<f64> = metrics
@@ -188,7 +186,7 @@ pub fn calculate_project_score(metrics: &ProjectMetrics) -> f64 {
         .iter()
         .filter(|c| c.distance != Distance::DifferentCrate)
         .map(|c| {
-            let effective_coupling = coupling_with_essential_volatility(c, &target_subdomains);
+            let effective_coupling = module_index.effective_coupling(c);
             BalanceScore::calculate(&effective_coupling).score
         })
         .collect();

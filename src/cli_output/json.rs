@@ -1,13 +1,13 @@
 //! Structured reports and their evidence metadata.
 
 use super::hotspots::{Hotspot, calculate_hotspots_with_cycles};
-use crate::balance::subdomain::{build_target_subdomain_map, coupling_with_essential_volatility};
 use crate::balance::{project::analyze_project_balance_with_thresholds, score::BalanceScore};
 use crate::diff::BaselineDiff;
 use crate::external::{
     ExternalDependencyReport, ExternalDependencyUsage, analyze_external_dependencies,
 };
 use crate::manifest::AnalysisManifest;
+use crate::metrics::target::ModuleIndex;
 use crate::{CouplingIssue, Distance, IssueThresholds, ProjectMetrics, Severity};
 use serde::Serialize;
 use std::{
@@ -169,7 +169,7 @@ pub fn generate_json_output<W: Write>(
     manifest: &AnalysisManifest,
     writer: &mut W,
 ) -> io::Result<()> {
-    generate_json_output_with_optional_diff(metrics, thresholds, manifest, None, writer)
+    write_snapshot(&json_snapshot(metrics, thresholds, manifest, None), writer)
 }
 
 /// Generate complete JSON output with a top-level baseline diff object.
@@ -180,16 +180,24 @@ pub fn generate_json_output_with_diff<W: Write>(
     diff: &BaselineDiff,
     writer: &mut W,
 ) -> io::Result<()> {
-    generate_json_output_with_optional_diff(metrics, thresholds, manifest, Some(diff), writer)
+    write_snapshot(
+        &json_snapshot(metrics, thresholds, manifest, Some(diff)),
+        writer,
+    )
 }
 
-fn generate_json_output_with_optional_diff<W: Write>(
+fn write_snapshot<W: Write>(snapshot: &JsonOutput, writer: &mut W) -> io::Result<()> {
+    serde_json::to_writer_pretty(&mut *writer, snapshot)?;
+    writeln!(writer)
+}
+
+/// Build the structured snapshot for standalone and design output.
+pub fn json_snapshot(
     metrics: &ProjectMetrics,
     thresholds: &IssueThresholds,
     manifest: &AnalysisManifest,
     diff: Option<&BaselineDiff>,
-    writer: &mut W,
-) -> io::Result<()> {
+) -> JsonOutput {
     let report = analyze_project_balance_with_thresholds(metrics, thresholds);
     let external_dependencies = analyze_external_dependencies(metrics, &HashMap::new());
     let circular_deps = metrics.detect_circular_dependencies();
@@ -204,7 +212,7 @@ fn generate_json_output_with_optional_diff<W: Write>(
         .flatten()
         .map(|name| canonical(name))
         .collect();
-    let target_subdomains = build_target_subdomain_map(metrics);
+    let module_index = ModuleIndex::new(&metrics.modules, &metrics.workspace_members);
     let hotspots = calculate_hotspots_with_cycles(metrics, thresholds, 10, &circular_deps);
 
     // Count couplings per module
@@ -220,10 +228,7 @@ fn generate_json_output_with_optional_diff<W: Write>(
                 .entry(canonical(&coupling.source))
                 .or_default() += 1;
             *couplings_in.entry(canonical(&coupling.target)).or_default() += 1;
-            let score = BalanceScore::calculate(&coupling_with_essential_volatility(
-                coupling,
-                &target_subdomains,
-            ));
+            let score = BalanceScore::calculate(&module_index.effective_coupling(coupling));
             balance_scores
                 .entry(canonical(&coupling.source))
                 .or_default()
@@ -288,7 +293,7 @@ fn generate_json_output_with_optional_diff<W: Write>(
         .collect();
     modules.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let output = JsonOutput {
+    JsonOutput {
         schema_version: 2,
         analyzer_version: env!("CARGO_PKG_VERSION").into(),
         scoring_version: crate::balance::score::SCORING_VERSION.into(),
@@ -347,12 +352,7 @@ fn generate_json_output_with_optional_diff<W: Write>(
         circular_dependencies: circular_deps,
         temporal_couplings,
         modules,
-    };
-
-    let json = serde_json::to_string_pretty(&output).map_err(io::Error::other)?;
-    writeln!(writer, "{}", json)?;
-
-    Ok(())
+    }
 }
 
 fn json_baseline_diff(diff: &BaselineDiff) -> JsonBaselineDiff {

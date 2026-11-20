@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::metrics::dimensions::{Distance, Subdomain, Visibility};
 use crate::metrics::project::ProjectMetrics;
@@ -10,40 +10,47 @@ use super::issue_type::IssueType;
 use super::labels::extract_type_name;
 use super::score::IssueThresholds;
 use super::severity::Severity;
-use super::subdomain::build_target_subdomain_map;
+use crate::metrics::target::ModuleIndex;
 
 pub(crate) fn analyze_module_coupling(
     metrics: &ProjectMetrics,
     thresholds: &IssueThresholds,
 ) -> Vec<CouplingIssue> {
     let mut issues = Vec::new();
-    let target_subdomains = build_target_subdomain_map(metrics);
+    let module_index = ModuleIndex::new(&metrics.modules, &metrics.workspace_members);
 
     // Count outgoing (efferent) and incoming (afferent) couplings per module
     // Only count INTERNAL dependencies (within workspace), not external crates
-    let mut efferent: HashMap<&str, usize> = HashMap::new();
-    let mut afferent: HashMap<&str, usize> = HashMap::new();
+    let mut efferent: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let mut afferent: HashMap<&str, HashSet<&str>> = HashMap::new();
 
     for coupling in &metrics.couplings {
         // Skip external crate dependencies entirely
-        if coupling.distance == Distance::DifferentCrate {
+        if coupling.distance == Distance::DifferentCrate || coupling.source == coupling.target {
             continue;
         }
 
-        *efferent.entry(&coupling.source).or_insert(0) += 1;
-        *afferent.entry(&coupling.target).or_insert(0) += 1;
+        efferent
+            .entry(&coupling.source)
+            .or_default()
+            .insert(&coupling.target);
+        afferent
+            .entry(&coupling.target)
+            .or_default()
+            .insert(&coupling.source);
     }
 
     // Check for high efferent coupling (depends on too many things)
-    for (module, count) in &efferent {
-        if *count > thresholds.max_dependencies {
+    for (module, targets) in &efferent {
+        let count = targets.len();
+        if count > thresholds.max_dependencies {
             // A binary entrypoint must wire the whole application together, so its
             // fan-out is expected by design — report it as a Low informational note
             // rather than a High-severity action item.
             let entrypoint = is_entrypoint_module(module);
             let severity = if entrypoint {
                 Severity::Low
-            } else if *count > thresholds.max_dependencies * 2 {
+            } else if count > thresholds.max_dependencies.saturating_mul(2) {
                 Severity::High
             } else {
                 Severity::Medium
@@ -80,22 +87,26 @@ pub(crate) fn analyze_module_coupling(
                 description,
                 refactoring,
                 balance_score: 1.0
-                    - (*count as f64 / (thresholds.max_dependencies * 3) as f64).min(1.0),
+                    - (count as f64 / (thresholds.max_dependencies as f64 * 3.0)).min(1.0),
             });
         }
     }
 
     // Check for high afferent coupling (too many things depend on this)
     // Only internal modules are counted (external crates already filtered above)
-    for (module, count) in &afferent {
-        if *count > thresholds.max_dependents {
+    for (module, sources) in &afferent {
+        let count = sources.len();
+        if count > thresholds.max_dependents {
             // A widely-depended-on module is only risky if it is VOLATILE; a STABLE
             // central abstraction with many dependents is good design (the balance
             // rule: strong + far + low volatility = Acceptable). Scale severity by
             // the module's essential volatility.
-            let short = module.rsplit("::").next().unwrap_or(module);
-            let subdomain = target_subdomains.get(short).copied().flatten();
-            let base_severity = if *count > thresholds.max_dependents * 2 {
+            let provider = module_index.resolve(module);
+            if provider.is_some_and(|m| m.is_prelude) {
+                continue;
+            }
+            let subdomain = provider.and_then(|m| m.subdomain);
+            let base_severity = if count > thresholds.max_dependents.saturating_mul(2) {
                 Severity::High
             } else {
                 Severity::Medium
@@ -145,7 +156,7 @@ pub(crate) fn analyze_module_coupling(
                 description,
                 refactoring,
                 balance_score: 1.0
-                    - (*count as f64 / (thresholds.max_dependents * 3) as f64).min(1.0),
+                    - (count as f64 / (thresholds.max_dependents as f64 * 3.0)).min(1.0),
             });
         }
     }
@@ -272,5 +283,41 @@ fn capitalize_first(s: &str) -> String {
     match chars.next() {
         None => String::new(),
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
+#[cfg(test)]
+mod fan_tests {
+    use super::*;
+    use crate::{CouplingMetrics, IntegrationStrength, Volatility};
+
+    #[test]
+    fn repeated_uses_and_self_edges_do_not_add_module_dependencies() {
+        let mut metrics = ProjectMetrics::new();
+        for (source, target) in [("a", "b"), ("a", "b"), ("a", "a"), ("b", "b")] {
+            metrics.add_coupling(CouplingMetrics::new(
+                source.into(),
+                target.into(),
+                IntegrationStrength::Model,
+                Distance::DifferentModule,
+                Volatility::Low,
+            ));
+        }
+        let thresholds = IssueThresholds {
+            max_dependencies: 1,
+            max_dependents: 1,
+            ..Default::default()
+        };
+        assert!(analyze_module_coupling(&metrics, &thresholds).is_empty());
+        metrics.add_coupling(CouplingMetrics::new(
+            "a".into(),
+            "c".into(),
+            IntegrationStrength::Model,
+            Distance::DifferentModule,
+            Volatility::Low,
+        ));
+        let issues = analyze_module_coupling(&metrics, &thresholds);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].target, "2 dependencies");
     }
 }

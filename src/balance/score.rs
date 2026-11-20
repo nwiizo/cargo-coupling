@@ -3,7 +3,7 @@
 use crate::metrics::coupling::CouplingMetrics;
 
 /// Version of the numeric methodology, recorded with exported analyses.
-pub const SCORING_VERSION: &str = "khononov-compensation-v2";
+pub const SCORING_VERSION: &str = "khononov-compensation-v4";
 
 /// Compensation over normalized dimensions. Used for both observations and
 /// explicit what-if scenarios so their calculations cannot drift apart.
@@ -15,6 +15,22 @@ pub(crate) fn normalized_balance(strength: f64, distance: f64, volatility: f64) 
 mod compensation_tests {
     use super::*;
     use crate::{Distance, IntegrationStrength, Volatility};
+
+    #[test]
+    fn binary_extremes_follow_the_balance_rule() {
+        for (strength, distance, volatility, expected) in [
+            (0.0, 0.0, 0.0, 1.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0, 1.0),
+            (0.0, 1.0, 1.0, 1.0),
+            (1.0, 0.0, 0.0, 1.0),
+            (1.0, 0.0, 1.0, 1.0),
+            (1.0, 1.0, 0.0, 1.0),
+            (1.0, 1.0, 1.0, 0.0),
+        ] {
+            assert_eq!(normalized_balance(strength, distance, volatility), expected);
+        }
+    }
 
     #[test]
     fn stability_compensates_for_every_strength_and_distance() {

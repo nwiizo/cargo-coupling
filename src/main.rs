@@ -9,16 +9,16 @@
 
 use std::fs::File;
 use std::io::{BufWriter, Write, stdout};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
 use cargo_coupling::{
-    CompiledConfig, IssueThresholds, ManifestContext, Severity, TextReportOptions,
+    AnalysisManifest, CompiledConfig, IssueThresholds, ProjectMetrics, Severity, TextReportOptions,
     VolatilityAnalyzer, analyze_external_dependencies, analyze_history, analyze_ref,
-    analyze_workspace_with_config, build_manifest,
+    analyze_workspace_with_config,
     cli_output::{
         CheckConfig, generate_baseline_diff_output, generate_check_output,
         generate_external_dependencies_output, generate_history_output, generate_hotspots_output,
@@ -27,7 +27,7 @@ use cargo_coupling::{
     },
     diff_ref_analysis, generate_ai_output_with_thresholds, generate_report_with_options,
     generate_summary_with_options, load_compiled_config, load_lock_versions_near,
-    web::{DEFAULT_HISTORY_MAX_POINTS, ServerConfig, start_server},
+    web::{DEFAULT_HISTORY_MAX_POINTS, ServerConfig, server::start_server_with_history_status},
 };
 
 /// cargo-coupling - Measure the "right distance" in your Rust code
@@ -130,6 +130,14 @@ struct Args {
     /// Review change impact, design alternatives, ownership and supporting evidence
     #[arg(long, conflicts_with_all = ["history", "deps", "impact", "trace", "hotspots", "summary", "check"])]
     design: bool,
+
+    /// Emit a bounded JSON review for coding agents (read-only; not a quality gate)
+    #[arg(long, conflicts_with_all = ["history", "deps", "impact", "trace", "hotspots", "summary", "check", "web", "ai"])]
+    agent: bool,
+
+    /// Focus design review on a module and its potential consumers
+    #[arg(long, value_name = "MODULE", conflicts_with_all = ["history", "deps", "impact", "trace", "hotspots", "summary", "check", "web", "ai"])]
+    focus: Option<String>,
 
     /// Optional versioned design facts (default: search for .coupling-context.toml)
     #[arg(long, value_name = "PATH", conflicts_with_all = ["history", "deps", "impact", "trace", "hotspots", "summary", "check"])]
@@ -241,21 +249,16 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     let total_start = Instant::now();
 
     // Load configuration file
-    let config_path = args.config.as_ref().unwrap_or(&args.path);
-    let mut config = match load_compiled_config(config_path) {
-        Ok(config) => {
-            if args.verbose && config.has_volatility_overrides() {
-                eprintln!("Loaded configuration from .coupling.toml");
-            }
-            config
-        }
-        Err(e) => {
-            if args.verbose {
-                eprintln!("Note: No config file loaded: {}", e);
-            }
-            CompiledConfig::empty()
-        }
+    let mut config = match &args.config {
+        Some(path) => cargo_coupling::config::load_compiled_config_file(path)
+            .map_err(|err| invalid_cli_input(format!("{}: {err}", path.display())))?,
+        None => load_compiled_config(&args.path)?,
     };
+    if args.verbose
+        && let Some(root) = config.config_root()
+    {
+        eprintln!("Loaded configuration from {}", root.display());
+    }
 
     // Apply CLI flags to config (CLI takes precedence over config file)
     if args.exclude_tests {
@@ -322,11 +325,9 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         )
         .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
 
-        let mut writer: Box<dyn Write> = match &args.output {
-            Some(path) => Box::new(BufWriter::new(File::create(path)?)),
-            None => Box::new(stdout()),
-        };
+        let mut writer = report_writer(args.output.as_deref())?;
         generate_history_output(&report, args.json, max_points, &mut writer)?;
+        writer.flush()?;
         return Ok(0);
     }
 
@@ -408,14 +409,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         );
     }
 
-    let manifest = build_manifest(&ManifestContext {
-        git_used,
-        tests_excluded: config.exclude_tests,
-        parse_failures: metrics.parse_failures,
-        skipped_crates: metrics.skipped_crates.clone(),
-        boundary_skipped_files: metrics.boundary_skipped_files,
-        dead_config_patterns: metrics.dead_config_patterns.clone(),
-    });
+    let manifest = AnalysisManifest::from_metrics(&metrics, git_used, config.exclude_tests);
 
     // Web visualization mode
     if args.web {
@@ -436,51 +430,90 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
 
         // Run the web server using tokio runtime
         let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(start_server(metrics, thresholds, server_config))
-            .map_err(|e| -> Box<dyn std::error::Error> { e })?;
+        rt.block_on(start_server_with_history_status(
+            metrics,
+            thresholds,
+            server_config,
+            git_used,
+        ))
+        .map_err(|e| -> Box<dyn std::error::Error> { e })?;
 
         return Ok(0);
     }
 
-    // Generate output
-    let output: Box<dyn Write> = match &args.output {
-        Some(path) => {
-            let file = File::create(path)?;
-            Box::new(BufWriter::new(file))
-        }
+    let mut writer = report_writer(args.output.as_deref())?;
+    let exit_code = write_snapshot_output(
+        &args,
+        &metrics,
+        &config,
+        &thresholds,
+        git_used,
+        &manifest,
+        &mut writer,
+    )?;
+    writer.flush()?;
+    if let Some(path) = &args.output {
+        eprintln!("Report written to: {}", path.display());
+    }
+    if args.timing {
+        let total_time = total_start.elapsed();
+        let files_per_sec = metrics.total_files as f64 / total_time.as_secs_f64();
+        eprintln!(
+            "Total time: {:.2?} ({:.1} files/sec)",
+            total_time, files_per_sec
+        );
+    }
+    Ok(exit_code)
+}
+
+fn report_writer(path: Option<&Path>) -> std::io::Result<Box<dyn Write>> {
+    Ok(match path {
+        Some(path) => Box::new(BufWriter::new(File::create(path)?)),
         None => Box::new(stdout()),
-    };
+    })
+}
 
-    let mut writer = output;
-
-    if args.design || args.changed_since.is_some() || args.context.is_some() {
+fn write_snapshot_output(
+    args: &Args,
+    metrics: &ProjectMetrics,
+    config: &CompiledConfig,
+    thresholds: &IssueThresholds,
+    git_used: bool,
+    manifest: &AnalysisManifest,
+    writer: &mut impl Write,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    if args.design
+        || args.agent
+        || args.focus.is_some()
+        || args.changed_since.is_some()
+        || args.context.is_some()
+    {
         let assessment = cargo_coupling::design::assessment::assess(
-            &metrics,
-            &config,
-            &thresholds,
+            metrics,
+            config,
+            thresholds,
             cargo_coupling::design::assessment::AssessmentRequest {
                 path: &args.path,
                 context_path: args.context.as_deref(),
                 changed_since: args.changed_since.as_deref(),
                 baseline: args.baseline.as_deref(),
+                focus: args.focus.as_deref(),
                 max_depth: args.impact_depth.map(|n| n as usize),
                 git_months: args.git_months,
                 git_used,
             },
         )?;
-        if args.json {
-            let mut snapshot = Vec::new();
-            generate_json_output(&metrics, &thresholds, &manifest, &mut snapshot)?;
-            let mut json: serde_json::Value = serde_json::from_slice(&snapshot)?;
+        if args.agent {
+            cargo_coupling::design::output::write_agent_review(&assessment, writer)?;
+        } else if args.json {
+            let snapshot =
+                cargo_coupling::cli_output::json_snapshot(metrics, thresholds, manifest, None);
+            let mut json = serde_json::to_value(snapshot)?;
             json["design"] = serde_json::to_value(assessment)?;
-            serde_json::to_writer_pretty(&mut writer, &json)?;
+            serde_json::to_writer_pretty(&mut *writer, &json)?;
             writeln!(writer)?;
         } else {
-            cargo_coupling::design::output::write_assessment(
-                &assessment,
-                args.japanese,
-                &mut writer,
-            )?;
+            cargo_coupling::design::output::write_assessment(&assessment, args.japanese, writer)?;
         }
         return Ok(0);
     }
@@ -492,26 +525,25 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     if let Some(baseline_ref) = &args.baseline {
         let baseline = analyze_ref(
             &args.path,
-            &config,
-            &thresholds,
+            config,
+            thresholds,
             baseline_ref,
             args.git_months,
             !args.no_git,
         )
         .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
         let current_report =
-            cargo_coupling::analyze_project_balance_with_thresholds(&metrics, &thresholds);
+            cargo_coupling::analyze_project_balance_with_thresholds(metrics, thresholds);
         let diff = diff_ref_analysis(&baseline, &current_report);
 
         if args.json {
-            generate_json_output_with_diff(&metrics, &thresholds, &manifest, &diff, &mut writer)?;
+            generate_json_output_with_diff(metrics, thresholds, manifest, &diff, writer)?;
         } else if args.check {
-            let fail_on = ratchet_fail_on_from_args(&args)?;
-            let exit_code =
-                generate_ratchet_check_output(&diff, baseline_ref, fail_on, &mut writer)?;
+            let fail_on = ratchet_fail_on_from_args(args)?;
+            let exit_code = generate_ratchet_check_output(&diff, baseline_ref, fail_on, writer)?;
             return Ok(exit_code);
         } else {
-            generate_baseline_diff_output(&diff, baseline_ref, &mut writer)?;
+            generate_baseline_diff_output(&diff, baseline_ref, writer)?;
         }
         return Ok(0);
     }
@@ -519,8 +551,8 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     // --deps: Show third-party dependency coupling exposure
     if args.deps {
         let versions = load_lock_versions_near(&args.path);
-        let report = analyze_external_dependencies(&metrics, &versions);
-        generate_external_dependencies_output(&report, args.json, args.japanese, &mut writer)?;
+        let report = analyze_external_dependencies(metrics, &versions);
+        generate_external_dependencies_output(&report, args.json, args.japanese, writer)?;
         return Ok(0);
     }
 
@@ -528,41 +560,41 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     if args.json {
         if let Some(module) = &args.impact {
             let impact = cargo_coupling::cli_output::analyze_impact_with_depth(
-                &metrics,
+                metrics,
                 module,
                 args.impact_depth.map(|n| n as usize),
             )
             .ok_or_else(|| {
                 invalid_cli_input(format!("Module '{module}' is missing or ambiguous"))
             })?;
-            serde_json::to_writer_pretty(&mut writer, &impact)?;
+            serde_json::to_writer_pretty(&mut *writer, &impact)?;
             writeln!(writer)?;
             return Ok(0);
         }
-        generate_json_output(&metrics, &thresholds, &manifest, &mut writer)?;
+        generate_json_output(metrics, thresholds, manifest, writer)?;
         return Ok(0);
     }
 
     // --check: Quality gate check (returns exit code)
     if args.check {
-        let check_config = check_config_from_args(&args)?;
-        let exit_code = generate_check_output(&metrics, &thresholds, &check_config, &mut writer)?;
+        let check_config = check_config_from_args(args)?;
+        let exit_code = generate_check_output(metrics, thresholds, &check_config, writer)?;
         return Ok(exit_code);
     }
 
     // --hotspots: Show top refactoring targets
     if let Some(limit) = args.hotspots {
-        generate_hotspots_output(&metrics, &thresholds, limit, args.verbose, &mut writer)?;
+        generate_hotspots_output(metrics, thresholds, limit, args.verbose, writer)?;
         return Ok(0);
     }
 
     // --impact: Analyze impact of a specific module
     if let Some(module_name) = &args.impact {
         let found = cargo_coupling::cli_output::generate_impact_output_with_depth(
-            &metrics,
+            metrics,
             module_name,
             args.impact_depth.map(|n| n as usize),
-            &mut writer,
+            writer,
         )?;
         if !found {
             return Ok(1);
@@ -572,8 +604,7 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
 
     // --trace: Trace dependencies for a specific function/type
     if let Some(item_name) = &args.trace {
-        let found =
-            cargo_coupling::cli_output::generate_trace_output(&metrics, item_name, &mut writer)?;
+        let found = cargo_coupling::cli_output::generate_trace_output(metrics, item_name, writer)?;
         if !found {
             return Ok(1);
         }
@@ -582,41 +613,26 @@ fn run_coupling(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
 
     // Default modes
     if args.ai {
-        generate_ai_output_with_thresholds(&metrics, &thresholds, &manifest, &mut writer)?;
+        generate_ai_output_with_thresholds(metrics, thresholds, manifest, writer)?;
     } else if args.summary {
         generate_summary_with_options(
-            &metrics,
-            &thresholds,
-            &manifest,
+            metrics,
+            thresholds,
+            manifest,
             args.blind_spots || args.all,
-            &mut writer,
+            writer,
         )?;
     } else {
         generate_report_with_options(
-            &metrics,
-            &thresholds,
-            &manifest,
+            metrics,
+            thresholds,
+            manifest,
             TextReportOptions {
                 show_structural_blind_spots: args.blind_spots || args.all,
                 show_all_temporal_couplings: args.all,
             },
-            &mut writer,
+            writer,
         )?;
-    }
-
-    // Notify about output file
-    if let Some(path) = &args.output {
-        eprintln!("Report written to: {}", path.display());
-    }
-
-    // Show total timing
-    if args.timing {
-        let total_time = total_start.elapsed();
-        let files_per_sec = metrics.total_files as f64 / total_time.as_secs_f64();
-        eprintln!(
-            "Total time: {:.2?} ({:.1} files/sec)",
-            total_time, files_per_sec
-        );
     }
 
     Ok(0)
@@ -637,13 +653,21 @@ fn output_mode_conflict(args: &Args) -> Option<(&'static str, Vec<&'static str>)
     if args.web {
         modes.push("--web");
     }
-    if !args.web && (args.design || args.context.is_some() || args.changed_since.is_some()) {
+    if !args.web
+        && (args.design
+            || args.agent
+            || args.focus.is_some()
+            || args.context.is_some()
+            || args.changed_since.is_some())
+    {
         modes.push("--design");
     }
     if args.json
         && args.history.is_none()
         && !args.deps
         && !args.design
+        && !args.agent
+        && args.focus.is_none()
         && args.context.is_none()
         && args.changed_since.is_none()
         && args.impact.is_none()
@@ -741,6 +765,8 @@ mod tests {
             output: None,
             summary: false,
             design: false,
+            agent: false,
+            focus: None,
             context: None,
             changed_since: None,
             impact_depth: None,

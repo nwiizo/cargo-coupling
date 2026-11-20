@@ -48,6 +48,22 @@ pub struct AnalysisManifest {
 }
 
 impl AnalysisManifest {
+    /// Describe the coverage of a concrete run, including successful empty Git windows.
+    pub fn from_metrics(
+        metrics: &crate::ProjectMetrics,
+        git_used: bool,
+        tests_excluded: bool,
+    ) -> Self {
+        build_manifest(&ManifestContext {
+            git_used,
+            tests_excluded,
+            parse_failures: metrics.parse_failures,
+            skipped_crates: metrics.skipped_crates.clone(),
+            boundary_skipped_files: metrics.boundary_skipped_files,
+            dead_config_patterns: metrics.dead_config_patterns.clone(),
+        })
+    }
+
     /// Return run-specific notes in the requested language.
     pub fn localized_notes(&self, japanese: bool) -> &[String] {
         if japanese {

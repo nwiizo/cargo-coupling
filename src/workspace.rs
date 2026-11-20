@@ -300,21 +300,10 @@ fn dedupe_contained_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
 
 /// Find Cargo.toml by walking up from the given path
 fn find_cargo_toml(start: &Path) -> Result<PathBuf, WorkspaceError> {
-    let mut current = if start.is_file() {
-        start.parent().map(|p| p.to_path_buf())
-    } else {
-        Some(start.to_path_buf())
-    };
-
-    while let Some(dir) = current {
-        let cargo_toml = dir.join("Cargo.toml");
-        if cargo_toml.exists() {
-            return Ok(cargo_toml);
-        }
-        current = dir.parent().map(|p| p.to_path_buf());
-    }
-
-    Err(WorkspaceError::InvalidManifest(start.display().to_string()))
+    crate::paths::find_in_ancestors(start, &["Cargo.toml"])
+        .ok()
+        .flatten()
+        .ok_or_else(|| WorkspaceError::InvalidManifest(start.display().to_string()))
 }
 
 /// Resolve a module path to a crate name
