@@ -1,0 +1,35 @@
+# Run from this repository with:
+# deepwiki-rs -c litho.toml -p . -o docs/deepwiki --target-language ja
+# Requires the local Litho build with the codex provider and `codex login`.
+# CLI -p/-o override these paths even when only their default is supplied.
+project_name = "cargo-coupling"
+project_path = "."
+output_path = "docs/deepwiki"
+target_language = "ja"
+git_tracked_only = true
+include_tests = false
+include_hidden = false
+
+[llm]
+provider = "codex"
+api_base_url = ""
+model_efficient = "gpt-6-astra"
+model_powerful = "gpt-6-astra"
+# max_tokens is used by Litho's prompt planning; Codex controls its output limit.
+max_tokens = 32768
+retry_attempts = 2
+retry_delay_ms = 2000
+timeout_seconds = 600
+disable_preset_tools = false
+max_parallels = 2
+tool_concurrency = 2
+max_turns = 20
+
+[knowledge.local_docs]
+enabled = true
+
+[[knowledge.local_docs.categories]]
+name = "architecture"
+description = "Maintained design-analysis behavior, formulas, and known coverage limits"
+paths = ["docs/design-analysis.md"]
+target_agents = []
