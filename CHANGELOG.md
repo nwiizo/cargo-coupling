@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.4.1 (unreleased)
+## v0.4.1
 
 - Count distinct internal neighbours for fan-in and fan-out. Resolve provider
   volatility by module identity and retain same-named modules from different
@@ -16,6 +16,8 @@
   with the same provider and distance used for scoring. Render long Unicode
   module names safely in Markdown reports.
 
+- Add `--agent` for bounded review JSON and `--focus <MODULE>` to review a
+  module and its potential consumers.
 - Keep design alternatives independent of equal-score observation order, and
   trigger retained `changed` decisions only from observed Git changes, not focus.
 - Preserve one observed assessment when aggregating parallel Web graph edges,
